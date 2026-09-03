@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "repository": "github.com/faustbrian/go-oauth-server",
+  "packages": [
+    {
+      "module_directory": ".",
+      "directory": ".",
+      "name": "planned",
+      "import_path": "github.com/faustbrian/go-oauth-server",
+      "kind": "planned entry point",
+      "production": false,
+      "executable": false,
+      "coverage_required": false,
+      "build_required": false,
+      "build_tags": []
+    }
+  ]
+}

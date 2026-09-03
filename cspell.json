@@ -1,0 +1,24 @@
+{
+  "allowCompoundWords": false,
+  "caseSensitive": false,
+  "files": [
+    "README.md",
+    "docs/**/*.md"
+  ],
+  "flagWords": [
+    "hte",
+    "recieve",
+    "seperate"
+  ],
+  "ignoreRegExpList": [
+    "/`[^`\\n]+`/g",
+    "/https?:\\/\\/[^\\s)]+/g"
+  ],
+  "language": "en,en-GB",
+  "useGitignore": true,
+  "version": "0.2",
+  "words": [
+    "Golib",
+    "OpenID"
+  ]
+}

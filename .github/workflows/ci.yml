@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  planning-contract:
+    name: Planning contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: .go-version
+          cache: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: faustbrian/go-library-tools
+          ref: 531e4db50fd81a7201257a7b488a0cf22d333aca
+          path: .golib-tooling
+          persist-credentials: false
+      - uses: ./.golib-tooling/.github/actions/setup-golib
+      - run: golib repository check
+      - run: golib cohesion check
+      - run: golib specification check --online
+      - run: golib check --all
+
+  required:
+    name: Required
+    if: always()
+    needs: planning-contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require planning contract
+        env:
+          PLANNING_RESULT: ${{ needs.planning-contract.result }}
+        run: test "${PLANNING_RESULT}" = success

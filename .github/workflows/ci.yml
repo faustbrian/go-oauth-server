@@ -31,10 +31,7 @@ jobs:
           path: .golib-tooling
           persist-credentials: false
       - uses: ./.golib-tooling/.github/actions/setup-golib
-      - run: golib repository check
-      - run: golib cohesion check
-      - run: golib specification check --online
-      - run: golib check --all
+      - run: make ci
 
   required:
     name: Required

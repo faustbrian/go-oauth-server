@@ -24,7 +24,7 @@
       "purpose": "Planned storage-neutral OAuth 2.1 authorization-server core for clients, authorization, consent, grants, tokens, revocation, introspection, metadata, and signing keys; no runtime package is implemented or released.",
       "lifecycle": "planned",
       "kind": "public library",
-      "releasable": true,
+      "releasable": false,
       "family": "service-edge",
       "family_label": "Service Edge",
       "family_description": "Request-edge policy, identity, access decisions, routing, middleware, and process lifecycle.",
@@ -102,7 +102,7 @@
           "readme": "README.md",
           "api": null,
           "adoption": null,
-          "security": null,
+          "security": "docs/security.md",
           "compatibility": null,
           "performance": null,
           "examples": null,
@@ -115,7 +115,7 @@
         "delivery": {
           "implementation": "not-started",
           "hardening": "not-started",
-          "release": "not-started"
+          "release": "blocked"
         }
       },
       "gates": {

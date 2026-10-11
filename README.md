@@ -50,6 +50,15 @@ module from installable and released consumer catalogs. The local
 Passing repository checks proves only that the planning scaffold and metadata
 are internally consistent. It does not prove OAuth behavior or an API.
 
+The prepared `make fast-check GOLIB=/path/to/golib` entry point checks
+configuration, repository structure, cohesion, offline specification decisions,
+local documentation links and secrets. It does not run application tests or
+online documentation campaigns. This entry point requires a verifier supporting
+`golib docs check --local` and `golib secrets check`; the currently declared
+v1.4.0 verifier does not support it. CI and `make ci` retain their existing
+contract until a capable published verifier is qualified and adopted. Do not
+treat the prepared command as the current required CI route.
+
 The [planned security boundary](docs/security.md) records the assets, trust
 boundaries, required controls, and release blockers that any future runtime
 must satisfy. See [SECURITY.md](SECURITY.md) to report a vulnerability

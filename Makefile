@@ -1,13 +1,9 @@
 GOLIB ?= golib
 
-.PHONY: check ci cohesion fast-check inventory repository-check
+.PHONY: check check-full ci cohesion fast-check planning-check inventory repository-check specification-check-online secrets-check
 
-check:
-	$(GOLIB) check --all
-
-# Requires the process-improvement verifier's local-docs and secrets commands.
-# CI retains its current contract until that verifier is publicly qualified.
-fast-check:
+# Standalone checks retain whole-tree/history secret proof, including dirty work.
+check ci fast-check:
 	$(GOLIB) config validate
 	$(GOLIB) repository check
 	$(GOLIB) cohesion check
@@ -15,11 +11,25 @@ fast-check:
 	$(GOLIB) docs check --local
 	$(GOLIB) secrets check
 
-ci:
+# CI adds validated immutable-range secrets separately; this is not a complete gate.
+planning-check:
+	$(GOLIB) config validate
+	$(GOLIB) repository check
+	$(GOLIB) cohesion check
+	$(GOLIB) specification check
+	$(GOLIB) docs check --local
+
+check-full:
 	$(GOLIB) repository check
 	$(GOLIB) cohesion check
 	$(GOLIB) specification check --online
 	$(GOLIB) check --all
+
+specification-check-online:
+	$(GOLIB) specification check --online
+
+secrets-check:
+	$(GOLIB) secrets check
 
 cohesion:
 	$(GOLIB) cohesion check

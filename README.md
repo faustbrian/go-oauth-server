@@ -50,14 +50,17 @@ module from installable and released consumer catalogs. The local
 Passing repository checks proves only that the planning scaffold and metadata
 are internally consistent. It does not prove OAuth behavior or an API.
 
-The prepared `make fast-check GOLIB=/path/to/golib` entry point checks
-configuration, repository structure, cohesion, offline specification decisions,
-local documentation links and secrets. It does not run application tests or
-online documentation campaigns. This entry point requires a verifier supporting
-`golib docs check --local` and `golib secrets check`; the currently declared
-v1.4.0 verifier does not support it. CI and `make ci` retain their existing
-contract until a capable published verifier is qualified and adopted. Do not
-treat the prepared command as the current required CI route.
+Use Go 1.27.2 and the qualified public Tools v2.1.2 binary; the planned
+module minimum remains Go 1.27.0. `make check`, `make ci` and `make fast-check`
+validate configuration, repository structure, cohesion, offline specification
+decisions, local documentation links and whole-tree/history secrets.
+CI uses the same structural commands plus validated PR-base or push-before
+changed-content secret checks on every change. Ordinary Required has a
+five-minute job limit; changed secrets have a forty-second fatal timeout.
+Scheduled/manual runs retain whole-tree secrets and online authority refresh.
+`make check-full` explicitly preserves the previous full/online contract.
+These commands do not run application tests or establish runtime/release proof.
+See [contributing](CONTRIBUTING.md) for public tooling installation and scope.
 
 The [planned security boundary](docs/security.md) records the assets, trust
 boundaries, required controls, and release blockers that any future runtime

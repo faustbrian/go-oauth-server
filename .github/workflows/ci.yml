@@ -15,20 +15,76 @@ jobs:
   required:
     name: Required
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 20 || 5 }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: .go-version
           cache: false
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: faustbrian/go-library-tools/.github/actions/setup-golib@2bac923d3987eea343982f0d24c78a29751fb649 # qualified public v2.1.2 source
         with:
-          repository: faustbrian/go-library-tools
-          ref: 531e4db50fd81a7201257a7b488a0cf22d333aca
-          path: .golib-tooling
-          persist-credentials: false
-      - uses: ./.golib-tooling/.github/actions/setup-golib
-      - run: make ci
+          source_bootstrap: 'false'
+      - name: Verify planning structure and every-change secrets
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          GOENV: 'off'
+          GOWORK: 'off'
+          GOTOOLCHAIN: local
+          GOPROXY: https://proxy.golang.org
+          GOSUMDB: sum.golang.org
+          GOPRIVATE: ''
+          GONOPROXY: ''
+          GONOSUMDB: ''
+        run: |
+          set -euo pipefail
+          umask 077
+          task_root="$(mktemp -d "${RUNNER_TEMP}/golib-planning.XXXXXX")"
+          cleanup() {
+            status=$?
+            trap - EXIT HUP INT TERM
+            chmod -R u+w "${task_root}" || status=1
+            find "${task_root}" -depth -delete || status=1
+            exit "${status}"
+          }
+          trap cleanup EXIT
+          trap 'exit 129' HUP
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          mkdir -m 700 "${task_root}/tmp"
+          export TMPDIR="${task_root}/tmp"
+          GOLIB_TASK_CACHE_ROOT="$(mktemp -d "${TMPDIR}/golib-cache-session.XXXXXX")"
+          export GOLIB_TASK_CACHE_ROOT
+          mkdir -m 700 "${GOLIB_TASK_CACHE_ROOT}/cache" "${GOLIB_TASK_CACHE_ROOT}/mod"
+          export GOCACHE="${GOLIB_TASK_CACHE_ROOT}/cache"
+          export GOMODCACHE="${GOLIB_TASK_CACHE_ROOT}/mod"
+          export GOTMPDIR="${TMPDIR}"
+          case "${EVENT_NAME}" in
+            pull_request|push)
+              [[ "${BASE_SHA}" =~ ^[0-9a-f]{40}$ ]] || exit 1
+              git cat-file -e "${BASE_SHA}^{commit}" || exit 1
+              git merge-base --is-ancestor "${BASE_SHA}" HEAD || exit 1
+              make planning-check
+              timeout --signal=TERM --kill-after=5s 40s golib secrets check --base-sha "${BASE_SHA}"
+              ;;
+            schedule|workflow_dispatch)
+              make planning-check
+              golib secrets check
+              golib specification check --online
+              ;;
+            *) exit 1 ;;
+          esac
+      - name: Remove public tooling installation
+        if: always()
+        run: |
+          set -euo pipefail
+          for path in "${RUNNER_TEMP}/golib-v2.1.2" "${RUNNER_TEMP}/golib-bin"; do
+            if [[ -d "${path}" ]]; then
+              chmod -R u+w "${path}"
+              find "${path}" -depth -delete
+            fi
+          done

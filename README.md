@@ -67,10 +67,12 @@ boundaries, required controls, and release blockers that any future runtime
 must satisfy. See [SECURITY.md](SECURITY.md) to report a vulnerability
 privately; no released version is currently supported.
 
-See the versioned [Golib ecosystem index](https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/README.md)
-and [package-family guidance](https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/design-language.md#package-families-and-selection)
+See the versioned [Golib ecosystem index](https://github.com/faustbrian/go-library-tools/blob/v1.8.4/docs/ecosystem/README.md)
+and [package-family guidance](https://github.com/faustbrian/go-library-tools/blob/v1.8.4/docs/ecosystem/design-language.md#package-families-and-selection)
 for the shared design language.
 
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+Continue with the [documentation index](docs/README.md).

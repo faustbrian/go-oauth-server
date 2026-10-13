@@ -1,5 +1,7 @@
 # Planned security model
 
+[Documentation index](README.md)
+
 This repository contains planning metadata only. It has no runtime package,
 public API, parser, persistence adapter, network operation, background work, or
 supported release. The controls below are release requirements, not claims

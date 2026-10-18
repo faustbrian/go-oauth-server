@@ -28,6 +28,7 @@ type GrantType string
 const (
 	AuthorizationCodeGrant GrantType = "authorization_code"
 	RefreshTokenGrant      GrantType = "refresh_token"
+	ClientCredentialsGrant GrantType = "client_credentials"
 )
 
 // AuthorizationRequest contains a bounded code/S256 OAuth-only request. It
@@ -217,6 +218,19 @@ func parseTokenValues(values url.Values, requireClient bool) (TokenRequest, erro
 		}
 		r.RefreshToken = values.Get("refresh_token")
 		if !opaque32(r.RefreshToken) {
+			return TokenRequest{}, ErrInvalidRequest
+		}
+		if hasField(values, "scope") {
+			r.Scopes, err = parseScopes(values.Get("scope"))
+			if err != nil {
+				return TokenRequest{}, ErrInvalidRequest
+			}
+		}
+	case ClientCredentialsGrant:
+		if requireClient {
+			return TokenRequest{}, ErrUnsupportedGrant
+		}
+		if hasField(values, "code") || hasField(values, "redirect_uri") || hasField(values, "code_verifier") || hasField(values, "refresh_token") {
 			return TokenRequest{}, ErrInvalidRequest
 		}
 		if hasField(values, "scope") {

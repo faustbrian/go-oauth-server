@@ -4,7 +4,8 @@
 
 This experimental profile is not a complete OAuth/OIDC provider or a supported
 production release. The broader repository goal remains open; this profile does
-not qualify shared-issuer resource verification/cache, workload, device, OIDC,
+not qualify shared-issuer resource verification/cache, dynamic workload/client
+administration, device, OIDC,
 organization or API-key behavior.
 
 ## Authority and atomicity
@@ -64,7 +65,12 @@ token possession cannot authorize RFC7662 disclosure. Confidential Basic authori
 is a startup snapshot: secret/config changes require a new client version and
 retirement of old instances. It does not provide hot rotation, durable secret
 management or fleet-wide secret revocation. Current subject/session/credential
-withdrawal fences still apply. Workload credentials, client management,
+withdrawal fences still apply. Explicit configured workload credentials instead
+bind an immutable platform, tenant, service account, resource and access ceiling;
+they create no human, session or consent and cannot request refresh. Their
+directory and workload authorization epochs remain current-primary checks.
+See the [selected workload policy](selected-profile.md#configured-workload-client-credentials)
+and install its typed forward migration before enabling it. Client management,
 signing-key administration, trusted/dynamic
 consent, OIDC, device and delegation/exchange remain unsupported, not aliases.
 

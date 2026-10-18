@@ -1,10 +1,12 @@
-# Selected authorization-code profile
+# Selected OAuth profiles
 
 This is the experimental OAuth-server implementation's bounded profile, not
 release qualification or completion of the full identity-platform OAuth goals.
 The selected outcome is a real authenticated password-session user granting a
 platform-owned public or configured confidential client a narrow resource authorization through explicit
 consent, S256 code exchange, refresh rotation and revocation.
+An additional explicit startup workload policy selects confidential
+client-credentials access without a human/session/consent substitute.
 
 ## Owning public boundary
 
@@ -48,7 +50,7 @@ There is no HTTP registration in this root module.
 | --- | --- | --- |
 | `identity.oauth-server.authorize` | `Service.Authorize(context.Context, AuthorizeRequest) (AuthorizeResult, error)` | Exact code/S256 request, tenant, borrowed original browser-session bearer and trusted network attribution. Genuine native session admission yields login-required or opaque consent-required interaction; no caller-supplied user/actor/owner override. |
 | `identity.oauth-server.continue` | `Service.Continue(context.Context, ContinueRequest) (AuthorizeResult, error)` | Original continuation, same current browser/session, explicit issuer origin, synchronizer, consent decision and non-expanding scopes. Committed success yields one bound code response; denial redirects only to the originally validated exact target/state. |
-| `identity.oauth-server.token` | `Service.Token(context.Context, TokenRequest) (TokenResult, error)` | Closed code or refresh variant, registered none/Basic client authentication and trusted transport network attribution supplied after form parsing. Code binds issuer/environment/client/exact redirect/S256/resource/user/scopes. Refresh narrows authority and rotates; reused parents revoke the family. Unknown/replay results disclose no fresh token. |
+| `identity.oauth-server.token` | `Service.Token(context.Context, TokenRequest) (TokenResult, error)` | Closed code/refresh web variant or explicitly configured Basic-only workload `client_credentials`; trusted transport network attribution is supplied after parsing. Code binds issuer/environment/client/exact redirect/S256/resource/user/scopes. Refresh narrows authority and rotates; reused parents revoke the family. Workload access binds only its trusted startup tenant/service account/resource/scope ceiling and never yields refresh. Unknown/replay results disclose no fresh token. |
 | `identity.oauth-server.revoke` | `Service.Revoke(context.Context, RevokeRequest) (RevokeResult, error)` | Possessed token and owning client authenticated under its registered none/Basic method; non-enumerating result. Revocation never revives a grant. |
 | `identity.oauth-server.introspect` | `Service.Introspect(context.Context, IntrospectRequest) (IntrospectResult, error)` when explicitly enabled | Separately authenticated owning confidential client reads actual opaque access/refresh state. Disabled/public/method-downgraded callers deny before lookup; inactive, unknown and foreign tokens return only `Active=false`. No route or general resource-server authorization is selected. |
 
@@ -101,8 +103,67 @@ Operational authority failures and cancellation return redacted errors, never an
 active result or stale fallback. No tokens, client secrets or source records are
 returned. Each call is bounded and uncached; output is not reusable freshness
 evidence and must not be promoted into a cache or renewed by copying. This does
-not implement a resource verifier, JWT/OIDC, workload/exchange introspection,
+not implement a resource verifier, JWT/OIDC, exchange introspection,
 hot client-secret rotation, fleet revocation or HTTP registration.
+
+### Configured workload client credentials
+
+`NewWorkload(tenant, serviceAccountID, accessTTL)` creates opaque caller-owned policy
+for a confidential platform-owned client's optional `Client.Workload`. Nil keeps
+the existing browser/code/refresh profile, including its original durable client
+fingerprint bytes.
+`ValidateClient` and service constructors snapshot the entire workload value;
+each adapter command receives an independent policy copy. Replacing a caller's
+or adapter's whole value cannot alter retained policy or in-flight output limits.
+A workload registration has no redirect URIs and accepts only
+`client_secret_basic` and `client_credentials`. The closed Basic form accepts
+only `grant_type`, optional `scope` and the sole configured `resource`; tenant,
+subject, actor, human credentials, code/PKCE/redirect and refresh channels deny.
+Omitted scope uses the registered ceiling; supplied scope can only narrow it.
+Access expires at the earlier configured workload/issuer ceiling (at most five
+minutes). No refresh is issued, following the selected policy for
+[RFC6749 section4.4](https://www.rfc-editor.org/rfc/rfc6749.html#section-4.4).
+The platform and workload/tenant ownership are trusted startup arrangements, not
+customer delegation or request-selected authority.
+
+Native `Config.WorkloadAuthority` fixes the existing global directory ID and
+authorization namespace in which workload IDs are unique across subject kinds.
+The existing authorization owner must already hold that exact tenant/namespace/
+service-account epoch; construction and reads never initialize it. Issuance
+captures directory and workload authorization epochs from primary owners and
+share-locks/rechecks them on the sole generation-bound Work before effects and
+commit. Its command has an empty user, the real configured service-account
+actor, and a server-owned grant ID as its anonymous issuance-flow correlation;
+that correlation is not a workload/user identity. Current native policy and
+Privileged velocity counters remain mandatory. Workload-only composition uses
+no session configuration; mixed composition retains every original web fence.
+
+Explicit owning-client introspection checks the actual root access record,
+startup client/owner/tenant/resource binding and current primary workload epochs.
+Its `Subject` is the service-account ID, never a human. Unknown, expired,
+foreign, revoked and withdrawn tokens are metadata-free inactive; primary
+authority outages deny rather than reuse an earlier positive result. The same
+uncached original 20-second read bound applies. Basic-authenticated revocation
+may still remove a token after epoch withdrawal; it never grants new authority.
+Concurrent duplicate revocation can return `ErrUnavailable` with the actual
+native conflict outcome while the original owner is unfinished. This does not
+claim completion, rollback or permission to remint. A later call observing the
+revoked token returns the ordinary successful no-op. Applications use the
+unavailable/retry semantics of
+[RFC7009 section2.2.1](https://www.rfc-editor.org/rfc/rfc7009.html#section-2.2.1),
+not an invalid-client/access-denied response for this authenticated claim race.
+
+Each fresh client-credentials call is a separate server-owned issuance, not a
+caller-selected command or new idempotency journal. After an unknown result,
+preserve its command ID and use native `Recover` with token operation, original
+client Basic custody and **empty Token/Session/TenantID**. The existing encrypted
+preparation authenticates the original configuration/flow before metadata-only
+reconciliation; it cannot redeliver access or execute again. A live lease stays
+pending. Terminal noncommit retains its original dependency-failure error along
+with `NotCommitted`. Do not retry issuance to resolve uncertainty. Original
+configuration/key retention and startup-secret instance retirement still apply;
+no durable secret management, hot rotation, fleet revocation or dynamic client
+administration is selected.
 
 OAuth-owned `Token` is explicit reveal-once secret custody, not a session token
 or one-use authority. It uses standard cryptographic entropy and hash-based
@@ -151,6 +212,7 @@ version transition, except access revocation, which carries that access record's
 | Actual protected transition | Primary event |
 | --- | --- |
 | Create pending interaction/grant | `grant.created.v1` |
+| Create configured workload grant and its root access | `grant.created.v1` |
 | Approve with actual persisted strict-subset grant scopes | `grant.scope_changed.v1` |
 | Approve without changing persisted grant scopes | `grant.authorized.v1` |
 | Consume code and create access/refresh children | `grant.code_exchanged.v1` |
@@ -197,10 +259,11 @@ Access lifetime cannot exceed five minutes or its contributing grant lifetime.
 Original source evidence timestamps cannot be renewed by copies or retries.
 Root/family revocation must deny descendants; unavailable current authority denies.
 
-This covers the selected M30 authorization-code/refresh profile only. It does
+This covers the selected M30 authorization-code/refresh and configured workload
+client-credentials profiles only. It does
 not close `journey.oauth-oidc-provider.v1`, the complete OAuth units, or all
 shared-issuer SI01–SI10 cases. Client management, trusted consent, dynamic
-registration, workload/client-credentials issuance, general resource-server
+registration, general resource-server
 introspection, OIDC, device flow, organization delegation, API-key exchange and
 shared-issuer cache/resource-verifier composition
 remain unselected follow-on profiles with their original requirements intact.

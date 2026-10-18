@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Snapshot workload policy at validation, construction and adapter boundaries
+  so caller or adapter whole-value replacement cannot change tenant, identity
+  or the access ceiling of an already constructed service.
+- Add explicit configured platform/workload-owned Basic client-credentials
+  access with immutable tenant/service-account/resource/scope/lifetime bindings,
+  owning-client introspection and revocation. No human session, consent or
+  refresh is created. Nil workload policy preserves existing web clients.
 - Add explicitly enabled owning-confidential-client RFC7662 introspection for
   opaque access and refresh tokens, with separate Basic caller authentication,
   inactive-only unknown/foreign results and bounded native current-authority

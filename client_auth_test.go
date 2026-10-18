@@ -22,6 +22,7 @@ func FuzzClientAuthenticationForms(f *testing.F) {
 	// Synthetic, non-deployed wire values exercise percent decoding and bounds.
 	validHeader := clientBasicHeader("confidential-client", strings.Repeat("A", 43))
 	f.Add(validHeader, "grant_type=refresh_token&refresh_token="+strings.Repeat("A", 43))
+	f.Add(validHeader, "grant_type=client_credentials&scope=workload%3Aread&resource=https%3A%2F%2Fresource.example")
 	f.Add("Basic %zz", "token="+strings.Repeat("A", 43))
 	f.Add("Bearer unsupported", "client_id=public-client")
 	f.Add(strings.Repeat("x", 1025), strings.Repeat("x", 16385))

@@ -2,7 +2,8 @@
 
 Experimental authorization-code/S256 OAuth protocol contracts
 for configured platform-owned public and Basic-authenticated confidential web clients and genuine password
-single-factor user sessions. This is not a complete OAuth/OIDC provider or a
+single-factor user sessions, plus explicitly configured workload client-credentials access.
+This is not a complete OAuth/OIDC provider or a
 stable released API.
 
 The root package owns bounded protocol parsing, exact HTTPS redirect/issuer/
@@ -25,7 +26,10 @@ replacement authentication engine.
 - `Service.Continue` checks the exact original browser, synchronizer, issuer
   origin and non-expanding scopes before a one-use code response or denial.
 - `Service.Token` exchanges an exact client/redirect/S256 code or rotates a
-  refresh token. Reused parents revoke their related family.
+  refresh token. Reused parents revoke their related family. A client with an
+  explicit immutable `Workload` instead selects Basic-only `client_credentials`,
+  bound to its startup tenant, service-account identity, scopes and resource;
+  it produces access only, never a human session, consent or refresh token.
 - `Service.Revoke` handles owning-client token possession. Unknown and foreign
   tokens are indistinguishable no-ops; access revocation is narrower than
   refresh-family revocation.
@@ -67,8 +71,14 @@ Public clients with method `none` and configured confidential clients with
 opaque access tokens of at most five minutes and rotating opaque refresh tokens
 are selected. Each confidential client uses one fixed random 32-byte startup
 secret; changes require a new client version and retiring old service instances.
-This is not hot rotation or fleet-wide client/secret revocation. Workload
-issuance, client administration, OIDC,
+This is not hot rotation or fleet-wide client/secret revocation. Optional workload
+issuance requires the native forward migration and actual directory/workload
+authorization owners; workload-only composition needs no session configuration.
+Core policy alone does not make an older native adapter workload-capable: adopt
+an adapter version pinned to this workload-capable core and install its forward
+migration before enabling that profile. Local paired-source development does
+not establish canonical public-module installability.
+Client administration, OIDC,
 device flow, organization delegation, API-key exchange and
 resource-server verification/cache composition remain
 unsupported. No vendor authorization engine is embedded.

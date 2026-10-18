@@ -90,6 +90,9 @@ type Client struct {
 	Version                            uint64
 	Public                             bool
 	Redirects, Scopes                  []string
+	// Workload explicitly selects access-only client credentials instead of
+	// browser code/consent/refresh. Nil retains the existing web profile.
+	Workload *Workload `json:",omitempty"`
 }
 
 // ValidateClient checks/copies complete immutable registration policy. It
@@ -100,9 +103,17 @@ func ValidateClient(input Client) (Client, error) {
 	if !identifier(input.ID) || !identifier(input.Owner.platform) || input.Version == 0 || !validOrigin(input.Resource) || input.Public && input.AuthenticationMethod != "none" || !input.Public && input.AuthenticationMethod != "client_secret_basic" {
 		return Client{}, ErrInvalidRequest
 	}
-	redirects, err := NewRedirectPolicy(input.Redirects)
-	if err != nil {
-		return Client{}, err
+	var redirects RedirectPolicy
+	var err error
+	if input.Workload != nil {
+		if input.Public || !input.Workload.valid() || len(input.Redirects) != 0 {
+			return Client{}, ErrInvalidRequest
+		}
+	} else {
+		redirects, err = NewRedirectPolicy(input.Redirects)
+		if err != nil {
+			return Client{}, err
+		}
 	}
 	scopes, err := NewScopeCatalog(input.Scopes)
 	if err != nil {
@@ -110,7 +121,20 @@ func ValidateClient(input Client) (Client, error) {
 	}
 	input.ID, input.Resource, input.AuthenticationMethod = strings.Clone(input.ID), strings.Clone(input.Resource), strings.Clone(input.AuthenticationMethod)
 	input.Redirects, input.Scopes = slices.Clone(redirects.targets), scopes.Scopes()
-	return input, nil
+	return input.snapshot(), nil
+}
+
+// Own every mutable projection, including the Workload pointee: unexported
+// fields do not prevent a consumer from replacing an entire exported value.
+// Use a fresh snapshot at constructor and adapter boundaries so neither caller
+// nor adapter mutation can alter retained policy or in-flight result checks.
+func (c Client) snapshot() Client {
+	c.Redirects, c.Scopes = slices.Clone(c.Redirects), slices.Clone(c.Scopes)
+	if c.Workload != nil {
+		owned := *c.Workload
+		c.Workload = &owned
+	}
+	return c
 }
 
 func identifier(value string) bool {

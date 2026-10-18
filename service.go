@@ -76,7 +76,7 @@ func (c Config) Validated() (Config, error) {
 	})
 	for i, client := range c.Clients {
 		owned, err := ValidateClient(client)
-		if err != nil || owned.Resource != c.Resource || i > 0 && c.Clients[i-1].ID == owned.ID || !scopeSubset(owned.Scopes, c.Scopes.values) {
+		if err != nil || owned.Resource != c.Resource || i > 0 && c.Clients[i-1].ID == owned.ID || !scopeSubset(owned.Scopes, c.Scopes.values) || owned.Workload != nil && owned.Workload.AccessTTL() > c.AccessTTL {
 			return Config{}, ErrInvalidRequest
 		}
 		c.Clients[i] = owned
@@ -121,8 +121,13 @@ type Service struct {
 // NewService validates/copies selected composition without IO or generation.
 func NewService(config Config, dependencies Dependencies) (*Service, error) {
 	c, err := config.Validated()
-	if err != nil || dependencies.Sessions == nil || !dependencies.Sessions.Configured() || nilDependency(dependencies.Store) {
+	if err != nil || nilDependency(dependencies.Store) {
 		return nil, ErrInvalidRequest
+	}
+	for _, client := range c.Clients {
+		if client.Workload == nil && (dependencies.Sessions == nil || !dependencies.Sessions.Configured()) {
+			return nil, ErrInvalidRequest
+		}
 	}
 	if c.OwningClientIntrospection {
 		if reader, ok := dependencies.Store.(Introspector); !ok || nilDependency(reader) {
@@ -308,8 +313,7 @@ func (s *Service) client(id string) (Client, error) {
 	}
 	for _, c := range s.config.Clients {
 		if c.ID == id {
-			c.Redirects, c.Scopes = slices.Clone(c.Redirects), slices.Clone(c.Scopes)
-			return c, nil
+			return c.snapshot(), nil
 		}
 	}
 	return Client{}, ErrInvalidRequest
@@ -390,7 +394,7 @@ func (s *Service) Authorize(ctx context.Context, request AuthorizeRequest) (out 
 	if !source.Authenticated {
 		return AuthorizeResult{Outcome: LoginRequired}, nil
 	}
-	out, err = s.deps.Store.Authorize(ctx, AuthorizationCommand{Request: input, Client: client, Session: source, Browser: request.Session, Network: request.Network})
+	out, err = s.deps.Store.Authorize(ctx, AuthorizationCommand{Request: input, Client: client.snapshot(), Session: source, Browser: request.Session, Network: request.Network})
 	if err != nil || ctx.Err() != nil {
 		return AuthorizeResult{Outcome: out.Outcome, CommandID: out.CommandID}, operationError(ctx, err)
 	}
@@ -412,7 +416,7 @@ func (s *Service) Continue(ctx context.Context, request ContinueRequest) (out Au
 	}
 	defer stop()
 	client, err := s.client(request.ClientID)
-	if err != nil || !opaque32(request.Continuation) || request.Origin != s.config.Issuer.value || request.CSRF == (session.CSRFToken{}) || !visible(request.Network, 128) {
+	if err != nil || client.Workload != nil || !opaque32(request.Continuation) || request.Origin != s.config.Issuer.value || request.CSRF == (session.CSRFToken{}) || !visible(request.Network, 128) {
 		return out, ErrInvalidRequest
 	}
 	if request.Scopes != nil {
@@ -428,7 +432,7 @@ func (s *Service) Continue(ctx context.Context, request ContinueRequest) (out Au
 	if !source.Authenticated {
 		return out, ErrAccessDenied
 	}
-	out, err = s.deps.Store.Continue(ctx, ContinuationCommand{Request: request, Client: client, Session: source})
+	out, err = s.deps.Store.Continue(ctx, ContinuationCommand{Request: request, Client: client.snapshot(), Session: source})
 	if err != nil || ctx.Err() != nil {
 		return AuthorizeResult{Outcome: out.Outcome, CommandID: out.CommandID}, operationError(ctx, err)
 	}
@@ -468,7 +472,8 @@ func (s *Service) authorizeResult(out AuthorizeResult, input AuthorizationReques
 
 // Token admits the exact selected grant/client shape and delegates atomic
 // possession/PKCE/current-authority/one-use effects. No browser session, arbitrary
-// tenant selector, actor override, private exchange or workload grant is inferred.
+// tenant selector, actor override or private exchange is inferred. A workload
+// grant requires explicit immutable startup policy and confidential Basic custody.
 func (s *Service) Token(ctx context.Context, request TokenRequest) (out TokenResult, err error) {
 	defer func() {
 		if recover() != nil {
@@ -490,6 +495,9 @@ func (s *Service) Token(ctx context.Context, request TokenRequest) (out TokenRes
 	if request.Resource != "" && request.Resource != client.Resource {
 		return out, ErrInvalidRequest
 	}
+	if client.Workload != nil && request.GrantType != ClientCredentialsGrant || client.Workload == nil && request.GrantType == ClientCredentialsGrant {
+		return out, ErrUnsupportedGrant
+	}
 	switch request.GrantType {
 	case AuthorizationCodeGrant:
 		if !opaque32(request.Code) || !slices.Contains(client.Redirects, request.RedirectURI) || request.RefreshToken != "" || request.Scopes != nil {
@@ -508,13 +516,26 @@ func (s *Service) Token(ctx context.Context, request TokenRequest) (out TokenRes
 				return out, ErrInvalidScope
 			}
 		}
+	case ClientCredentialsGrant:
+		if client.Public || request.Code != "" || request.RedirectURI != "" || request.CodeVerifier != "" || request.RefreshToken != "" {
+			return out, ErrInvalidRequest
+		}
+		if request.Scopes == nil {
+			request.Scopes = slices.Clone(client.Scopes)
+		} else {
+			request.Scopes, err = validatedScopes(request.Scopes)
+			if err != nil || !scopeSubset(request.Scopes, client.Scopes) {
+				return out, ErrInvalidScope
+			}
+		}
+		request.Resource = client.Resource
 	default:
 		return out, ErrUnsupportedGrant
 	}
 	if err := s.config.AuthenticateClient(ctx, client.ID, request.ClientAuthentication); err != nil {
 		return out, err
 	}
-	out, err = s.deps.Store.Token(ctx, TokenCommand{Request: request, Client: client})
+	out, err = s.deps.Store.Token(ctx, TokenCommand{Request: request, Client: client.snapshot()})
 	if err != nil || ctx.Err() != nil {
 		return TokenResult{Outcome: out.Outcome, CommandID: out.CommandID}, operationError(ctx, err)
 	}
@@ -525,8 +546,15 @@ func (s *Service) Token(ctx context.Context, request TokenRequest) (out TokenRes
 		return TokenResult{Outcome: out.Outcome, CommandID: out.CommandID, Replayed: out.Replayed}, nil
 	}
 	now := s.config.Clock.Now()
+	accessTTL := s.config.AccessTTL
+	if client.Workload != nil {
+		accessTTL = client.Workload.AccessTTL()
+		if out.RefreshToken.state != nil {
+			return TokenResult{Outcome: identity.CommitOutcomeCommitted, CommandID: out.CommandID}, ErrUnavailable
+		}
+	}
 	scopes, e := validatedScopes(out.Scopes)
-	if e != nil || !scopeSubset(scopes, client.Scopes) || request.Scopes != nil && !scopeSubset(scopes, request.Scopes) || out.AccessToken.state == nil || out.Resource != client.Resource || !now.Before(out.ExpiresAt) || out.ExpiresAt.After(now.Add(s.config.AccessTTL)) {
+	if e != nil || !scopeSubset(scopes, client.Scopes) || request.Scopes != nil && !scopeSubset(scopes, request.Scopes) || out.AccessToken.state == nil || out.Resource != client.Resource || !now.Before(out.ExpiresAt) || out.ExpiresAt.After(now.Add(accessTTL)) {
 		return TokenResult{Outcome: identity.CommitOutcomeCommitted, CommandID: out.CommandID}, ErrUnavailable
 	}
 	out.Scopes = scopes
@@ -556,7 +584,7 @@ func (s *Service) Revoke(ctx context.Context, request RevokeRequest) (out Revoke
 	if err := s.config.AuthenticateClient(ctx, client.ID, request.ClientAuthentication); err != nil {
 		return out, err
 	}
-	out, err = s.deps.Store.Revoke(ctx, RevocationCommand{Request: request, Client: client})
+	out, err = s.deps.Store.Revoke(ctx, RevocationCommand{Request: request, Client: client.snapshot()})
 	return out, operationError(ctx, err)
 }
 
@@ -593,7 +621,7 @@ func (s *Service) Introspect(ctx context.Context, request IntrospectRequest) (ou
 	if !ok || nilDependency(reader) {
 		return out, ErrUnavailable
 	}
-	out, err = reader.Introspect(ctx, IntrospectionCommand{Request: request, Client: client})
+	out, err = reader.Introspect(ctx, IntrospectionCommand{Request: request, Client: client.snapshot()})
 	if err != nil || ctx.Err() != nil {
 		return IntrospectResult{}, operationError(ctx, err)
 	}

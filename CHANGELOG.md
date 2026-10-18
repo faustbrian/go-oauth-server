@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add opt-in OAuth authorization-server discovery with immutable trusted
+  endpoints and metadata derived from actual selected public, Basic and workload
+  profiles. It publishes no OIDC, device, registration or signing capabilities;
+  existing zero configuration remains unadvertised and unchanged.
 - Add bounded own-consent get/list and fresh-session, origin/CSRF-protected
   withdrawal through the optional native `ConsentManager`. Withdrawal reports
   original durability metadata, never replacement credentials or unbounded

@@ -44,7 +44,10 @@ type Config struct {
 	// OwningClientIntrospection explicitly enables RFC7662 for authenticated
 	// confidential clients inspecting only their own issued opaque tokens.
 	// Merely configuring a confidential client never enables this capability.
-	OwningClientIntrospection                                        bool
+	OwningClientIntrospection bool
+	// Discovery explicitly selects OAuth authorization-server metadata using
+	// trusted endpoint locations. Zero preserves the unadvertised legacy profile.
+	Discovery                                                        DiscoveryConfig
 	Clock                                                            Clock
 	MaximumDuration, CodeTTL, ContinuationTTL, AccessTTL, RefreshTTL time.Duration
 }
@@ -86,6 +89,9 @@ func (c Config) Validated() (Config, error) {
 	}
 	c.ClientSecrets = slices.Clone(c.ClientSecrets)
 	c.Scopes.values = slices.Clone(c.Scopes.values)
+	if err := validateDiscovery(c); err != nil {
+		return Config{}, err
+	}
 	return c, nil
 }
 

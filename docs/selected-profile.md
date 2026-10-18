@@ -56,6 +56,62 @@ There is no HTTP registration in this root module.
 | `identity.oauth-server.consent-get` | `Service.ConsentGet(context.Context, ConsentGetRequest) (ConsentGetResult, error)` | Current genuine password-session owner reads only its approved independent consent ID/version/client/scopes/time. Foreign, revoked or unavailable targets disclose no metadata. |
 | `identity.oauth-server.consent-list` | `Service.ConsentList(context.Context, ConsentListRequest) (ConsentListResult, error)` | Current genuine session reads 1..64 own approved consents per page with a tenant/user/limit-bound opaque cursor. Pages use stable ID keyset order, not cross-request snapshot isolation. |
 | `identity.oauth-server.consent-delete` | `Service.ConsentDelete(context.Context, ConsentDeleteRequest) (ConsentDeleteResult, error)` | Exact own consent/version, fresh current password session, issuer Origin and same-browser CSRF. Atomic consent-root withdrawal returns Deleted plus original Completion metadata, not unbounded grant IDs or bearer material. |
+| `identity.oauth-server.discovery-oauth` | `Service.DiscoveryOauth(context.Context, DiscoveryOauthRequest) (DiscoveryOauthResult, error)` | Public read-only OAuth metadata when explicitly selected; no request-supplied issuer, host, client, tenant or capability override. |
+
+### Optional authorization-server discovery
+
+`Config.Discovery.Enabled` requires exact trusted authorization/token/revocation
+endpoint URLs for the selected web profile. Endpoints must be distinct canonical
+HTTPS paths on the configured issuer origin, with no query, fragment, userinfo,
+percent/dot/slash normalization or discovery-route collision. This is a deliberately
+narrow deployment policy, not a universal same-origin requirement of RFC8414.
+Zero configuration is disabled; nonzero fields with Enabled=false are rejected.
+Changing metadata endpoints does not rewrite existing grant/recovery authority.
+
+The returned `DiscoveryOauthMetadata` is a caller-owned public JSON projection;
+serve only that member as `application/json` at the issuer's
+`/.well-known/oauth-authorization-server` URL. This library registers no route,
+infers no Host and fetches no remote metadata. Consumers must validate the exact
+returned issuer before trusting endpoint locations (RFC8414 section3.3) and
+validate returned authorization `iss`/state before code exchange (RFC9207).
+
+Metadata derives grants and methods from actual immutable configured clients:
+web clients select authorization_code/refresh_token, code/query and S256 only;
+workloads add only client_credentials. Workload-only services omit authorization,
+PKCE and browser-issuer-response claims. This profile explicitly selects an empty
+response_types_supported array: RFC8414 section2 requires the member, while
+section3.2 requires empty claims omitted. [Reported erratum7793](https://www.rfc-editor.org/errata/eid7793)
+proposes making the member optional when no grant uses authorization; it is not
+an approved correction. The selected empty array is an interoperability policy,
+not an unambiguous RFC requirement. Token/revocation methods are the actual none/Basic
+union. Introspection is advertised only with explicit OwningClientIntrospection,
+an eligible confidential client and its exact configured endpoint; its method is
+Basic only. Inconsistent selections fail construction. Scopes are exactly the
+effective OAuth ScopeCatalog, not a per-client privilege promise.
+
+`authorization_response_iss_parameter_supported=true` describes the existing web
+response behavior. The RFC9728 section4 `protected_resources` array contains exactly
+Config.Resource so a client can select the same resource used in authorization,
+code and token binding. This is authorization-server metadata, not protected-
+resource metadata or a resource-verification/cache claim. No OIDC scopes, JWKS,
+registration, device, exchange, client IDs, owners or secrets are published.
+
+The independent native consumer uses `golang.org/x/oauth2 v0.37.0` (module checksum
+and BSD-3-Clause source license) for AuthCodeURL, S256, Exchange and TokenSource.
+It selects URLs, resource, supported scopes and authentication from actual
+metadata, checks issuer/state, then traverses genuine signup/password-session,
+explicit consent, exchange, refresh and discovered revocation. The bounded
+in-process transport delegates to the real public native owners; it does not
+replace domain authority or claim a production HTTP composition.
+
+Protocol source provenance (official text fetched 2026-10-18; SHA-256 of exact
+UTF-8/ASCII response bytes, recheck before changing these profile decisions):
+
+| Source | Applied sections | Official text SHA-256 |
+| --- | --- | --- |
+| [RFC8414](https://www.rfc-editor.org/rfc/rfc8414.txt) | 2,3.2,3.3: metadata fields, JSON, exact issuer | `16c816e4e0fdbffb7e910ff3017867bf39debe9cb7f52f5cbc508a052ed660e8` |
+| [RFC9207](https://www.rfc-editor.org/rfc/rfc9207.txt) | 2.3,2.4,3: issuer response and metadata flag | `c9c17b9824315aca9bda5c0b5e3627cb24aa28d54324292f3761006209b705fd` |
+| [RFC9728](https://www.rfc-editor.org/rfc/rfc9728.txt) | 4: authorization-server protected_resources | `b65bcd0d9daf90fd7006a42cf48e0ac3ba24b7f5637d5197f2de41c6b91c8a89` |
 
 ### Optional own-consent management
 

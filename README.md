@@ -41,6 +41,10 @@ replacement authentication engine.
   Deletion additionally requires recent original authentication, issuer origin
   and same-browser CSRF; native consent-root withdrawal denies associated
   code/access/refresh authority without unbounded grant fanout.
+- `Service.DiscoveryOauth` returns OAuth-only RFC8414 metadata when explicitly
+  selected by `Config.Discovery`. Trusted issuer-origin endpoint configuration
+  and actual configured clients determine grants, authentication methods, S256,
+  scopes and optional owning-client introspection. It registers no HTTP route.
 
 This root prerequisite alone does not supply durable execution. The selected
 native composition uses `oauthpostgres.NewService(pool, config, keys)` and is

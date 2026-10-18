@@ -56,6 +56,7 @@ type phase struct {
 	browser           auth.BearerCredential
 	csrf              session.CSRFToken
 	observation       session.GetResult
+	consentCommand    oauth.ConsentCommand
 	command           identity.Command
 	declaration, plan kernel.CommandPlan
 	counters          kernel.CommandCounterPlan
@@ -84,8 +85,12 @@ func (p *phase) operation(name string) identity.FeatureOperation {
 	}
 	return operation(name)
 }
-func (*phase) FeatureOperations() []identity.FeatureOperation {
-	return []identity.FeatureOperation{operation("identity.oauth-server.authorize"), operation("identity.oauth-server.continue"), operation("identity.oauth-server.token"), operation("identity.oauth-server.revoke"), workloadOperation("identity.oauth-server.token"), workloadOperation("identity.oauth-server.revoke")}
+func (p *phase) FeatureOperations() []identity.FeatureOperation {
+	operations := []identity.FeatureOperation{operation("identity.oauth-server.authorize"), operation("identity.oauth-server.continue"), operation("identity.oauth-server.token"), operation("identity.oauth-server.revoke"), workloadOperation("identity.oauth-server.token"), workloadOperation("identity.oauth-server.revoke")}
+	if p.store != nil && p.store.config.ConsentManagement {
+		operations = append(operations, operation("identity.oauth-server.consent-delete"))
+	}
+	return operations
 }
 func (p *phase) registration() kernel.FeatureRegistration {
 	return kernel.FeatureRegistration{Contributor: p.Descriptor(), Operation: p.operation(p.input.Binding.OperationID)}
@@ -96,6 +101,8 @@ func (p *phase) registration() kernel.FeatureRegistration {
 // and replay revocation each declare their distinct composed actions once.
 func (p *phase) auditActions() []string {
 	switch p.input.Transition {
+	case deleteConsent:
+		return []string{"identity.oauth_server.revoke_consent"}
 	case createInteraction, createWorkload:
 		return []string{"identity.oauth_server.authorize"}
 	case approveInteraction:
@@ -125,6 +132,9 @@ func (p *phase) lifecycle() kernel.LifecyclePlan {
 	before := p.input.Grant.Version
 	event := "grant.revoked.v1"
 	switch p.input.Transition {
+	case deleteConsent:
+		before = p.input.Deletion.Version
+		event = "consent.revoked.v1"
 	case createInteraction, createWorkload:
 		event = "grant.created.v1"
 	case approveInteraction:
@@ -144,6 +154,9 @@ func (p *phase) lifecycle() kernel.LifecyclePlan {
 }
 
 func (p *phase) subjectType() string {
+	if p.input.Transition == deleteConsent {
+		return "oauth_consent"
+	}
 	if p.input.Transition == revokeAccess {
 		return "oauth_token"
 	}
@@ -211,6 +224,13 @@ func (p *phase) buildCommand() error {
 	} else if i.Consent != (consentMutation{}) {
 		return oauth.ErrInvalidRequest
 	}
+	if i.Transition == deleteConsent {
+		if !p.store.config.ConsentManagement || i.Deletion == nil || i.Deletion.ID != b.RecordID || i.Deletion.Version == 0 || i.Deletion.Version == math.MaxUint64 || i.Deletion.Generation == 0 || i.Deletion.Generation == math.MaxUint64 || i.Grant.ID != "" {
+			return oauth.ErrInvalidRequest
+		}
+	} else if i.Deletion != nil {
+		return oauth.ErrInvalidRequest
+	}
 	// This fixed native codec commits every nonsecret typed input, including
 	// original owner fields, with a scalar commitment. It never places JSON or
 	// credential wire bytes in FeatureFields. The original encrypted preparation
@@ -222,15 +242,21 @@ func (p *phase) buildCommand() error {
 	commitment := sha256.Sum256(frame)
 	clear(frame)
 	fields := slices.Clone(i.Grant.Source)
+	recordField := identity.FeatureField{Name: "oauth.grant", Value: identity.FeatureValue{Kind: identity.FeatureText, Text: i.Grant.ID}}
+	versionField := identity.FeatureField{Name: "oauth.grant-version", Value: identity.FeatureValue{Kind: identity.FeatureUint64, Uint64: i.Grant.Version}}
+	if i.Transition == deleteConsent {
+		recordField = identity.FeatureField{Name: "oauth.consent-root", Value: identity.FeatureValue{Kind: identity.FeatureText, Text: i.Deletion.ID}}
+		versionField = identity.FeatureField{Name: "oauth.consent-version", Value: identity.FeatureValue{Kind: identity.FeatureUint64, Uint64: i.Deletion.Version}}
+	}
 	fields = append(fields,
 		identity.FeatureField{Name: "oauth.input-commitment", Value: identity.FeatureValue{Kind: identity.FeatureBytes, Bytes: commitment[:]}},
 		identity.FeatureField{Name: "oauth.caller-intent", Value: identity.FeatureValue{Kind: identity.FeatureBytes, Bytes: i.Intent[:]}},
 		identity.FeatureField{Name: "oauth.configuration", Value: identity.FeatureValue{Kind: identity.FeatureBytes, Bytes: i.Configuration[:]}},
 		identity.FeatureField{Name: "oauth.created-at", Value: identity.FeatureValue{Kind: identity.FeatureTime, Time: i.CreatedAt}},
 		identity.FeatureField{Name: "oauth.transition", Value: identity.FeatureValue{Kind: identity.FeatureUint64, Uint64: uint64(i.Transition)}},
-		identity.FeatureField{Name: "oauth.grant", Value: identity.FeatureValue{Kind: identity.FeatureText, Text: i.Grant.ID}},
+		recordField,
 		identity.FeatureField{Name: "oauth.client", Value: identity.FeatureValue{Kind: identity.FeatureText, Text: i.Grant.ClientID}},
-		identity.FeatureField{Name: "oauth.grant-version", Value: identity.FeatureValue{Kind: identity.FeatureUint64, Uint64: i.Grant.Version}},
+		versionField,
 	)
 	if i.Transition == approveInteraction {
 		fields = append(fields,
@@ -352,7 +378,7 @@ func (p *phase) AdmitFeaturePreparation(ctx context.Context, w kernel.Work, c id
 	return p.check(ctx, w, false)
 }
 func (p *phase) browserRequired() bool {
-	return p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == denyInteraction
+	return p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == denyInteraction || p.input.Transition == deleteConsent
 }
 func (p *phase) issuing() bool {
 	return p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == exchangeCode || p.input.Transition == rotateRefresh || p.input.Transition == createWorkload
@@ -432,6 +458,12 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 	if p.browserRequired() && (p.observation.ValidateAt(now) != nil || !now.Before(i.ObservationUntil)) {
 		return identity.ForbiddenError{}
 	}
+	if i.Transition == deleteConsent {
+		if (oauth.ConsentExecution{Command: p.consentCommand, Session: p.observation}).ValidateAt(now) != nil {
+			return identity.ForbiddenError{}
+		}
+		return p.checkConsentDeletion(ctx, w, final)
+	}
 	if p.issuing() && (!now.Before(g.ExpiresAt) || !i.TargetExpires.IsZero() && !now.Before(i.TargetExpires)) {
 		return identity.ForbiddenError{}
 	}
@@ -444,6 +476,9 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 	}
 	if i.Transition == createInteraction || i.Transition == createWorkload {
 		return nil
+	}
+	if err := p.checkGrantConsent(ctx, w, final); err != nil {
+		return err
 	}
 	workloadColumn := "NULL::jsonb"
 	if workloadSelected(p.store.config.Protocol.Clients) {
@@ -510,6 +545,9 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 func (p *phase) checkConsent(ctx context.Context, w kernel.Work, final bool) error {
 	if p.input.Transition != approveInteraction {
 		return nil
+	}
+	if p.store.config.ConsentManagement {
+		return p.checkManagedConsent(ctx, w, final)
 	}
 	i := p.input
 	g, c := i.Grant, i.Consent

@@ -52,6 +52,7 @@ type authenticatedPasswordFixture struct {
 	signOut        func()
 	changePassword func()
 	signInAgain    func() (auth.BearerCredential, session.CSRFToken)
+	anotherUser    func() (auth.BearerCredential, session.CSRFToken)
 }
 
 // The explicit provider seam records at most one bounded rendered registration
@@ -398,7 +399,60 @@ func passwordFixtureWithChange(t *testing.T, change bool, faults ...*oauthCommit
 		}
 		return auth.NewBearerCredential(cookies[0].Value), csrf
 	}
-	return authenticatedPasswordFixture{ctx: ctx, pool: pool, tenant: baselineTenant, browser: browser, csrf: csrf, sessions: sessions, keys: keys, oauth: config, signOut: signOut, changePassword: changePassword, signInAgain: signInAgain}
+	anotherUser := func() (auth.BearerCredential, session.CSRFToken) {
+		// A separate browser performs the same public registration/confirmation/
+		// sign-in journey. No identity/session rows or authority are fabricated.
+		previous := client.Jar
+		client.Jar, _ = cookiejar.New(nil)
+		defer func() { client.Jar = previous }()
+		mailbox.mu.Lock()
+		mailbox.body = ""
+		mailbox.mu.Unlock()
+		var candidateBytes [32]byte
+		if _, err := rand.Read(candidateBytes[:]); err != nil {
+			t.Fatal("second-user entropy unavailable")
+		}
+		password := hex.EncodeToString(candidateBytes[:])
+		address := "oauth-other-" + hex.EncodeToString(candidateBytes[:8]) + "@example.invalid"
+		clear(candidateBytes[:])
+		flow := preauth("signup")
+		status, body, _, cookies := call("/v1/password/signup", map[string]any{"flowID": string(flow.FlowID), "email": address, "password": password, "callbackURL": origin + "/confirm"}, "oauth-other-signup")
+		var registered passwordhttp.SignupResponse
+		if status != 200 || json.Unmarshal(body, &registered) != nil || !registered.VerificationRequired || registered.CommitOutcome != "committed" || len(cookies) != 0 {
+			t.Fatal("second-user real registration failed", status)
+		}
+		if _, err := graph.workers.ProcessDeliveryOne(ctx, 0); err != nil {
+			t.Fatal("second-user native delivery failed", err)
+		}
+		mailbox.mu.Lock()
+		link := mailbox.body
+		mailbox.mu.Unlock()
+		parsed, err := url.Parse(link)
+		if err != nil || parsed.Query().Get("token") == "" {
+			t.Fatal("second-user real confirmation missing")
+		}
+		command, err := identity.NewCommandID()
+		if err != nil {
+			t.Fatal(err)
+		}
+		status, body, _, cookies = call("/v1/email/verification-confirm", map[string]string{"token": parsed.Query().Get("token"), "callback": origin + "/confirm", "commandID": string(command)}, "")
+		var confirmed emailhttp.ConfirmationResponse
+		if status != 200 || json.Unmarshal(body, &confirmed) != nil || !confirmed.Confirmed || confirmed.CommitOutcome != "committed" || len(cookies) != 0 {
+			t.Fatal("second-user real confirmation failed", status)
+		}
+		flow = preauth("password")
+		status, body, headers, cookies := call("/v1/password/signin", map[string]any{"flowID": string(flow.FlowID), "identifier": address, "password": password, "callbackURL": origin + "/confirm"}, "")
+		var signed passwordhttp.SigninResponse
+		if status != 200 || json.Unmarshal(body, &signed) != nil || !signed.SignedIn || signed.CommitOutcome != "committed" || len(cookies) != 1 {
+			t.Fatal("second-user real sign-in failed", status)
+		}
+		csrf, err := session.ParseCSRFToken(headers.Get("X-CSRF-Token"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return auth.NewBearerCredential(cookies[0].Value), csrf
+	}
+	return authenticatedPasswordFixture{ctx: ctx, pool: pool, tenant: baselineTenant, browser: browser, csrf: csrf, sessions: sessions, keys: keys, oauth: config, signOut: signOut, changePassword: changePassword, signInAgain: signInAgain, anotherUser: anotherUser}
 }
 
 // This bounded test-only Source composes immutable Migration values returned

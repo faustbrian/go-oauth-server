@@ -32,6 +32,10 @@ type RecoveryRequest struct {
 	Session              auth.BearerCredential
 	Token                string
 	ClientAuthentication oauth.ClientAuthentication
+	// ConsentID selects only the original consent-delete record. It must be
+	// empty for other variants and conveys no authority without exact original
+	// current browser, tenant/client and authenticated retained preparation.
+	ConsentID string
 }
 
 // Format redacts original bearer custody and correlated command scope.
@@ -98,7 +102,26 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 	}
 	var p *phase
 	var observed session.GetResult
+	if request.OperationID != "identity.oauth-server.consent-delete" && request.ConsentID != "" {
+		return out, oauth.ErrInvalidRequest
+	}
 	switch request.OperationID {
+	case "identity.oauth-server.consent-delete":
+		if !s.config.ConsentManagement || client.Workload != nil || request.Token != "" || request.ClientAuthentication.Method() != "none" {
+			return out, oauth.ErrAccessDenied
+		}
+		if _, err := identity.ParseSubjectID(request.ConsentID); err != nil {
+			return out, oauth.ErrInvalidRequest
+		}
+		observed, err = s.recoverySession(ctx, request)
+		if err != nil {
+			return out, err
+		}
+		source, err := sessionpg.OriginalSessionFields(observed.Session)
+		if err != nil {
+			return out, oauth.ErrAccessDenied
+		}
+		p = s.consentDeletePhase(client, observed, request.ConsentID, request.CommandID, source)
 	case "identity.oauth-server.authorize", "identity.oauth-server.continue":
 		if client.Workload != nil {
 			return out, oauth.ErrAccessDenied
@@ -179,7 +202,7 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 	if err := s.coordinator(p); err != nil {
 		return out, err
 	}
-	if request.OperationID == "identity.oauth-server.authorize" || p.input.Transition == createWorkload {
+	if request.OperationID == "identity.oauth-server.authorize" || p.input.Transition == createWorkload || p.input.Transition == deleteConsent {
 		wire, generation, err := p.coordinator.QueryFeaturePreparation(ctx, p.query(), p.caller(), p.registration(), p)
 		if err != nil {
 			return out, publicError(ctx, err, oauth.ErrAccessDenied)
@@ -187,6 +210,9 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 		defer clear(wire)
 		if err := p.restore(ctx, generation, wire, true); err != nil {
 			return out, publicError(ctx, err, oauth.ErrAccessDenied)
+		}
+		if p.input.Transition == deleteConsent && (p.input.Deletion == nil || p.input.Deletion.ID != request.ConsentID || p.input.Binding.RecordID != request.ConsentID) {
+			return out, oauth.ErrAccessDenied
 		}
 		// Authentication of retained context is not a credential delivery path.
 		p.output = preparedOutput{}

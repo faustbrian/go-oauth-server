@@ -422,7 +422,7 @@ func (e *baselineEvaluator) Evaluate(ctx context.Context, r authorization.Reques
 	}
 	if r.Subject.Kind == authorization.SubjectUser && r.Subject.ID != "" && r.Resource.Type == "identity.user" && r.Resource.ID == authorization.ResourceID(r.Subject.ID) {
 		switch r.Action {
-		case "identity.oauth-server.authorize", "identity.oauth-server.authorize.recover", "identity.oauth-server.continue", "identity.oauth-server.continue.recover", "identity.oauth-server.token", "identity.oauth-server.token.recover", "identity.oauth-server.revoke", "identity.oauth-server.revoke.recover":
+		case "identity.oauth-server.authorize", "identity.oauth-server.authorize.recover", "identity.oauth-server.continue", "identity.oauth-server.continue.recover", "identity.oauth-server.token", "identity.oauth-server.token.recover", "identity.oauth-server.revoke", "identity.oauth-server.revoke.recover", "identity.oauth-server.consent-get", "identity.oauth-server.consent-list", "identity.oauth-server.consent-delete", "identity.oauth-server.consent-delete.recover":
 			allow = true
 		}
 	}

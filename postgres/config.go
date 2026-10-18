@@ -52,6 +52,11 @@ type Config struct {
 	// WorkloadAuthority binds configured machine clients to existing primary
 	// directory and service-account authorization owners, never user substitutes.
 	WorkloadAuthority WorkloadAuthorityConfig
+	// ConsentManagement enables own-consent reads/withdrawal and mandatory
+	// consent-generation fences for every human token. Install the forward
+	// ConsentMigrationSource and retire all old/unselected serving instances
+	// before enabling. Workload-only composition must leave this false.
+	ConsentManagement bool
 }
 
 // Format redacts keys, correlated deployment scopes and policy dependencies.
@@ -102,10 +107,17 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	} else if c.WorkloadAuthority != (WorkloadAuthorityConfig{}) {
 		return nil, oauth.ErrInvalidRequest
 	}
+	if c.ConsentManagement && !webSelected(protocol.Clients) {
+		return nil, oauth.ErrInvalidRequest
+	}
 	// Privileged's native counters supply exactly velocity. The upstream
 	// protected-provider admission API is CredentialMutation-only; accepting
 	// another mandatory signal here would silently omit its owning provider.
-	for _, operation := range (&phase{}).FeatureOperations() {
+	operations := (&phase{}).FeatureOperations()
+	if c.ConsentManagement {
+		operations = append(operations, operation("identity.oauth-server.consent-delete"))
+	}
+	for _, operation := range operations {
 		admitted, err := c.Counters.CommandCounters.Policy.Admit(risk.Action(operation.OperationID))
 		if err != nil || admitted.PolicyVersion != c.Counters.PolicyVersion || admitted.PolicyVersion != c.Coordinator.AdmissionPolicy.PolicyVersion || admitted.Preflight != "" || admitted.Profile.Class != risk.Privileged || !slices.Equal(admitted.Profile.RequiredSignals, []string{"velocity"}) {
 			return nil, oauth.ErrInvalidRequest
@@ -171,6 +183,11 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 		value := c.WorkloadAuthority
 		workloadAuthority = &value
 	}
+	var consentManagement *bool
+	if c.ConsentManagement {
+		enabled := true
+		consentManagement = &enabled
+	}
 	frame, err := json.Marshal(struct {
 		Profile                                       string
 		Schema, Issuer, Environment, Resource, Policy string
@@ -180,7 +197,8 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 		PolicyVersion                                 uint64
 		Durations                                     []time.Duration
 		WorkloadAuthority                             *WorkloadAuthorityConfig `json:",omitempty"`
-	}{"oauth-code-public-password-v1", c.Schema, protocol.Issuer.String(), protocol.Environment, protocol.Resource, c.PolicyID, clientPolicies(protocol.Clients), profile(c.Session.Profile), c.Session.Repository.Schema, admission.PolicyVersion, []time.Duration{protocol.CodeTTL, protocol.ContinuationTTL, protocol.AccessTTL, protocol.RefreshTTL}, workloadAuthority})
+		ConsentManagement                             *bool                    `json:",omitempty"`
+	}{"oauth-code-public-password-v1", c.Schema, protocol.Issuer.String(), protocol.Environment, protocol.Resource, c.PolicyID, clientPolicies(protocol.Clients), profile(c.Session.Profile), c.Session.Repository.Schema, admission.PolicyVersion, []time.Duration{protocol.CodeTTL, protocol.ContinuationTTL, protocol.AccessTTL, protocol.RefreshTTL}, workloadAuthority, consentManagement})
 	if err != nil {
 		return nil, oauth.ErrInvalidRequest
 	}

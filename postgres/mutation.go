@@ -13,6 +13,9 @@ import (
 )
 
 func (p *phase) mutate(ctx context.Context, w kernel.Work) error {
+	if p.input.Transition == deleteConsent {
+		return p.mutateConsentDeletion(ctx, w)
+	}
 	i := p.input
 	g := i.Grant
 	s := p.store.schema
@@ -99,7 +102,14 @@ func (p *phase) mutate(ctx context.Context, w kernel.Work) error {
 		// after mutation; another grant cannot silently replace its identity.
 		var n int64
 		var err error
-		if i.Consent.Created {
+		if p.store.config.ConsentManagement {
+			fp := clientFingerprint(p.client)
+			if i.Consent.Created {
+				n, err = w.Exec(ctx, `INSERT INTO `+s+`.consents(consent_id,tenant_id,user_id,client_id,client_version,scopes,granted_at,version,client_fingerprint) VALUES($7,$1,$2,$3,$4::numeric,$5::jsonb,$6,1,$8)`, string(g.Tenant), string(g.User), g.ClientID, strconv.FormatUint(g.ClientVersion, 10), string(scopes), i.CreatedAt, i.Consent.ID, fp[:])
+			} else {
+				n, err = w.Exec(ctx, `UPDATE `+s+`.consents SET client_version=$4::numeric,scopes=$5::jsonb,granted_at=$6,version=$9::numeric,client_fingerprint=$10 WHERE tenant_id=$1 AND user_id=$2 AND client_id=$3 AND consent_id=$7 AND version=$8::numeric`, string(g.Tenant), string(g.User), g.ClientID, strconv.FormatUint(g.ClientVersion, 10), string(scopes), i.CreatedAt, i.Consent.ID, strconv.FormatUint(i.Consent.BeforeVersion, 10), strconv.FormatUint(i.Consent.AfterVersion, 10), fp[:])
+			}
+		} else if i.Consent.Created {
 			n, err = w.Exec(ctx, `INSERT INTO `+s+`.consents(consent_id,tenant_id,user_id,client_id,client_version,scopes,granted_at,version) VALUES($7,$1,$2,$3,$4::numeric,$5::jsonb,$6,1)`, string(g.Tenant), string(g.User), g.ClientID, strconv.FormatUint(g.ClientVersion, 10), string(scopes), i.CreatedAt, i.Consent.ID)
 		} else {
 			n, err = w.Exec(ctx, `UPDATE `+s+`.consents SET client_version=$4::numeric,scopes=$5::jsonb,granted_at=$6,version=$9::numeric WHERE tenant_id=$1 AND user_id=$2 AND client_id=$3 AND consent_id=$7 AND version=$8::numeric`, string(g.Tenant), string(g.User), g.ClientID, strconv.FormatUint(g.ClientVersion, 10), string(scopes), i.CreatedAt, i.Consent.ID, strconv.FormatUint(i.Consent.BeforeVersion, 10), strconv.FormatUint(i.Consent.AfterVersion, 10))
@@ -109,6 +119,11 @@ func (p *phase) mutate(ctx context.Context, w kernel.Work) error {
 		}
 		if n != 1 {
 			return identity.ConflictError{}
+		}
+		if p.store.config.ConsentManagement {
+			if err := p.bindApprovedConsent(ctx, w); err != nil {
+				return err
+			}
 		}
 		if err := w.RecordOAuthConsent(p, kernel.OAuthConsentMutation{ID: i.Consent.ID, BeforeVersion: i.Consent.BeforeVersion, AfterVersion: i.Consent.AfterVersion, Created: i.Consent.Created}); err != nil {
 			return err
@@ -170,7 +185,11 @@ func (p *phase) RecoverParticipant(ctx context.Context, w kernel.RecoveryWork) (
 	if err != nil || f.Contributor != p.Descriptor() || f.Operation != p.operation(b.OperationID) || !oauthLifecycle(life.EventType) || life.AfterVersion != life.BeforeVersion+1 {
 		return kernel.RecoveryUnknown, identity.ForbiddenError{}
 	}
-	rows, err := w.Query(ctx, `SELECT grant_id,before_version::text,after_version::text,binding_digest FROM `+p.store.schema+`.effects WHERE tenant_id=$1 AND command_id=$2 AND operation_id=$3 AND record_id=$4`, string(b.TenantID), string(b.CommandID), b.OperationID, b.RecordID)
+	ownerColumn := "grant_id"
+	if b.OperationID == "identity.oauth-server.consent-delete" {
+		ownerColumn = "consent_id"
+	}
+	rows, err := w.Query(ctx, `SELECT `+ownerColumn+`,before_version::text,after_version::text,binding_digest FROM `+p.store.schema+`.effects WHERE tenant_id=$1 AND command_id=$2 AND operation_id=$3 AND record_id=$4`, string(b.TenantID), string(b.CommandID), b.OperationID, b.RecordID)
 	if err != nil {
 		return kernel.RecoveryUnknown, err
 	}
@@ -190,12 +209,15 @@ func (p *phase) RecoverParticipant(ctx context.Context, w kernel.RecoveryWork) (
 	if before != strconv.FormatUint(life.BeforeVersion, 10) || after != strconv.FormatUint(life.AfterVersion, 10) || subtle.ConstantTimeCompare(digest, want[:]) != 1 || grant == "" {
 		return kernel.RecoveryUnknown, identity.UnavailableError{}
 	}
+	if b.OperationID == "identity.oauth-server.consent-delete" && grant != b.RecordID {
+		return kernel.RecoveryUnknown, identity.UnavailableError{}
+	}
 	return kernel.RecoveryCommitted, nil
 }
 
 func oauthLifecycle(event string) bool {
 	switch event {
-	case "grant.created.v1", "grant.authorized.v1", "grant.scope_changed.v1", "grant.code_exchanged.v1", "grant.refresh_rotated.v1", "grant.revoked.v1", "oauth_access.revoked.v1":
+	case "grant.created.v1", "grant.authorized.v1", "grant.scope_changed.v1", "grant.code_exchanged.v1", "grant.refresh_rotated.v1", "grant.revoked.v1", "oauth_access.revoked.v1", "consent.revoked.v1":
 		return true
 	default:
 		return false

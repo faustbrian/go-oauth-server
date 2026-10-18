@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add explicitly selected own-consent get/list/withdrawal using genuine current
+  password sessions, current authority and a 15-minute sensitive-proof cap.
+  Install `ConsentMigrationSource` in an exclusive window and retire old or
+  unselected serving instances before enabling `ConsentManagement` everywhere.
+  A versioned consent-generation barrier atomically denies all associated
+  code/access/refresh descendants without fanout, emits `consent.revoked.v1`
+  with the actual consent identity/version and supports original metadata-only
+  recovery. Existing grant/parent lineage and published migrations are retained;
+  explicit reconfirmation cannot resurrect an old generation.
 - Add configured workload access through the existing coordinator, current
   directory/workload authorization owners, service-actor audit and lifecycle.
   Install `WorkloadMigrationSource` before enabling workloads, using an exclusive

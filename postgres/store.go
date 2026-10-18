@@ -38,6 +38,7 @@ const (
 	revokeAccess
 	revokeFamily
 	createWorkload
+	deleteConsent
 )
 
 type grantRecord struct {
@@ -53,6 +54,8 @@ type grantRecord struct {
 	Resource             string
 	CreatedAt, ExpiresAt time.Time
 	Workload             *workloadSource `json:",omitempty"`
+	ConsentID            string          `json:",omitempty"`
+	ConsentGeneration    uint64          `json:",omitempty"`
 }
 type artifactPayload struct {
 	Schema  uint32
@@ -87,15 +90,21 @@ type phaseInput struct {
 	Intent                      [32]byte
 	Network                     string
 	Consent                     consentMutation
+	Deletion                    *consentDeletion `json:",omitempty"`
 }
 
 type consentMutation struct {
 	ID                          string
 	BeforeVersion, AfterVersion uint64
 	Created                     bool
+	Generation                  uint64 `json:",omitempty"`
+	State                       string `json:",omitempty"`
 }
 
 func (s *Store) prepareConsent(ctx context.Context, g grantRecord) (consentMutation, error) {
+	if s.config.ConsentManagement {
+		return s.prepareManagedConsent(ctx, g)
+	}
 	var id, rawVersion string
 	err := s.pool.Raw().QueryRow(ctx, `SELECT consent_id,version::text FROM `+s.schema+`.consents WHERE tenant_id=$1 AND user_id=$2 AND client_id=$3`, string(g.Tenant), string(g.User), g.ClientID).Scan(&id, &rawVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -584,6 +593,15 @@ func (s *Store) lookup(ctx context.Context, wire string, client oauth.Client, ki
 	}
 	if found == nil {
 		return artifactRecord{}, oauth.ErrInvalidGrant
+	}
+	if s.config.ConsentManagement && found.Grant.Workload == nil {
+		active, err := s.consentLookupState(ctx, &found.Grant)
+		if err != nil {
+			return artifactRecord{}, err
+		}
+		if found.Kind != oauth.TokenContinuation && !active {
+			found.GrantState = "revoked"
+		}
 	}
 	return *found, nil
 }

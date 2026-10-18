@@ -88,6 +88,42 @@ Retain original configuration/keys and retire old instances on configured-secret
 changes as for web clients. Owning introspection reads workload epochs instead
 of human/session authority; its subject is the configured service account.
 
+## Optional own-consent profile installation
+
+Append `ConsentMigrationSource{Base: prior, Schema: dedicatedSchema,
+Version: nextAllocatedVersion}` to the same OAuth history namespace. Base may
+include the workload extension but need not require it. The migration retains
+installed history bytes and grant/artifact lineage, binds already-approved human
+grants to their actual independent consent, and records exact original client
+policy fingerprints from code-issuance provenance. Missing/ambiguous provenance
+or conflicting objects fail transactionally rather than being adopted.
+
+This ALTER/backfill/reference-constraint migration requires an exclusive window
+with issuance stopped and table/index/WAL headroom. Retire old binaries and
+unselected configurations, install the extension, then enable
+`Config.ConsentManagement=true` on **every** serving human-token instance before
+resuming traffic. A configuration that omits consent fences must not remain a
+parallel accepting path. No workload-only service selects human management.
+Published base/workload migration bytes are unchanged; there is no destructive
+down migration or background cleanup journal.
+
+`Service.ConsentGet/List/Delete` and the native Store implement the canonical
+own-consent operations. Commands borrow current genuine browser/CSRF custody and
+never select another effective user. Delete rechecks actual current session,
+directory, credential and policy through public owners, same-browser CSRF and
+the sensitive 15-minute original-authentication cap before and after waits.
+It advances one versioned consent-generation barrier and writes its actual
+participant receipt/audit/`consent.revoked.v1` in the sole Work. Approval and
+refresh lock that consent before grant/artifact state; withdrawal does not lock
+an unbounded grant set. Tokens fail closed against current consent state and
+generation. Explicit later approval does not revive earlier generations.
+
+Unknown delete recovery supplies `OperationID=identity.oauth-server.consent-delete`,
+the original CommandID/ConsentID/ClientID/TenantID and current original Session,
+with Token/client-authentication empty. It authenticates the retained original
+preparation before metadata reconciliation. Do not retry a new withdrawal to
+resolve uncertain commitment. Keep original configuration and keys for recovery.
+
 ## Unknown outcomes
 
 Cancellation, connection failure and lost COMMIT acknowledgement do not prove

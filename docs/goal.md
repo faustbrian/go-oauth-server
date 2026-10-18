@@ -1,5 +1,7 @@
 # Goal: planned go-oauth-server boundary
 
+[Documentation index](README.md)
+
 Status: planned
 
 The coordination plan identifies `github.com/faustbrian/go-oauth-server` as the
@@ -20,7 +22,9 @@ That record contains proposed contracts; it is not implementation evidence.
 - Record the frozen Service Edge family, OAuth capability, ownership, and
   delivery lifecycle in schema-v2 engineering metadata.
 - Validate the metadata locally and in hosted CI with immutable,
-  checksum-verified `go-library-tools` v1.4.0 tooling.
+  checksum-verified public `go-library-tools` v2.1.2 tooling. Ordinary checks
+  retain offline structure/links and every-change secrets; scheduled/manual
+  checks retain online authority refresh. No runtime or release proof follows.
 - Do not claim a public package identifier, installation path, runtime API,
   compatibility promise, or released behavior.
 - Keep the module non-releasable until its security model is implemented with

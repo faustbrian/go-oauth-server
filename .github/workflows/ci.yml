@@ -12,10 +12,10 @@ permissions:
   contents: read
 
 jobs:
-  planning-contract:
-    name: Planning contract
+  required:
+    name: Required
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 20 || 5 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -28,8 +28,10 @@ jobs:
       - uses: faustbrian/go-library-tools/.github/actions/setup-golib@09b43f49385650c44dd4151a12b0877ca6b48a88 # v2.5.1
         with:
           source_bootstrap: 'false'
-      - name: Check selected module contract
+      - name: Verify planning structure and every-change secrets
         env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           GOENV: 'off'
           GOWORK: 'off'
           GOTOOLCHAIN: local
@@ -40,7 +42,8 @@ jobs:
           GONOSUMDB: ''
         run: |
           set -euo pipefail
-          task_root="$(mktemp -d "${RUNNER_TEMP}/oauth-contract.XXXXXX")"
+          umask 077
+          task_root="$(mktemp -d "${RUNNER_TEMP}/golib-planning.XXXXXX")"
           cleanup() {
             status=$?
             trap - EXIT HUP INT TERM
@@ -52,20 +55,38 @@ jobs:
           trap 'exit 129' HUP
           trap 'exit 130' INT
           trap 'exit 143' TERM
-          mkdir "${task_root}/build" "${task_root}/modules" "${task_root}/tmp"
-          export GOCACHE="${task_root}/build"
-          export GOMODCACHE="${task_root}/modules"
-          export GOTMPDIR="${task_root}/tmp"
-          make ci
-
-  required:
-    name: Required
-    if: always()
-    needs: planning-contract
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Require planning contract
-        env:
-          PLANNING_RESULT: ${{ needs.planning-contract.result }}
-        run: test "${PLANNING_RESULT}" = success
+          mkdir -m 700 "${task_root}/tmp"
+          export TMPDIR="${task_root}/tmp"
+          GOLIB_TASK_CACHE_ROOT="$(mktemp -d "${TMPDIR}/golib-cache-session.XXXXXX")"
+          export GOLIB_TASK_CACHE_ROOT
+          mkdir -m 700 "${GOLIB_TASK_CACHE_ROOT}/cache" "${GOLIB_TASK_CACHE_ROOT}/mod"
+          export GOCACHE="${GOLIB_TASK_CACHE_ROOT}/cache"
+          export GOMODCACHE="${GOLIB_TASK_CACHE_ROOT}/mod"
+          export GOTMPDIR="${TMPDIR}"
+          case "${EVENT_NAME}" in
+            pull_request|push)
+              [[ "${BASE_SHA}" =~ ^[0-9a-f]{40}$ ]] || exit 1
+              git cat-file -e "${BASE_SHA}^{commit}" || exit 1
+              git merge-base --is-ancestor "${BASE_SHA}" HEAD || exit 1
+              make planning-check
+              timeout --signal=TERM --kill-after=5s 40s golib secrets check --base-sha "${BASE_SHA}"
+              ;;
+            schedule|workflow_dispatch)
+              make planning-check
+              golib secrets check
+              golib specification check --online
+              ;;
+            *) exit 1 ;;
+          esac
+          # Preserve runtime assurance alongside the bounded structural/security lane.
+          golib check --module .
+      - name: Remove public tooling installation
+        if: always()
+        run: |
+          set -euo pipefail
+          for path in "${RUNNER_TEMP}/golib-v2.5.1" "${RUNNER_TEMP}/golib-bin"; do
+            if [[ -d "${path}" ]]; then
+              chmod -R u+w "${path}"
+              find "${path}" -depth -delete
+            fi
+          done

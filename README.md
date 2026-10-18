@@ -66,6 +66,11 @@ See the [selected contract](docs/selected-profile.md),
 [security model](docs/security.md) and [changelog](CHANGELOG.md).
 The complete [repository goal](docs/goal.md) remains broader than this profile.
 
+See [contributing](CONTRIBUTING.md) for the bounded structural/security checks
+and the selected runtime checks used by CI.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+Continue with the [documentation index](docs/README.md).

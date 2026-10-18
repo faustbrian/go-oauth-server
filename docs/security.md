@@ -1,5 +1,7 @@
 # Security model
 
+[Documentation index](README.md)
+
 This experimental profile is not a complete OAuth/OIDC provider or a supported
 production release. The broader repository goal remains open; this profile does
 not qualify shared-issuer resource verification/cache, workload, device, OIDC,

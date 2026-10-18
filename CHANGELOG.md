@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add bounded own-consent get/list and fresh-session, origin/CSRF-protected
+  withdrawal through the optional native `ConsentManager`. Withdrawal reports
+  original durability metadata, never replacement credentials or unbounded
+  per-grant results. Native use requires the matching forward consent profile.
 - Snapshot workload policy at validation, construction and adapter boundaries
   so caller or adapter whole-value replacement cannot change tenant, identity
   or the access ceiling of an already constructed service.

@@ -37,6 +37,10 @@ replacement authentication engine.
   `OwningClientIntrospection` selects separately authenticated confidential
   clients inspecting only their own actual opaque access/refresh tokens.
   Public client ID or inspected-token possession alone never authorizes lookup.
+- `Service.ConsentGet/List/Delete` use genuine current own-session custody.
+  Deletion additionally requires recent original authentication, issuer origin
+  and same-browser CSRF; native consent-root withdrawal denies associated
+  code/access/refresh authority without unbounded grant fanout.
 
 This root prerequisite alone does not supply durable execution. The selected
 native composition uses `oauthpostgres.NewService(pool, config, keys)` and is
@@ -78,6 +82,10 @@ Core policy alone does not make an older native adapter workload-capable: adopt
 an adapter version pinned to this workload-capable core and install its forward
 migration before enabling that profile. Local paired-source development does
 not establish canonical public-module installability.
+Own-consent management similarly requires a matching native version implementing
+`ConsentManager`, its forward `ConsentMigrationSource`, and explicit
+`ConsentManagement` selection. Retire old/unselected accepting instances before
+activation; a new core alone cannot add these fences to an older adapter.
 Client administration, OIDC,
 device flow, organization delegation, API-key exchange and
 resource-server verification/cache composition remain

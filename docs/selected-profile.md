@@ -53,6 +53,48 @@ There is no HTTP registration in this root module.
 | `identity.oauth-server.token` | `Service.Token(context.Context, TokenRequest) (TokenResult, error)` | Closed code/refresh web variant or explicitly configured Basic-only workload `client_credentials`; trusted transport network attribution is supplied after parsing. Code binds issuer/environment/client/exact redirect/S256/resource/user/scopes. Refresh narrows authority and rotates; reused parents revoke the family. Workload access binds only its trusted startup tenant/service account/resource/scope ceiling and never yields refresh. Unknown/replay results disclose no fresh token. |
 | `identity.oauth-server.revoke` | `Service.Revoke(context.Context, RevokeRequest) (RevokeResult, error)` | Possessed token and owning client authenticated under its registered none/Basic method; non-enumerating result. Revocation never revives a grant. |
 | `identity.oauth-server.introspect` | `Service.Introspect(context.Context, IntrospectRequest) (IntrospectResult, error)` when explicitly enabled | Separately authenticated owning confidential client reads actual opaque access/refresh state. Disabled/public/method-downgraded callers deny before lookup; inactive, unknown and foreign tokens return only `Active=false`. No route or general resource-server authorization is selected. |
+| `identity.oauth-server.consent-get` | `Service.ConsentGet(context.Context, ConsentGetRequest) (ConsentGetResult, error)` | Current genuine password-session owner reads only its approved independent consent ID/version/client/scopes/time. Foreign, revoked or unavailable targets disclose no metadata. |
+| `identity.oauth-server.consent-list` | `Service.ConsentList(context.Context, ConsentListRequest) (ConsentListResult, error)` | Current genuine session reads 1..64 own approved consents per page with a tenant/user/limit-bound opaque cursor. Pages use stable ID keyset order, not cross-request snapshot isolation. |
+| `identity.oauth-server.consent-delete` | `Service.ConsentDelete(context.Context, ConsentDeleteRequest) (ConsentDeleteResult, error)` | Exact own consent/version, fresh current password session, issuer Origin and same-browser CSRF. Atomic consent-root withdrawal returns Deleted plus original Completion metadata, not unbounded grant IDs or bearer material. |
+
+### Optional own-consent management
+
+The additive `ConsentManager` interface does not alter existing `Store`
+implementations. Native `ConsentManagement` is separately selected after its
+forward migration; workload-only composition cannot select human management.
+`NewConsentCommand` owns a closed scalar read/list/delete projection and borrows
+browser/CSRF custody. No command accepts an effective user or actor override.
+`Consent` and `ConsentListPage` own copied immutable metadata; zero is invalid.
+Cursor parsing alone establishes neither ownership nor authorization. Native
+cursors authenticate the exact current tenant/user/page limit and never renew
+original read validity. Get/list repeat genuine primary session/policy and
+consent reads; a failed query is not an empty successful page.
+
+Delete requires both the session owner's actual `Lifetime.Fresh` and an
+exclusive 15-minute cap from original completed password authentication, as fixed
+by `REFERENCE_CONFIGURATION.md`'s sensitive-operation `session.fresh_for` row.
+General session FreshFor may be 24h; activity, issuance, rotation and another
+session read cannot renew sensitive proof. This selected single-factor password
+profile does not accept an invented fresh flag or repurpose a password-change
+action proof. Preparation/apply/final checks retain original sealed admission,
+current directory/user/credential/authorization/session and CSRF owners.
+
+Each approved human grant binds the independent consent root and its generation.
+Withdrawal advances that root's actual version/generation and state in the sole
+coordinator Work. Every code/access/refresh admission and introspection observes
+the current primary root; missing/revoked/mismatched consent denies, and outages
+fail closed. No unbounded grant/artifact fanout establishes denial, and no
+asynchronous cleanup completion is claimed. Explicit new approval may reactivate
+the consent at its new generation, never rebind or revive older grants.
+Current client version and full policy fingerprint remain exact; changing client
+owner/resource/scopes without a version advance does not preserve stale consent.
+
+Keep the original command ID after unknown withdrawal. Native `Recover` accepts
+the consent-delete operation, original consent/client/tenant and current original
+browser, authenticates retained preparation, and reconciles only original
+durability metadata. It cannot withdraw again or redeliver credentials. Delete
+repetition of the exact revoked version returns that same historical metadata;
+a stale version cannot withdraw later reconfirmed consent.
 
 `AuthorizationRequest` and `TokenRequest` are parsed before credential work.
 Every parameter is unique and grant-discriminated; missing required fields,
@@ -206,9 +248,9 @@ changing active writer keys does not replace original authority or renew expiry.
 ### Native lifecycle owner catalog
 
 These exact names extend the OAuth-server row in `LIFECYCLE_CASCADES.md` for
-the selected opaque-token profile. Each primary event carries the actual grant
-version transition, except access revocation, which carries that access record's
-0-to-1 transition. Pending grant creation conveys no consent or token authority.
+the selected opaque-token profile. Each primary event carries its actual owning
+record's version transition: the grant, independent consent root, or access
+record's 0-to-1 withdrawal. Pending grant creation conveys no consent or token authority.
 
 | Actual protected transition | Primary event |
 | --- | --- |
@@ -220,6 +262,15 @@ version transition, except access revocation, which carries that access record's
 | Consume refresh and create its access/refresh children | `grant.refresh_rotated.v1` |
 | Deny pending interaction, detect reuse, or revoke refresh family | `grant.revoked.v1` |
 | Revoke only the presented access record | `oauth_access.revoked.v1` |
+| Withdraw the independent approved consent root | `consent.revoked.v1` |
+
+Consent withdrawal's primary subject is `oauth_consent` and its persisted
+positive version advances once. Associated grants retain their historical
+versions/lineage and lose authority through the root generation; no fictitious
+per-grant `grant.revoked.v1` transitions are emitted. Consumers caching human
+grant validity must consume `consent.revoked.v1` and compare that primary root
+generation within the shared-issuer bound, not listen only for grant events.
+Workload grants remain independent of human consents.
 
 Every approval additionally records an independent consent mutation in the same
 Work and outbox: first creation emits `consent.created.v1` at 0-to-1; later

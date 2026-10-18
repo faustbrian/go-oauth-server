@@ -1,63 +1,70 @@
 # go-oauth-server
 
-> **Status: planned.** This repository does not currently provide an
-> installable package, a released version, or a runtime API.
+Experimental authorization-code/S256 OAuth protocol contracts
+for configured platform-owned public web clients and genuine password
+single-factor user sessions. This is not a complete OAuth/OIDC provider or a
+stable released API.
 
-`go-oauth-server` reserves the planned Golib boundary for OAuth 2.1
-authorization-server clients, authorization and consent, grants, token
-issuance, refresh rotation, revocation, introspection, metadata, and signing-key
-lifecycle. The plan keeps those concepts separate from extensions, storage,
-resource authorization, and application concerns.
+The root package owns bounded protocol parsing, exact HTTPS redirect/issuer/
+resource policy, explicit consent and scope ceilings. The optional
+PostgreSQL adapter being integrated separately implements the durable flow using the
+existing identity coordinator, current primary authorities, counters, audit and
+lifecycle owners. Applications supply configuration, not a domain store or
+replacement authentication engine.
 
-## Planned responsibility
+## Public surface
 
-The future root package is intended to own storage-neutral OAuth authorization
-server policy, requests and outcomes, protocol transitions, and explicit
-coordination through caller-supplied resources. Its contracts remain proposals
-until they are implemented, reviewed, verified, and released.
+- `ParseAuthorizationQuery` and `ParseTokenForm` bound and discriminate input
+  before credential work. Parsing authenticates nothing.
+- `Service.Authorize` admits a genuine current browser and returns an opaque
+  consent interaction, never a code before consent.
+- `Service.Continue` checks the exact original browser, synchronizer, issuer
+  origin and non-expanding scopes before a one-use code response or denial.
+- `Service.Token` exchanges an exact client/redirect/S256 code or rotates a
+  refresh token. Reused parents revoke their related family.
+- `Service.Revoke` handles owning-client token possession. Unknown and foreign
+  tokens are indistinguishable no-ops; access revocation is narrower than
+  refresh-family revocation.
+- `Service.Introspect` fails closed. Public client ID plus inspected-token
+  possession is not authenticated RFC7662 caller authority.
 
-## Non-goals
+This root prerequisite alone does not supply durable execution. The selected
+native composition uses `oauthpostgres.NewService(pool, config, keys)` and is
+delivered separately after consuming this public core. Its consumer proof starts
+with actual signup, registration confirmation and password sign-in. The
+[selected contract](docs/selected-profile.md) defines that integration boundary.
 
-The planned root boundary does not own:
+## Transport and custody
 
-- OpenID Connect claims, discovery representation, or user information;
-- device authorization flow or resource-server authorization policy;
-- user interfaces or application routing; or
-- database clients, migrations, transactions, caches, or background workers.
+Applications own TLS, routing, browser UI, cookies, trusted network attribution,
+endpoint rate limits and response encoding. No HTTP routes or introspection
+capabilities are registered here. Supply `TokenRequest.Network` from the trusted
+transport after parsing; the OAuth form cannot provide it. Untrusted headers
+cannot establish network attribution without the transport owner's policy.
 
-Those concerns may become separate modules or compose existing Golib packages.
-Their presence in planning material does not make them available here.
+Requests borrow credential strings until their bounded call returns. Tokens
+have explicit reveal-once custody; copies cannot restore delivery permission or
+durable one-use authority. Never log or implicitly serialize requests, token
+results, cookies, synchronizers, verifiers, codes or bearer values. Deliver only
+fresh known-committed output. Unknown/historical results contain no credential.
 
-## Lifecycle and ownership
+All external operations require a non-nil context and honor earlier deadlines.
+Immutable services support concurrent calls; borrowed pools, clocks, policy and
+key providers must remain alive and concurrency-safe. The packages start no
+background work and own no pool or process shutdown.
 
-Implementation, hardening, and release have not started. The current module
-declaration exists only so repository tooling can validate the planned module
-identity, family, ownership, and lifecycle metadata.
+## Adoption boundary
 
-The plan requires caller-owned configuration and runtime resources, copied
-mutable inputs, context-bounded external operations, and no package-owned
-background work. These are design constraints, not claims about released
-behavior.
+Only public clients with method `none`, exact HTTPS callbacks, OAuth-only scopes,
+opaque access tokens of at most five minutes and rotating opaque refresh tokens
+are selected. Confidential/workload issuance, client administration, OIDC,
+device flow, organization delegation, API-key exchange, authenticated
+introspection and resource-server verification/cache composition remain
+unsupported. No vendor authorization engine is embedded.
 
-## Planning and verification
-
-The [repository goal](docs/goal.md) and `modules.json` record the planning scope
-and schema-v2 engineering inventory. Planned lifecycle state excludes this
-module from installable and released consumer catalogs. The local
-`make cohesion` target validates that boundary with the exact checksum-pinned
-`go-library-tools` release declared in `.golib.yaml`.
-
-Passing repository checks proves only that the planning scaffold and metadata
-are internally consistent. It does not prove OAuth behavior or an API.
-
-The [planned security boundary](docs/security.md) records the assets, trust
-boundaries, required controls, and release blockers that any future runtime
-must satisfy. See [SECURITY.md](SECURITY.md) to report a vulnerability
-privately; no released version is currently supported.
-
-See the versioned [Golib ecosystem index](https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/README.md)
-and [package-family guidance](https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/design-language.md#package-families-and-selection)
-for the shared design language.
+See the [selected contract](docs/selected-profile.md),
+[security model](docs/security.md) and [changelog](CHANGELOG.md).
+The complete [repository goal](docs/goal.md) remains broader than this profile.
 
 ## License
 

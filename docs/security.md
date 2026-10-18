@@ -1,60 +1,56 @@
-# Planned security model
+# Security model
 
-This repository contains planning metadata only. It has no runtime package,
-public API, parser, persistence adapter, network operation, background work, or
-supported release. The controls below are release requirements, not claims
-about implemented behavior.
+This experimental profile is not a complete OAuth/OIDC provider or a supported
+production release. The broader repository goal remains open; this profile does
+not qualify shared-issuer resource verification/cache, workload, device, OIDC,
+organization or API-key behavior.
 
-## Assets and trust boundaries
+## Authority and atomicity
 
-The planned core will protect authorization codes, access and refresh tokens,
-client credentials, signing-key references, grants, consent, registered
-redirect URIs, scopes, issuer metadata, and revocation state. Trust boundaries
-will include authorization and token endpoint inputs, client authentication,
-resource-owner decisions, caller-supplied stores and signers, introspection and
-revocation callers, metadata rendering, and any protocol adapters.
+Protocol input, public client ID, parsed token, session record, command ID and
+structural binding never grant identity or permission by themselves.
+Authorization/consent require genuine current password single-factor custody,
+the original browser and exact origin/CSRF. Native execution rechecks current
+directory, credential, user-policy and applicable session owners before
+generation, mutation and final commit. Code/refresh grants retain original
+epochs and current grant authority without substituting another browser login.
 
-Applications will continue to own user authentication, transport security,
-route and database authorization, tenant isolation, persistence transactions,
-rate limiting, audit delivery, key custody, and user interfaces. The core must
-not infer those capabilities from ambient process state.
+The existing identity coordinator alone owns command identity, generation,
+fencing, atomic mutation/audit/lifecycle, commit classification and recovery.
+Code consumption and refresh rotation cannot commit without their related
+effects. Reused parents revoke only their original family. Access revocation
+does not revoke independent refresh authority. Unknown and foreign-client
+revocation tokens are indistinguishable no-ops.
 
-## Required controls before implementation or release
+## Secrets and hostile boundaries
 
-- Parse every untrusted request through endpoint-specific byte, field, item,
-  scope, URI, and diagnostic ceilings before allocation or normalization.
-- Require exact registered redirect matching, authorization-code single use,
-  PKCE verification where applicable, explicit client authentication policy,
-  bounded token lifetimes, and fail-closed grant and scope evaluation.
-- Keep client secrets, authorization codes, refresh tokens, access tokens, key
-  material, and raw requests out of errors, logs, traces, fixtures, snapshots,
-  and generated evidence.
-- Make token issuance, authorization-code consumption, refresh rotation,
-  revocation, and consent transitions atomic through caller-owned persistence;
-  expose classified durable-outcome ambiguity rather than retrying blindly.
-- Require a non-nil caller context for external work, propagate cancellation
-  and deadlines, close every acquired resource, and start no unowned goroutine.
-- Copy mutable inputs, make concurrency ownership explicit, compare secrets in
-  constant time where secrecy depends on comparison, and use cryptographic
-  randomness only through an explicit bounded source.
-- Authenticate introspection and revocation callers, prevent cross-client and
-  cross-tenant disclosure, and return stable protocol errors without reflecting
-  secret-bearing input.
-- Bind supported OAuth profiles and security decisions to versioned standards,
-  conformance fixtures, hostile tests, fuzzing, resource evidence, dependency
-  and source scanners, and direct-consumer verification.
+Inputs are bounded and grant-discriminated before credential work. Redirects
+use exact registered HTTPS strings, S256 cannot downgrade, scopes cannot expand,
+and issuer/environment/client/resource/purpose bind lookup commitments.
+Only explicitly revealed fresh known-committed output may cross transport.
+Requests and secret custody deny implicit serialization and redact formatting.
+Never log transport bodies, cookie headers, synchronizers, codes, verifiers,
+bearers, keys or encrypted preparation plaintext.
 
-## Release disposition
+Durable OAuth tables store keyed digests, not bearer wire values. Generated
+delivery custody is retained only in existing secret-envelope preparation,
+authenticated to original configuration, command and generation. Go does not
+guarantee erasure of string copies. Keys and requests remain caller-owned;
+retain required versions until outstanding grants and recovery are retired.
 
-**OAUTH-SERVER-RISK-001 — unimplemented security boundary**
+## Deployment obligations and exclusions
 
-- **Severity:** critical if treated as deployable.
-- **Disposition:** release blocker; not accepted for production.
-- **Owner:** go-oauth-server maintainers.
-- **Rationale:** no executable contract currently enforces the planned OAuth,
-  credential, token, persistence, cancellation, or resource invariants.
-- **Mitigation:** keep the module planned, unpublished, non-installable, and
-  non-releasable; consumers must use an independently supported implementation.
-- **Review condition:** reassess only after implementation, a complete threat
-  model, executable hostile and conformance evidence, scanner results, API and
-  migration policy, and independent Tier C review are present.
+Applications own TLS, trusted network attribution, routing/UI, endpoint rate
+limits, key custody, supported PostgreSQL, native migrations and resource-server
+authorization. No routes, workers or resource-token verifier are implicitly
+installed. Base PostgreSQL composition requires no device flow.
+
+Introspection is unselected and fails closed: public client ID plus inspected
+token possession cannot authorize RFC7662 disclosure. Confidential/workload
+credentials, client management, signing-key administration, trusted/dynamic
+consent, OIDC, device and delegation/exchange remain unsupported, not aliases.
+
+Independent review, public dependency/consumer verification and applicable
+release gates remain prerequisites for adoption. No production qualification
+or whole-goal closure is asserted by this experimental surface. See
+[SECURITY.md](../SECURITY.md) for private vulnerability reporting.

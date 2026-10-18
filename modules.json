@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "repository": "github.com/faustbrian/go-oauth-server",
-  "go_version": "1.27.0",
+  "go_version": "1.27.2",
   "modules": [
     {
       "directory": ".",
@@ -11,27 +11,31 @@
         {
           "module_directory": ".",
           "directory": ".",
-          "name": "planned",
+          "name": "oauthserver",
           "import_path": "github.com/faustbrian/go-oauth-server",
-          "kind": "planned entry point",
-          "production": false,
-          "executable": false,
-          "coverage_required": false,
-          "build_required": false,
+          "kind": "public",
+          "production": true,
+          "executable": true,
+          "coverage_required": true,
+          "build_required": true,
           "build_tags": []
         }
       ],
-      "purpose": "Planned storage-neutral OAuth 2.1 authorization-server core for clients, authorization, consent, grants, tokens, revocation, introspection, metadata, and signing keys; no runtime package is implemented or released.",
-      "lifecycle": "planned",
+      "purpose": "Experimental storage-neutral public-client authorization-code/S256, explicit consent, opaque token, refresh and revocation protocol contracts; complete provider qualification remains pending.",
+      "lifecycle": "experimental",
       "kind": "public library",
-      "releasable": false,
+      "releasable": true,
       "family": "service-edge",
       "family_label": "Service Edge",
       "family_description": "Request-edge policy, identity, access decisions, routing, middleware, and process lifecycle.",
       "family_order": 2,
-      "version": "",
+      "version": "0.0.0",
       "tag_prefix": "v",
-      "owned_dependencies": [],
+      "owned_dependencies": [
+        "github.com/faustbrian/go-authentication/v2",
+        "github.com/faustbrian/go-identity",
+        "github.com/faustbrian/go-identity/session"
+      ],
       "reverse_owned_dependencies": [],
       "external_runtime_dependencies": [],
       "required_services": [],
@@ -44,7 +48,7 @@
       "goal_files": [
         "docs/goal.md"
       ],
-      "goal_status": "planned",
+      "goal_status": "in-progress",
       "goal_evidence": [],
       "cohesion": {
         "family": "service-edge",
@@ -54,20 +58,20 @@
           "protocols-and-schemas",
           "resilience-and-admission"
         ],
-        "responsibility": "Plan a storage-neutral OAuth 2.1 authorization-server core for clients, authorization, consent, grants, token issuance, refresh rotation, revocation, introspection, metadata, and signing keys.",
+        "responsibility": "Bounded public-client authorization-code/S256, explicit consent, opaque token and refresh/revocation protocol contracts, composed through a consumer-owned durable store.",
         "non_goals": [
-          "Claim that a public package identifier, runtime API, implementation, compatibility promise, or release currently exists.",
+          "Claim complete OAuth/OIDC-provider, live interoperability or release qualification; unsupported grants and client methods stay unavailable.",
           "Own OpenID Connect claims, device authorization flow, resource-server authorization policy, user interfaces, or application routing.",
           "Own database clients, migrations, transactions, caches, background workers, or persistence adapters."
         ],
-        "public_package_identifier": "none",
+        "public_package_identifier": "oauthserver",
         "primary_entry_packages": [
           "github.com/faustbrian/go-oauth-server"
         ],
         "package_selection": {
-          "github.com/faustbrian/go-oauth-server": "Planning identity only; no importable package or runtime API currently exists."
+          "github.com/faustbrian/go-oauth-server": "Experimental public-client code/S256 protocol core. Actual durable execution requires its separately integrated native adapter; this root prerequisite is not a complete provider."
         },
-        "lifecycle_status": "planned",
+        "lifecycle_status": "active",
         "maturity": "experimental",
         "construction_styles": [
           "new-config",
@@ -90,7 +94,7 @@
         "supported_go": {
           "minimum": "1.27.0",
           "tested": [
-            "1.27.0"
+            "1.27.2"
           ]
         },
         "supported_platforms": [
@@ -100,21 +104,21 @@
         "supported_protocols": [],
         "documentation": {
           "readme": "README.md",
-          "api": null,
-          "adoption": null,
+          "api": "README.md",
+          "adoption": "docs/selected-profile.md",
           "security": "docs/security.md",
           "compatibility": null,
           "performance": null,
-          "examples": null,
+          "examples": "README.md",
           "faq": null,
-          "changelog": null,
-          "pkg_go_dev": null,
-          "ecosystem_index": "https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/README.md"
+          "changelog": "CHANGELOG.md",
+          "pkg_go_dev": "https://pkg.go.dev/github.com/faustbrian/go-oauth-server",
+          "ecosystem_index": "https://github.com/faustbrian/go-library-tools/blob/v2.5.1/docs/ecosystem/README.md"
         },
         "known_good_compatibility_sets": [],
         "delivery": {
-          "implementation": "not-started",
-          "hardening": "not-started",
+          "implementation": "in-progress",
+          "hardening": "in-progress",
           "release": "blocked"
         }
       },
@@ -128,9 +132,9 @@
         "interoperability": false,
         "lint": false,
         "mutation": false,
-        "race": false,
+        "race": true,
         "security": false,
-        "tests": false
+        "tests": true
       }
     }
   ]

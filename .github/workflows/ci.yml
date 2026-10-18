@@ -17,21 +17,46 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: .go-version
           cache: false
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: faustbrian/go-library-tools/.github/actions/setup-golib@09b43f49385650c44dd4151a12b0877ca6b48a88 # v2.5.1
         with:
-          repository: faustbrian/go-library-tools
-          ref: 531e4db50fd81a7201257a7b488a0cf22d333aca
-          path: .golib-tooling
-          persist-credentials: false
-      - uses: ./.golib-tooling/.github/actions/setup-golib
-      - run: make ci
+          source_bootstrap: 'false'
+      - name: Check selected module contract
+        env:
+          GOENV: 'off'
+          GOWORK: 'off'
+          GOTOOLCHAIN: local
+          GOPROXY: https://proxy.golang.org
+          GOSUMDB: sum.golang.org
+          GOPRIVATE: ''
+          GONOPROXY: ''
+          GONOSUMDB: ''
+        run: |
+          set -euo pipefail
+          task_root="$(mktemp -d "${RUNNER_TEMP}/oauth-contract.XXXXXX")"
+          cleanup() {
+            status=$?
+            trap - EXIT HUP INT TERM
+            chmod -R u+w "${task_root}" || status=1
+            find "${task_root}" -depth -delete || status=1
+            exit "${status}"
+          }
+          trap cleanup EXIT
+          trap 'exit 129' HUP
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          mkdir "${task_root}/build" "${task_root}/modules" "${task_root}/tmp"
+          export GOCACHE="${task_root}/build"
+          export GOMODCACHE="${task_root}/modules"
+          export GOTMPDIR="${task_root}/tmp"
+          make ci
 
   required:
     name: Required

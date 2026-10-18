@@ -12,7 +12,11 @@ implement a domain store, transaction callback or authentication engine.
 Supply an existing primary PostgreSQL pool and actual public native
 configuration for the identity coordinator, password-session admission,
 authorization policy, risk counters/lockouts, token digests and envelope keys.
-Configured clients are immutable platform-owned public registrations. All four
+Configured clients are immutable platform-owned public or confidential Basic
+registrations. Confidential clients require exactly one startup verifier matching
+their ID/version; the root's [configured secret policy](../docs/selected-profile.md)
+requires retiring old instances and advancing client version when secrets change.
+No plaintext client secret enters OAuth SQL, preparation, audit or outbox. All four
 canonical OAuth operations must select the current Privileged risk policy with
 exactly `velocity` required. Unavailable additional mandatory providers deny at
 construction; CredentialMutation provider custody is not reused for Privileged.
@@ -62,7 +66,8 @@ continue, token and revoke canonical operation IDs:
 - Consent: the same browser/tenant plus original client-bound continuation and
   its preallocated transition ID.
 - Token or revocation: original client-bound protocol bearer and its exact
-  preallocated transition/replay ID, without a browser or caller-selected user.
+  preallocated transition/replay ID, plus `ClientAuthentication` under that
+  client's configured method, without a browser or caller-selected user.
 
 The result contains only outcome, command ID and bounded retry metadata.
 Live leases remain observational. Only the original coordinator and unanimous

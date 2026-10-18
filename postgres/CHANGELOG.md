@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Verify configured confidential-client Basic credentials before native token,
+  revocation or historical token/revocation recovery effects or disclosure.
+  Preserve installed unchanged public-client grants when adding confidential
+  clients, and retain the existing current-primary-authority fences.
 - Bind each explicit consent's independent identity/version to actual SQL and
   a same-transaction secondary lifecycle event. Use canonical transition names,
   distinguish actual scope changes from unchanged authorization, and preserve

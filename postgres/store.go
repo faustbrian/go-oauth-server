@@ -317,7 +317,8 @@ func (s *Store) Continue(ctx context.Context, c oauth.ContinuationCommand) (oaut
 	return p.authorizationResult(result), nil
 }
 
-// Token admits a client-bound code/S256 or refresh bearer. Subject, tenant and
+// Token verifies the configured none/Basic client method before admitting a
+// client-bound code/S256 or refresh bearer. Subject, tenant and
 // root credential/policy epochs are loaded only from the original native grant;
 // no browser cookie, request actor or token claim can replace them. A correct
 // proof replay revokes only its related grant/family and returns invalid_grant.
@@ -340,6 +341,9 @@ func (s *Store) Token(ctx context.Context, c oauth.TokenCommand) (oauth.TokenRes
 		return oauth.TokenResult{}, err
 	}
 	r := c.Request
+	if err := s.config.Protocol.AuthenticateClient(ctx, client.ID, r.ClientAuthentication); err != nil {
+		return oauth.TokenResult{}, err
+	}
 	if r.ClientID != client.ID || r.Resource != "" && r.Resource != client.Resource {
 		return oauth.TokenResult{}, oauth.ErrInvalidRequest
 	}
@@ -424,7 +428,8 @@ func (s *Store) Token(ctx context.Context, c oauth.TokenCommand) (oauth.TokenRes
 	return out, nil
 }
 
-// Revoke implements public-client token-bound revocation (RFC7009 section5).
+// Revoke authenticates the registered none/Basic method before token-bound
+// revocation (RFC7009 sections2.1/5), including unknown-token no-ops.
 // Unknown and foreign tokens are indistinguishable successful no-ops. Access
 // revocation affects only that access record; refresh revokes its related grant,
 // never another client/root family. The token hint is advisory, not authority.
@@ -439,6 +444,9 @@ func (s *Store) Revoke(ctx context.Context, c oauth.RevocationCommand) (oauth.Re
 	}
 	client, err := s.client(c.Client)
 	if err != nil {
+		return oauth.RevokeResult{}, err
+	}
+	if err := s.config.Protocol.AuthenticateClient(ctx, client.ID, c.Request.ClientAuthentication); err != nil {
 		return oauth.RevokeResult{}, err
 	}
 	if c.Request.ClientID != client.ID || c.Request.Hint != 0 && c.Request.Hint != oauth.TokenAccess && c.Request.Hint != oauth.TokenRefresh {

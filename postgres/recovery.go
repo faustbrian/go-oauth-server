@@ -16,16 +16,19 @@ import (
 // OperationID is one of the four selected canonical OAuth operation IDs.
 // Authorize requires the original current browser and tenant, with Token empty;
 // continue additionally requires its original continuation. Token/revoke require
-// the original client-bound protocol bearer, with Session/TenantID empty.
+// the original client-bound protocol bearer and configured client authentication,
+// with Session/TenantID empty. Browser operations accept no client credentials.
 // No user, actor, scope, timestamp, redirect or command override is accepted.
-// Session and Token are borrowed secret custody; never log or serialize them.
+// Session, Token and ClientAuthentication are borrowed secret custody; never
+// log or serialize them.
 type RecoveryRequest struct {
-	OperationID string
-	CommandID   identity.CommandID
-	ClientID    string
-	TenantID    identity.TenantID
-	Session     auth.BearerCredential
-	Token       string
+	OperationID          string
+	CommandID            identity.CommandID
+	ClientID             string
+	TenantID             identity.TenantID
+	Session              auth.BearerCredential
+	Token                string
+	ClientAuthentication oauth.ClientAuthentication
 }
 
 // Format redacts original bearer custody and correlated command scope.
@@ -85,12 +88,18 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 		}
 	}
 	if client.ID == "" {
+		if request.ClientAuthentication.Method() != "none" {
+			return out, oauth.ErrInvalidClient
+		}
 		return out, oauth.ErrAccessDenied
 	}
 	var p *phase
 	var observed session.GetResult
 	switch request.OperationID {
 	case "identity.oauth-server.authorize", "identity.oauth-server.continue":
+		if request.ClientAuthentication.Method() != "none" {
+			return out, oauth.ErrInvalidRequest
+		}
 		observed, err = s.recoverySession(ctx, request)
 		if err != nil {
 			return out, err
@@ -121,6 +130,9 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 			p = s.targetPhase(target, client, approveInteraction, request.OperationID, request.CommandID, s.intent("recover"), "")
 		}
 	case "identity.oauth-server.token", "identity.oauth-server.revoke":
+		if err := s.config.Protocol.AuthenticateClient(ctx, client.ID, request.ClientAuthentication); err != nil {
+			return out, err
+		}
 		if request.TenantID != "" || request.Session.Token() != "" {
 			return out, oauth.ErrInvalidRequest
 		}

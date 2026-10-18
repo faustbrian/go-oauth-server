@@ -23,7 +23,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Config selects the platform-owned public-client/password single-factor
+// Config selects the platform-owned public/configured-Basic/password single-factor
 // profile. Every authority, schema, policy and key is trusted startup input.
 // Protocol clients are immutable registrations; changing policy invalidates
 // earlier grants instead of silently widening them. IntentKey must be a dedicated

@@ -147,8 +147,8 @@ uncached original 20-second read bound applies. Basic-authenticated revocation
 may still remove a token after epoch withdrawal; it never grants new authority.
 Concurrent duplicate revocation can return `ErrUnavailable` with the actual
 native conflict outcome while the original owner is unfinished. This does not
-claim completion, rollback or permission to remint. A later call observing the
-revoked token returns the ordinary successful no-op. Applications use the
+claim completion, rollback or permission to issue a replacement token. A later
+call observing the revoked token returns the ordinary successful no-op. Applications use the
 unavailable/retry semantics of
 [RFC7009 section2.2.1](https://www.rfc-editor.org/rfc/rfc7009.html#section-2.2.1),
 not an invalid-client/access-denied response for this authenticated claim race.
@@ -159,9 +159,10 @@ preserve its command ID and use native `Recover` with token operation, original
 client Basic custody and **empty Token/Session/TenantID**. The existing encrypted
 preparation authenticates the original configuration/flow before metadata-only
 reconciliation; it cannot redeliver access or execute again. A live lease stays
-pending. Terminal noncommit retains its original dependency-failure error along
-with `NotCommitted`. Do not retry issuance to resolve uncertainty. Original
-configuration/key retention and startup-secret instance retirement still apply;
+pending. If the command did not commit, the result retains its original
+dependency-failure error along with `NotCommitted`. Do not retry issuance to
+resolve uncertainty. Original configuration/key retention and startup-secret
+instance retirement still apply;
 no durable secret management, hot rotation, fleet revocation or dynamic client
 administration is selected.
 

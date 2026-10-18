@@ -50,7 +50,7 @@ There is no HTTP registration in this root module.
 | `identity.oauth-server.continue` | `Service.Continue(context.Context, ContinueRequest) (AuthorizeResult, error)` | Original continuation, same current browser/session, explicit issuer origin, synchronizer, consent decision and non-expanding scopes. Committed success yields one bound code response; denial redirects only to the originally validated exact target/state. |
 | `identity.oauth-server.token` | `Service.Token(context.Context, TokenRequest) (TokenResult, error)` | Closed code or refresh variant, registered none/Basic client authentication and trusted transport network attribution supplied after form parsing. Code binds issuer/environment/client/exact redirect/S256/resource/user/scopes. Refresh narrows authority and rotates; reused parents revoke the family. Unknown/replay results disclose no fresh token. |
 | `identity.oauth-server.revoke` | `Service.Revoke(context.Context, RevokeRequest) (RevokeResult, error)` | Possessed token and owning client authenticated under its registered none/Basic method; non-enumerating result. Revocation never revives a grant. |
-| `identity.oauth-server.introspect` | Unselected; `Service.Introspect` fails closed | RFC7662 section2.1 requires separate caller authorization. A public client ID and the inspected token cannot authorize this call. No lookup, disclosure, route or introspection capability is selected. |
+| `identity.oauth-server.introspect` | `Service.Introspect(context.Context, IntrospectRequest) (IntrospectResult, error)` when explicitly enabled | Separately authenticated owning confidential client reads actual opaque access/refresh state. Disabled/public/method-downgraded callers deny before lookup; inactive, unknown and foreign tokens return only `Active=false`. No route or general resource-server authorization is selected. |
 
 `AuthorizationRequest` and `TokenRequest` are parsed before credential work.
 Every parameter is unique and grant-discriminated; missing required fields,
@@ -72,6 +72,37 @@ deny before durable effects; native direct calls repeat actual verification.
 Applications reject URI credentials, require TLS, bound whole HTTP requests and
 map `ErrInvalidClient` to the protocol's protected endpoint error response,
 including the Basic challenge when appropriate. The library registers no route.
+
+### Optional owning-client introspection
+
+Set `Config.OwningClientIntrospection=true` explicitly and supply a Store that
+also implements the optional `Introspector` interface; the PostgreSQL Store does.
+The existing `Store` interface remains unchanged. Confidential-client
+configuration alone does not select this feature. `ParseIntrospectionForm`
+accepts only `token` and optional `token_type_hint` plus exactly one separate
+Basic Authorization header. It rejects body credential channels and duplicates.
+Recognized, incorrect and unknown hints cannot hide a supported token type, as
+required by [RFC7662 section2.1](https://www.rfc-editor.org/rfc/rfc7662#section-2.1).
+
+Only the authenticated owning client can learn an active token's actual issuer,
+resource, client, subject, scopes and expiry. Public callers, inspected-token
+possession alone and incorrect secrets never authorize lookup. The native reader
+checks primary grant/artifact state and the original password source's
+subject, directory, identifier, credential and authorization
+authority through their public owners. An access revocation affects only that
+access token; refresh-family revocation/reuse withdraws its descendants.
+Ordinary browser-session logout does not revoke an independently approved OAuth
+grant; credential or subject withdrawal still makes its tokens inactive.
+
+Unknown, foreign, expired, withdrawn and inactive tokens return a successful
+zero result. JSON encoding produces exactly `{"active":false}` with no reason or
+other token metadata ([RFC7662 section2.2](https://www.rfc-editor.org/rfc/rfc7662#section-2.2)).
+Operational authority failures and cancellation return redacted errors, never an
+active result or stale fallback. No tokens, client secrets or source records are
+returned. Each call is bounded and uncached; output is not reusable freshness
+evidence and must not be promoted into a cache or renewed by copying. This does
+not implement a resource verifier, JWT/OIDC, workload/exchange introspection,
+hot client-secret rotation, fleet revocation or HTTP registration.
 
 OAuth-owned `Token` is explicit reveal-once secret custody, not a session token
 or one-use authority. It uses standard cryptographic entropy and hash-based
@@ -153,7 +184,7 @@ they cannot select a different customer, tenant or human actor.
 ## Protocol and acceptance catalog
 
 The owning baseline is RFC6749, RFC7636 S256, RFC9207 issuer identification,
-RFC7009 revocation and RFC9700 security, with the canonical
+RFC7009 revocation, RFC7662 owning-client introspection and RFC9700 security, with the canonical
 `PROTOCOL_BASELINES.md` restrictions. The official RFC7636 AppendixB vector is
 the deterministic S256 oracle. Issuer/resource are configured exact HTTPS origins;
 callbacks use exact registered HTTPS URI matching. Native loopback exceptions
@@ -169,8 +200,9 @@ Root/family revocation must deny descendants; unavailable current authority deni
 This covers the selected M30 authorization-code/refresh profile only. It does
 not close `journey.oauth-oidc-provider.v1`, the complete OAuth units, or all
 shared-issuer SI01–SI10 cases. Client management, trusted consent, dynamic
-registration, workload/client-credentials issuance, authenticated introspection, OIDC, device flow, organization
-delegation, API-key exchange and shared-issuer cache/resource-verifier composition
+registration, workload/client-credentials issuance, general resource-server
+introspection, OIDC, device flow, organization delegation, API-key exchange and
+shared-issuer cache/resource-verifier composition
 remain unselected follow-on profiles with their original requirements intact.
 Standard RFC8693 exchange and the private session-JWT extension remain distinct
 unsupported grants; neither substitutes for the other or local-session issuance.

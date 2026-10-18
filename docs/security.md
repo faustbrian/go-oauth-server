@@ -57,7 +57,9 @@ limits, key custody, supported PostgreSQL, native migrations and resource-server
 authorization. No routes, workers or resource-token verifier are implicitly
 installed. Base PostgreSQL composition requires no device flow.
 
-Introspection is unselected and fails closed: public client ID plus inspected
+Introspection is disabled by default. Explicit owning-client selection requires
+separate confidential Basic authentication before lookup, current native source
+authority and metadata-free inactive results. Public client ID plus inspected
 token possession cannot authorize RFC7662 disclosure. Confidential Basic authority
 is a startup snapshot: secret/config changes require a new client version and
 retirement of old instances. It does not provide hot rotation, durable secret

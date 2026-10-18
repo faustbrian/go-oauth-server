@@ -40,7 +40,11 @@ type Config struct {
 	Clients               []Client
 	// ClientSecrets contains exactly one verifier per confidential client ID and
 	// version, none for public clients. See NewClientSecretVerifier's startup policy.
-	ClientSecrets                                                    []ClientSecretVerifier
+	ClientSecrets []ClientSecretVerifier
+	// OwningClientIntrospection explicitly enables RFC7662 for authenticated
+	// confidential clients inspecting only their own issued opaque tokens.
+	// Merely configuring a confidential client never enables this capability.
+	OwningClientIntrospection                                        bool
 	Clock                                                            Clock
 	MaximumDuration, CodeTTL, ContinuationTTL, AccessTTL, RefreshTTL time.Duration
 }
@@ -119,6 +123,11 @@ func NewService(config Config, dependencies Dependencies) (*Service, error) {
 	c, err := config.Validated()
 	if err != nil || dependencies.Sessions == nil || !dependencies.Sessions.Configured() || nilDependency(dependencies.Store) {
 		return nil, ErrInvalidRequest
+	}
+	if c.OwningClientIntrospection {
+		if reader, ok := dependencies.Store.(Introspector); !ok || nilDependency(reader) {
+			return nil, ErrInvalidRequest
+		}
 	}
 	return &Service{config: c, deps: dependencies}, nil
 }
@@ -261,7 +270,22 @@ type RevokeResult struct {
 	Outcome   identity.CommitOutcome
 	CommandID identity.CommandID
 }
-type IntrospectRequest struct{ ClientID, Token string }
+
+// IntrospectRequest borrows an inspected token separately from the caller's
+// Basic credential. Hint is advisory and cannot restrict supported-type lookup.
+type IntrospectRequest struct {
+	ClientID, Token      string
+	Hint                 TokenKind
+	ClientAuthentication ClientAuthentication
+}
+
+// Introspector is an optional adapter-neutral read seam. Implementations must
+// separately authenticate the owning confidential client and read current
+// primary token/grant and original subject/credential authority. No writes,
+// caching, freshness renewal or credential disclosure are permitted.
+type Introspector interface {
+	Introspect(context.Context, IntrospectionCommand) (IntrospectResult, error)
+}
 type IntrospectionCommand struct {
 	Request IntrospectRequest
 	Client  Client
@@ -275,6 +299,7 @@ type IntrospectResult struct {
 	ClientID, Subject, Resource string
 	Scopes                      []string
 	ExpiresAt                   time.Time
+	Issuer                      Issuer
 }
 
 func (s *Service) client(id string) (Client, error) {
@@ -535,17 +560,53 @@ func (s *Service) Revoke(ctx context.Context, request RevokeRequest) (out Revoke
 	return out, operationError(ctx, err)
 }
 
-// Introspect fails closed in the selected public-client profile. RFC7662
-// section2.1 requires separate caller authorization; neither a public client ID
-// nor the token being inspected supplies it. A later authenticated resource-
-// server profile owns actual introspection. No token lookup or disclosure occurs.
+// Introspect selects only explicitly enabled owning-confidential-client RFC7662
+// disclosure. Separate Basic authentication precedes lookup; public clients and
+// disabled profiles deny. Unknown, inactive or foreign tokens return only false.
+// The result is a current uncached observation, not renewable validity evidence
+// or resource-server authorization. Transport must enforce TLS and rate limits.
 func (s *Service) Introspect(ctx context.Context, request IntrospectRequest) (out IntrospectResult, err error) {
+	defer func() {
+		if recover() != nil {
+			out, err = IntrospectResult{}, ErrUnavailable
+		}
+	}()
 	ctx, stop, err := s.bounded(ctx)
 	if err != nil {
 		return out, err
 	}
 	defer stop()
-	return IntrospectResult{}, ErrAccessDenied
+	if !s.config.OwningClientIntrospection {
+		return out, ErrAccessDenied
+	}
+	client, err := s.client(request.ClientID)
+	if err != nil || client.Public || request.ClientAuthentication.Method() != "client_secret_basic" {
+		return out, ErrInvalidClient
+	}
+	if err := s.config.AuthenticateClient(ctx, client.ID, request.ClientAuthentication); err != nil {
+		return out, err
+	}
+	if !visible(request.Token, 2048) || request.Hint != 0 && request.Hint != TokenAccess && request.Hint != TokenRefresh {
+		return out, ErrInvalidRequest
+	}
+	reader, ok := s.deps.Store.(Introspector)
+	if !ok || nilDependency(reader) {
+		return out, ErrUnavailable
+	}
+	out, err = reader.Introspect(ctx, IntrospectionCommand{Request: request, Client: client})
+	if err != nil || ctx.Err() != nil {
+		return IntrospectResult{}, operationError(ctx, err)
+	}
+	if !out.Active {
+		return IntrospectResult{}, nil
+	}
+	scopes, err := validatedScopes(out.Scopes)
+	now := s.config.Clock.Now()
+	if err != nil || !scopeSubset(scopes, client.Scopes) || out.ClientID != client.ID || !identifier(out.Subject) || out.Resource != client.Resource || out.Issuer != s.config.Issuer || !now.Before(out.ExpiresAt) || out.ExpiresAt.After(now.Add(s.config.RefreshTTL)) || out.ExpiresAt.Year() > 9999 {
+		return IntrospectResult{}, ErrUnavailable
+	}
+	out.Scopes = scopes
+	return out, nil
 }
 
 func (s *Service) bounded(ctx context.Context) (context.Context, context.CancelFunc, error) {

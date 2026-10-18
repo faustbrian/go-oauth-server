@@ -29,8 +29,10 @@ replacement authentication engine.
 - `Service.Revoke` handles owning-client token possession. Unknown and foreign
   tokens are indistinguishable no-ops; access revocation is narrower than
   refresh-family revocation.
-- `Service.Introspect` fails closed. Public client ID plus inspected-token
-  possession is not authenticated RFC7662 caller authority.
+- `Service.Introspect` is disabled by default. Explicit
+  `OwningClientIntrospection` selects separately authenticated confidential
+  clients inspecting only their own actual opaque access/refresh tokens.
+  Public client ID or inspected-token possession alone never authorizes lookup.
 
 This root prerequisite alone does not supply durable execution. The selected
 native composition uses `oauthpostgres.NewService(pool, config, keys)` and is
@@ -42,8 +44,8 @@ with actual signup, registration confirmation and password sign-in. The
 ## Transport and custody
 
 Applications own TLS, routing, browser UI, cookies, trusted network attribution,
-endpoint rate limits and response encoding. No HTTP routes or introspection
-capabilities are registered here. Supply `TokenRequest.Network` from the trusted
+endpoint rate limits and response encoding. No HTTP routes are registered here.
+Supply `TokenRequest.Network` from the trusted
 transport after parsing; the OAuth form cannot provide it. Untrusted headers
 cannot establish network attribution without the transport owner's policy.
 
@@ -67,8 +69,8 @@ are selected. Each confidential client uses one fixed random 32-byte startup
 secret; changes require a new client version and retiring old service instances.
 This is not hot rotation or fleet-wide client/secret revocation. Workload
 issuance, client administration, OIDC,
-device flow, organization delegation, API-key exchange, authenticated
-introspection and resource-server verification/cache composition remain
+device flow, organization delegation, API-key exchange and
+resource-server verification/cache composition remain
 unsupported. No vendor authorization engine is embedded.
 
 See the [selected contract](docs/selected-profile.md),

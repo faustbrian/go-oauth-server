@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add explicitly enabled owning-confidential-client RFC7662 introspection for
+  opaque access and refresh tokens, with separate Basic caller authentication,
+  inactive-only unknown/foreign results and bounded native current-authority
+  checks. Introspection remains disabled unless selected independently of client
+  configuration; it is not resource-server authorization or cache evidence.
 - Extend the configured platform-owned web profile with confidential
   `client_secret_basic` authentication for code exchange, refresh, revocation
   and their metadata recovery. Secrets are startup-only primitive-owned digests;

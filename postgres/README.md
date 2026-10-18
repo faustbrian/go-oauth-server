@@ -97,3 +97,13 @@ transport. Operations are context-bounded. Immutable instances support
 concurrent calls with invocation-local participants and serial Work lifetimes.
 There is no background cleanup, private coordinator, second command journal,
 resource verifier or replacement local-session issuer.
+
+`Config.Protocol.OwningClientIntrospection=true` separately selects read-only
+RFC7662 introspection through both Service and Store. It requires the owning
+confidential client's actual Basic secret before any token lookup. Current
+primary OAuth state and original directory/user/identifier/password-credential/
+authorization expectations are checked without copying source-owner SQL or
+opening a private transaction. Browser logout alone does not revoke approved
+grants. Unknown, inactive, expired, foreign and withdrawn tokens return only
+`Active=false`; unavailable authority and cancellation return zero metadata plus
+a redacted error. No cache, renewable validity evidence or HTTP route is added.

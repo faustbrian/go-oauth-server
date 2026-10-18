@@ -9,6 +9,7 @@ import (
 	"time"
 
 	auditpg "github.com/faustbrian/go-audit/postgres"
+	authority "github.com/faustbrian/go-authorization/v3/postgres"
 	identity "github.com/faustbrian/go-identity"
 	kernel "github.com/faustbrian/go-identity/postgres"
 	"github.com/faustbrian/go-identity/risk"
@@ -71,6 +72,7 @@ type Store struct {
 	counters *riskpg.Repository
 	crypto   *envelope.Service
 	active   oauth.TokenDigestKey
+	policy   *authority.AuthorityStore
 }
 
 var _ oauth.Store = (*Store)(nil)
@@ -129,6 +131,11 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	}
 	if s.domain, err = kernel.NewRepository(pool, kernel.Config{MaximumDuration: protocol.MaximumDuration}); err != nil {
 		return nil, oauth.ErrInvalidRequest
+	}
+	if protocol.OwningClientIntrospection {
+		if s.policy, err = authority.NewAuthorityStore(pool.Raw(), protocol.MaximumDuration); err != nil {
+			return nil, oauth.ErrInvalidRequest
+		}
 	}
 	if s.counters, err = riskpg.NewRepository(c.Counters); err != nil {
 		return nil, oauth.ErrInvalidRequest

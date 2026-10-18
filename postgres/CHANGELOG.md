@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Read actual issued opaque access/refresh state for explicitly selected,
+  separately authenticated owning-confidential-client introspection. Recheck
+  original primary subject/credential authority without caching or
+  renewing freshness; inactive and foreign tokens disclose no metadata.
 - Verify configured confidential-client Basic credentials before native token,
   revocation or historical token/revocation recovery effects or disclosure.
   Preserve installed unchanged public-client grants when adding confidential

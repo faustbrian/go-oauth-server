@@ -136,6 +136,176 @@
         "security": false,
         "tests": true
       }
+    },
+    {
+      "directory": "postgres",
+      "module_path": "github.com/faustbrian/go-oauth-server/postgres",
+      "go_version": "1.27.0",
+      "packages": [
+        {
+          "module_directory": "postgres",
+          "directory": "postgres",
+          "name": "oauthpostgres",
+          "import_path": "github.com/faustbrian/go-oauth-server/postgres",
+          "kind": "public",
+          "production": true,
+          "executable": true,
+          "coverage_required": true,
+          "build_required": true,
+          "build_tags": []
+        }
+      ],
+      "purpose": "Experimental native PostgreSQL public-client authorization-code/S256, independent consent, opaque token, refresh and revocation execution; complete provider qualification remains pending.",
+      "lifecycle": "experimental",
+      "kind": "optional adapter",
+      "releasable": true,
+      "family": "service-edge",
+      "family_label": "Service Edge",
+      "family_description": "Request-edge policy, identity, access decisions, routing, middleware, and process lifecycle.",
+      "family_order": 2,
+      "version": "0.0.0",
+      "tag_prefix": "postgres/v",
+      "owned_dependencies": [
+        "github.com/faustbrian/go-audit",
+        "github.com/faustbrian/go-audit/postgres",
+        "github.com/faustbrian/go-authentication/v2",
+        "github.com/faustbrian/go-authorization/v3",
+        "github.com/faustbrian/go-capability/postgres/identity",
+        "github.com/faustbrian/go-capability/v2",
+        "github.com/faustbrian/go-clock",
+        "github.com/faustbrian/go-http-client/v2",
+        "github.com/faustbrian/go-identifier/v2",
+        "github.com/faustbrian/go-identity",
+        "github.com/faustbrian/go-identity/delivery",
+        "github.com/faustbrian/go-identity/delivery/postgres",
+        "github.com/faustbrian/go-identity/email",
+        "github.com/faustbrian/go-identity/http",
+        "github.com/faustbrian/go-identity/http/email",
+        "github.com/faustbrian/go-identity/http/password",
+        "github.com/faustbrian/go-identity/http/session",
+        "github.com/faustbrian/go-identity/otp",
+        "github.com/faustbrian/go-identity/otp/postgres",
+        "github.com/faustbrian/go-identity/password",
+        "github.com/faustbrian/go-identity/password/postgres",
+        "github.com/faustbrian/go-identity/postgres",
+        "github.com/faustbrian/go-identity/reference",
+        "github.com/faustbrian/go-identity/risk",
+        "github.com/faustbrian/go-identity/risk/hibp",
+        "github.com/faustbrian/go-identity/risk/postgres",
+        "github.com/faustbrian/go-identity/session",
+        "github.com/faustbrian/go-identity/session/postgres",
+        "github.com/faustbrian/go-migrations/v3",
+        "github.com/faustbrian/go-oauth-server",
+        "github.com/faustbrian/go-password/v2",
+        "github.com/faustbrian/go-postgres",
+        "github.com/faustbrian/go-secret-envelope/v2",
+        "github.com/faustbrian/go-transactional-outbox/postgres/identity"
+      ],
+      "reverse_owned_dependencies": [],
+      "external_runtime_dependencies": [
+        "github.com/jackc/pgx/v5"
+      ],
+      "required_services": [
+        "postgresql"
+      ],
+      "build_tags": [],
+      "test_tags": [
+        "integration",
+        "oauthflow"
+      ],
+      "interoperability_tools": [],
+      "specifications": [],
+      "conformance_corpora": [],
+      "provenance": [],
+      "goal_files": [
+        "docs/goal.md"
+      ],
+      "goal_status": "in-progress",
+      "goal_evidence": [],
+      "cohesion": {
+        "family": "service-edge",
+        "secondary_capabilities": [
+          "identity-and-access"
+        ],
+        "responsibility": "Native PostgreSQL authorization-code/S256 and consent/token execution through the existing identity Coordinator, current primary session authority, counters, audit and lifecycle owners.",
+        "non_goals": [
+          "Replace identity/session authority, transactions or the command journal with a private authentication engine.",
+          "Claim unsupported grants, OIDC, device, organization delegation, API-key exchange or complete provider/release qualification."
+        ],
+        "public_package_identifier": "oauthpostgres",
+        "primary_entry_packages": [
+          "github.com/faustbrian/go-oauth-server/postgres"
+        ],
+        "package_selection": {
+          "github.com/faustbrian/go-oauth-server/postgres": "Experimental native public-client code/S256 composition; install actual public owner histories before use. Tagged local PostgreSQL acceptance is separate from hosted documentation compilation."
+        },
+        "lifecycle_status": "active",
+        "maturity": "experimental",
+        "construction_styles": [
+          "new-config"
+        ],
+        "lifecycle_styles": [
+          "stateless"
+        ],
+        "ownership": {
+          "configuration": "caller",
+          "mutable_inputs": [
+            "borrow",
+            "copy"
+          ],
+          "runtime_resources": "caller",
+          "background_work": "none"
+        },
+        "optional_owned_dependencies": [],
+        "adapters": [],
+        "companions": [],
+        "supported_go": {
+          "minimum": "1.27.0",
+          "tested": [
+            "1.27.2"
+          ]
+        },
+        "supported_platforms": [
+          "portable-go"
+        ],
+        "supported_backends": [
+          "postgresql"
+        ],
+        "supported_protocols": [],
+        "documentation": {
+          "readme": "postgres/README.md",
+          "api": "postgres/README.md",
+          "adoption": "postgres/README.md",
+          "security": "docs/security.md",
+          "compatibility": null,
+          "performance": null,
+          "examples": "postgres/README.md",
+          "faq": "README.md",
+          "changelog": "postgres/CHANGELOG.md",
+          "pkg_go_dev": "https://pkg.go.dev/github.com/faustbrian/go-oauth-server/postgres",
+          "ecosystem_index": "https://github.com/faustbrian/go-library-tools/blob/v2.5.1/docs/ecosystem/README.md"
+        },
+        "known_good_compatibility_sets": [],
+        "delivery": {
+          "implementation": "in-progress",
+          "hardening": "in-progress",
+          "release": "blocked"
+        }
+      },
+      "gates": {
+        "api_compatibility": false,
+        "benchmarks": false,
+        "conformance": false,
+        "coverage": false,
+        "documentation": true,
+        "fuzz": false,
+        "interoperability": false,
+        "lint": false,
+        "mutation": false,
+        "race": false,
+        "security": false,
+        "tests": false
+      }
     }
   ]
 }

@@ -80,6 +80,8 @@ jobs:
           esac
           # Preserve runtime assurance alongside the bounded structural/security lane.
           golib check --module .
+          # Untagged native compilation is not PostgreSQL runtime proof.
+          golib docs check --module postgres
       - name: Remove public tooling installation
         if: always()
         run: |

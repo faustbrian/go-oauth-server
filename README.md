@@ -7,7 +7,7 @@ stable released API.
 
 The root package owns bounded protocol parsing, exact HTTPS redirect/issuer/
 resource policy, explicit consent and scope ceilings. The optional
-PostgreSQL adapter being integrated separately implements the durable flow using the
+[PostgreSQL adapter](postgres/README.md) implements the durable flow using the
 existing identity coordinator, current primary authorities, counters, audit and
 lifecycle owners. Applications supply configuration, not a domain store or
 replacement authentication engine.
@@ -30,7 +30,8 @@ replacement authentication engine.
 
 This root prerequisite alone does not supply durable execution. The selected
 native composition uses `oauthpostgres.NewService(pool, config, keys)` and is
-delivered separately after consuming this public core. Its consumer proof starts
+provided by the optional native module consuming this public core. Its
+[consumer proof](postgres/flow_integration_test.go) starts
 with actual signup, registration confirmation and password sign-in. The
 [selected contract](docs/selected-profile.md) defines that integration boundary.
 

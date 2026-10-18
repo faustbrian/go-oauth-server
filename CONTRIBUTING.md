@@ -1,7 +1,7 @@
 # Contributing
 
 This repository implements an experimental OAuth protocol core. Native adapter
-integration and full provider/release qualification remain separate. Read
+composition and full provider/release qualification remain separate. Read
 [AGENTS.md](AGENTS.md), [the selected profile](docs/selected-profile.md),
 [the complete goal](docs/goal.md) and [SECURITY.md](SECURITY.md).
 
@@ -61,3 +61,9 @@ module contract with `golib check --module .`, including its actual tests and
 race tests. Structural checks alone are not runtime proof. During development,
 run focused affected tests in the owning module; full release qualification is
 separate. No application release is authorized by green structural checks.
+
+Hosted CI also runs `golib docs check --module postgres`: untagged native
+documentation/compilation only, not PostgreSQL behavior. Native acceptance runs
+explicitly with `go test -race -tags=integration,oauthflow` against a task-owned
+PostgreSQL cluster; use the [native fixture instructions](postgres/README.md).
+Its declared service tags are not an assertion of hosted runtime qualification.

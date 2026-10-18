@@ -1,0 +1,20 @@
+# Changelog
+
+## Unreleased
+
+- Bind each explicit consent's independent identity/version to actual SQL and
+  a same-transaction secondary lifecycle event. Use canonical transition names,
+  distinguish actual scope changes from unchanged authorization, and preserve
+  consent identity on explicit reconfirmation.
+- Revoke a refresh family when concurrent use observes the winner's completed
+  issuance, without credential redelivery or mutation during metadata recovery.
+  Consumed refresh possession can withdraw its own surviving family.
+
+- Add native password-session/public-client authorization, explicit consent,
+  atomic S256 code exchange, rotating refresh and narrowly scoped revocation
+  through the existing identity coordinator and current primary owners.
+- Persist digest-only artifacts with exact root/parent/command lineage,
+  explicit consent, immutable participant effects and forward-only migrations.
+- Add metadata-only original-command recovery without credential regeneration
+  or redelivery after ambiguous commits. Install native owner histories and
+  retain original keys/configuration for outstanding grants and recovery.

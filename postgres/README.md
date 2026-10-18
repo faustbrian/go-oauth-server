@@ -37,6 +37,16 @@ coordinator authenticated encrypted preparation retains generated delivery
 custody. Child records retain exact root, parent and issuing-command lineage;
 parents cannot be deleted while descendants reference them.
 
+Optional `Protocol.Discovery` selects the core's typed OAuth-only metadata on
+the existing native service. Install a matching discovery-capable root/module
+version and provide the actual trusted endpoint URLs before enabling it; no
+schema migration or native recovery-identity change is involved. The application
+still owns TLS and endpoint registration. The
+[independent client consumer](discovery_integration_test.go) loads that metadata
+and uses the pinned `golang.org/x/oauth2` client for real code/S256 exchange and
+refresh before revoking through the discovered endpoint. Its in-process
+transport is a test seam, not a shipped HTTP server or resource verifier.
+
 Consent has an independent server-owned ID and positive version. Explicit
 approval inserts 0-to-1 or advances that same row's version using a fenced CAS;
 it is not derived from a grant ID. The native owner records the actual SQL

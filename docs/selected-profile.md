@@ -62,7 +62,7 @@ There is no HTTP registration in this root module.
 
 `Config.Discovery.Enabled` requires exact trusted authorization/token/revocation
 endpoint URLs for the selected web profile. Endpoints must be distinct canonical
-HTTPS paths on the configured issuer origin, with no query, fragment, userinfo,
+HTTPS paths on the configured issuer origin, with no query, fragment, embedded user information,
 percent/dot/slash normalization or discovery-route collision. This is a deliberately
 narrow deployment policy, not a universal same-origin requirement of RFC8414.
 Zero configuration is disabled; nonzero fields with Enabled=false are rejected.

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Expose explicitly selected core OAuth discovery through the existing native
+  service, without changing stored grants, migrations or recovery identity.
+  A matching discovery-capable root pin is required; existing configuration
+  remains unselected. A metadata-driven independent client exercises real
+  password-session consent, S256 exchange, refresh and owning-client revocation.
 - Add explicitly selected own-consent get/list/withdrawal using genuine current
   password sessions, current authority and a 15-minute sensitive-proof cap.
   Install `ConsentMigrationSource` in an exclusive window and retire old or

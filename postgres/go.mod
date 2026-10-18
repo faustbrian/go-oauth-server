@@ -32,12 +32,13 @@ require (
 	github.com/faustbrian/go-identity/session v0.0.0-20261016125355-af740fb7fb76
 	github.com/faustbrian/go-identity/session/postgres v0.0.0-20261016125355-af740fb7fb76
 	github.com/faustbrian/go-migrations/v3 v3.1.1-0.20261015110643-ca105f265cfc
-	github.com/faustbrian/go-oauth-server v0.0.0-20261018133801-86b59733e01c
+	github.com/faustbrian/go-oauth-server v0.0.0-20261018181706-127c7dbf145b
 	github.com/faustbrian/go-password/v2 v2.0.2-0.20261015050515-4eb0fefa60ff
 	github.com/faustbrian/go-postgres v1.1.1-0.20260912090843-61261695bcc7
 	github.com/faustbrian/go-secret-envelope/v2 v2.0.1
 	github.com/faustbrian/go-transactional-outbox/postgres/identity v0.0.0-20261018044906-f4380909987d
 	github.com/jackc/pgx/v5 v5.11.0
+	golang.org/x/oauth2 v0.37.0
 )
 
 require (
@@ -72,7 +73,6 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/net v0.60.0 // indirect
-	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect

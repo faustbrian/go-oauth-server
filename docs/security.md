@@ -32,7 +32,17 @@ and issuer/environment/client/resource/purpose bind lookup commitments.
 Only explicitly revealed fresh known-committed output may cross transport.
 Requests and secret custody deny implicit serialization and redact formatting.
 Never log transport bodies, cookie headers, synchronizers, codes, verifiers,
-bearers, keys or encrypted preparation plaintext.
+bearers, Authorization headers, client secrets, keys or encrypted preparation plaintext.
+
+Configured confidential clients use exactly one independently random 32-byte
+secret and the existing reviewed Basic verifier's keyed-digest retention. The
+startup `password.Secret` is borrowed only during construction and remains the
+application's destruction responsibility. OAuth Basic components are individually
+form-unescaped once; body/URI secret channels, multiple headers or authentication
+locations, method downgrade and cross-client credentials are rejected. Both core
+and direct native token/revoke calls verify actual credentials before effects;
+metadata recovery also authenticates the selected client without issuing again.
+No raw Basic credential enters the native command or encrypted preparation.
 
 Durable OAuth tables store keyed digests, not bearer wire values. Generated
 delivery custody is retained only in existing secret-envelope preparation,
@@ -48,8 +58,12 @@ authorization. No routes, workers or resource-token verifier are implicitly
 installed. Base PostgreSQL composition requires no device flow.
 
 Introspection is unselected and fails closed: public client ID plus inspected
-token possession cannot authorize RFC7662 disclosure. Confidential/workload
-credentials, client management, signing-key administration, trusted/dynamic
+token possession cannot authorize RFC7662 disclosure. Confidential Basic authority
+is a startup snapshot: secret/config changes require a new client version and
+retirement of old instances. It does not provide hot rotation, durable secret
+management or fleet-wide secret revocation. Current subject/session/credential
+withdrawal fences still apply. Workload credentials, client management,
+signing-key administration, trusted/dynamic
 consent, OIDC, device and delegation/exchange remain unsupported, not aliases.
 
 Independent review, public dependency/consumer verification and applicable

@@ -1,7 +1,7 @@
 # go-oauth-server
 
 Experimental authorization-code/S256 OAuth protocol contracts
-for configured platform-owned public web clients and genuine password
+for configured platform-owned public and Basic-authenticated confidential web clients and genuine password
 single-factor user sessions. This is not a complete OAuth/OIDC provider or a
 stable released API.
 
@@ -16,6 +16,10 @@ replacement authentication engine.
 
 - `ParseAuthorizationQuery` and `ParseTokenForm` bound and discriminate input
   before credential work. Parsing authenticates nothing.
+- `ParseTokenFormWithClientAuthentication` and `ParseRevocationForm` enforce
+  exclusive public-none or confidential-Basic credential channels. Configure
+  each confidential client's startup-only `ClientSecretVerifier` from a borrowed
+  `password.Secret`, then destroy that startup secret.
 - `Service.Authorize` admits a genuine current browser and returns an opaque
   consent interaction, never a code before consent.
 - `Service.Continue` checks the exact original browser, synchronizer, issuer
@@ -56,9 +60,13 @@ background work and own no pool or process shutdown.
 
 ## Adoption boundary
 
-Only public clients with method `none`, exact HTTPS callbacks, OAuth-only scopes,
+Public clients with method `none` and configured confidential clients with
+`client_secret_basic`, exact HTTPS callbacks, OAuth-only scopes,
 opaque access tokens of at most five minutes and rotating opaque refresh tokens
-are selected. Confidential/workload issuance, client administration, OIDC,
+are selected. Each confidential client uses one fixed random 32-byte startup
+secret; changes require a new client version and retiring old service instances.
+This is not hot rotation or fleet-wide client/secret revocation. Workload
+issuance, client administration, OIDC,
 device flow, organization delegation, API-key exchange, authenticated
 introspection and resource-server verification/cache composition remain
 unsupported. No vendor authorization engine is embedded.

@@ -44,8 +44,8 @@ func (AuthorizationRequest) Format(s fmt.State, _ rune) {
 	_, _ = io.WriteString(s, "oauthserver.AuthorizationRequest(redacted)")
 }
 
-// TokenRequest contains exactly one grant variant for the public-client
-// profile. Code, refresh token and verifier remain secret caller custody;
+// TokenRequest contains exactly one selected code/refresh grant variant.
+// Code, refresh token, verifier and Basic credential remain secret caller custody;
 // transport must never log or serialize this request. Parsing does not validate
 // client status, code ownership, PKCE, replay, current authority or expiry.
 type TokenRequest struct {
@@ -53,6 +53,7 @@ type TokenRequest struct {
 	ClientID, Code, RedirectURI, CodeVerifier string
 	RefreshToken, Resource                    string
 	Scopes                                    []string
+	ClientAuthentication                      ClientAuthentication
 	// Network is trusted transport attribution supplied after parsing. It is
 	// never accepted from the OAuth form and grants no network trust by itself.
 	Network string
@@ -155,7 +156,8 @@ func ParseAuthorizationQuery(raw string) (AuthorizationRequest, error) {
 }
 
 // ParseTokenForm discriminates a bounded form before credential use. This
-// profile selects public clients only: secret/assertion credential channels,
+// entrypoint selects public none forms; use ParseTokenFormWithClientAuthentication
+// for exclusive confidential Basic headers. Body secret/assertion channels,
 // client credentials, standard exchange and private session exchange are not
 // advertised or accepted. Scope omission on refresh preserves grant authority;
 // code requests must not supply scope (selected TRANSACTION/API contract).
@@ -164,10 +166,39 @@ func ParseTokenForm(raw string) (TokenRequest, error) {
 	if err != nil {
 		return TokenRequest{}, ErrInvalidRequest
 	}
-	r := TokenRequest{GrantType: GrantType(values.Get("grant_type")), ClientID: values.Get("client_id"), Resource: values.Get("resource")}
-	if !visible(r.ClientID, 128) || !visible(string(r.GrantType), 128) || r.Resource != "" && !validOrigin(r.Resource) {
+	return parseTokenValues(values, true)
+}
+
+// ParseTokenFormWithClientAuthentication preserves public none forms and admits
+// confidential Basic in exactly one header with no body client identifier or
+// secret/assertion channel. Grant/field bounds precede credential decoding.
+// Header credentials use RFC6749 section2.3.1, not raw RFC7617 components.
+func ParseTokenFormWithClientAuthentication(raw string, authorization []string) (TokenRequest, error) {
+	if len(authorization) == 0 {
+		return ParseTokenForm(raw)
+	}
+	values, err := parseFields(raw, []string{"grant_type", "client_id", "code", "redirect_uri", "code_verifier", "refresh_token", "scope", "resource"})
+	if err != nil || hasField(values, "client_id") {
 		return TokenRequest{}, ErrInvalidRequest
 	}
+	r, err := parseTokenValues(values, false)
+	if err != nil {
+		return TokenRequest{}, err
+	}
+	credential, err := ParseClientAuthentication(authorization)
+	if err != nil {
+		return TokenRequest{}, err
+	}
+	r.ClientID, r.ClientAuthentication = credential.ClientID(), credential
+	return r, nil
+}
+
+func parseTokenValues(values url.Values, requireClient bool) (TokenRequest, error) {
+	r := TokenRequest{GrantType: GrantType(values.Get("grant_type")), ClientID: values.Get("client_id"), Resource: values.Get("resource")}
+	if requireClient && !visible(r.ClientID, 128) || !visible(string(r.GrantType), 128) || r.Resource != "" && !validOrigin(r.Resource) {
+		return TokenRequest{}, ErrInvalidRequest
+	}
+	var err error
 	switch r.GrantType {
 	case AuthorizationCodeGrant:
 		if hasField(values, "refresh_token") || hasField(values, "scope") {
@@ -197,6 +228,39 @@ func ParseTokenForm(raw string) (TokenRequest, error) {
 	default:
 		return TokenRequest{}, ErrUnsupportedGrant
 	}
+	return r, nil
+}
+
+// ParseRevocationForm validates a bounded RFC7009 token/hint form and the same
+// exclusive none/Basic client credential matrix as the token form. Unknown
+// advisory hints are ignored per RFC7009 section2.1; they never select authority.
+// Transport supplies trusted Network separately and rejects URI credentials.
+func ParseRevocationForm(raw string, authorization []string) (RevokeRequest, error) {
+	values, err := parseFields(raw, []string{"token", "token_type_hint", "client_id"})
+	if err != nil || !opaque32(values.Get("token")) {
+		return RevokeRequest{}, ErrInvalidRequest
+	}
+	r := RevokeRequest{Token: values.Get("token"), ClientID: values.Get("client_id")}
+	switch values.Get("token_type_hint") {
+	case "access_token":
+		r.Hint = TokenAccess
+	case "refresh_token":
+		r.Hint = TokenRefresh
+	}
+	if len(authorization) == 0 {
+		if !identifier(r.ClientID) {
+			return RevokeRequest{}, ErrInvalidRequest
+		}
+		return r, nil
+	}
+	if hasField(values, "client_id") {
+		return RevokeRequest{}, ErrInvalidRequest
+	}
+	r.ClientAuthentication, err = ParseClientAuthentication(authorization)
+	if err != nil {
+		return RevokeRequest{}, err
+	}
+	r.ClientID = r.ClientAuthentication.ClientID()
 	return r, nil
 }
 

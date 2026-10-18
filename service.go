@@ -29,22 +29,25 @@ var (
 // in protocol input. Native transactions additionally use authoritative DB time.
 type Clock interface{ Now() time.Time }
 
-// Config selects one OAuth-only public-client web profile. Every duration is
+// Config selects OAuth-only public or configured Basic-client web profiles. Every duration is
 // explicit: code/continuation/access are 1s..5min; refresh is AccessTTL..30days;
 // MaximumDuration is 1ms..5s. Resources and issuer are exact HTTPS origins.
 // Sessions and configuration remain borrowed, with no package-owned goroutines.
 type Config struct {
-	Issuer                                                           Issuer
-	Environment, Resource                                            string
-	Scopes                                                           ScopeCatalog
-	Clients                                                          []Client
+	Issuer                Issuer
+	Environment, Resource string
+	Scopes                ScopeCatalog
+	Clients               []Client
+	// ClientSecrets contains exactly one verifier per confidential client ID and
+	// version, none for public clients. See NewClientSecretVerifier's startup policy.
+	ClientSecrets                                                    []ClientSecretVerifier
 	Clock                                                            Clock
 	MaximumDuration, CodeTTL, ContinuationTTL, AccessTTL, RefreshTTL time.Duration
 }
 
 // Validated freezes owned configuration projections without IO, callbacks,
-// randomness, migration or dependency health checks. Confidential metadata is
-// valid independently but issuance for that profile is deliberately unselected.
+// randomness, migration or dependency health checks. Confidential clients require
+// exactly one matching startup verifier; missing/foreign/duplicate verifiers deny.
 func (c Config) Validated() (Config, error) {
 	if !validOrigin(c.Issuer.value) || !identifier(c.Environment) || !validOrigin(c.Resource) || nilDependency(c.Clock) || len(c.Scopes.values) == 0 || len(c.Clients) < 1 || len(c.Clients) > 64 || c.MaximumDuration < time.Millisecond || c.MaximumDuration > 5*time.Second || c.RefreshTTL < c.AccessTTL || c.RefreshTTL > 30*24*time.Hour {
 		return Config{}, ErrInvalidRequest
@@ -69,11 +72,15 @@ func (c Config) Validated() (Config, error) {
 	})
 	for i, client := range c.Clients {
 		owned, err := ValidateClient(client)
-		if err != nil || !owned.Public || owned.Resource != c.Resource || i > 0 && c.Clients[i-1].ID == owned.ID || !scopeSubset(owned.Scopes, c.Scopes.values) {
+		if err != nil || owned.Resource != c.Resource || i > 0 && c.Clients[i-1].ID == owned.ID || !scopeSubset(owned.Scopes, c.Scopes.values) {
 			return Config{}, ErrInvalidRequest
 		}
 		c.Clients[i] = owned
 	}
+	if err := validateClientSecrets(c.Clients, c.ClientSecrets); err != nil {
+		return Config{}, err
+	}
+	c.ClientSecrets = slices.Clone(c.ClientSecrets)
 	c.Scopes.values = slices.Clone(c.Scopes.values)
 	return c, nil
 }
@@ -238,9 +245,10 @@ type TokenResult struct {
 // RevokeRequest borrows a protocol token for client-bound RFC7009 revocation.
 // Hint is advisory; Network is trusted transport attribution, never form input.
 type RevokeRequest struct {
-	ClientID, Token string
-	Hint            TokenKind
-	Network         string
+	ClientID, Token      string
+	Hint                 TokenKind
+	Network              string
+	ClientAuthentication ClientAuthentication
 }
 
 // RevocationCommand binds borrowed token possession to configured client policy;
@@ -448,6 +456,9 @@ func (s *Service) Token(ctx context.Context, request TokenRequest) (out TokenRes
 	}
 	defer stop()
 	client, err := s.client(request.ClientID)
+	if err != nil && request.ClientAuthentication.Method() != "none" {
+		return out, ErrInvalidClient
+	}
 	if err != nil || !visible(request.Network, 128) {
 		return out, ErrInvalidRequest
 	}
@@ -474,6 +485,9 @@ func (s *Service) Token(ctx context.Context, request TokenRequest) (out TokenRes
 		}
 	default:
 		return out, ErrUnsupportedGrant
+	}
+	if err := s.config.AuthenticateClient(ctx, client.ID, request.ClientAuthentication); err != nil {
+		return out, err
 	}
 	out, err = s.deps.Store.Token(ctx, TokenCommand{Request: request, Client: client})
 	if err != nil || ctx.Err() != nil {
@@ -508,8 +522,14 @@ func (s *Service) Revoke(ctx context.Context, request RevokeRequest) (out Revoke
 	}
 	defer stop()
 	client, err := s.client(request.ClientID)
+	if err != nil && request.ClientAuthentication.Method() != "none" {
+		return out, ErrInvalidClient
+	}
 	if err != nil || !opaque32(request.Token) || request.Hint != 0 && request.Hint != TokenAccess && request.Hint != TokenRefresh || !visible(request.Network, 128) {
 		return out, ErrInvalidRequest
+	}
+	if err := s.config.AuthenticateClient(ctx, client.ID, request.ClientAuthentication); err != nil {
+		return out, err
 	}
 	out, err = s.deps.Store.Revoke(ctx, RevocationCommand{Request: request, Client: client})
 	return out, operationError(ctx, err)
@@ -545,7 +565,7 @@ func operationError(ctx context.Context, err error) error {
 	if err == nil {
 		return nil
 	}
-	for _, known := range []error{ErrInvalidRequest, ErrInvalidGrant, ErrAccessDenied, ErrInvalidScope, ErrUnsupportedGrant} {
+	for _, known := range []error{ErrInvalidRequest, ErrInvalidClient, ErrInvalidGrant, ErrAccessDenied, ErrInvalidScope, ErrUnsupportedGrant} {
 		if errors.Is(err, known) {
 			return known
 		}

@@ -37,6 +37,7 @@ const (
 	rejectReplay
 	revokeAccess
 	revokeFamily
+	createWorkload
 )
 
 type grantRecord struct {
@@ -51,6 +52,7 @@ type grantRecord struct {
 	Scopes               []string
 	Resource             string
 	CreatedAt, ExpiresAt time.Time
+	Workload             *workloadSource `json:",omitempty"`
 }
 type artifactPayload struct {
 	Schema  uint32
@@ -347,6 +349,9 @@ func (s *Store) Token(ctx context.Context, c oauth.TokenCommand) (oauth.TokenRes
 	if r.ClientID != client.ID || r.Resource != "" && r.Resource != client.Resource {
 		return oauth.TokenResult{}, oauth.ErrInvalidRequest
 	}
+	if client.Workload != nil {
+		return s.issueWorkload(ctx, client, r)
+	}
 	kind, operation, wire := oauth.TokenCode, exchangeCode, r.Code
 	switch r.GrantType {
 	case oauth.AuthorizationCodeGrant:
@@ -468,6 +473,15 @@ func (s *Store) Revoke(ctx context.Context, c oauth.RevocationCommand) (oauth.Re
 	}
 	p := s.targetPhase(target, client, operation, "identity.oauth-server.revoke", target.Replay, s.intent("revoke", c.Request.Token, c.Request.Network), c.Request.Network)
 	result, err := p.execute(ctx)
+	var conflict identity.ConflictError
+	if errors.As(err, &conflict) && result.Outcome == identity.CommitOutcomeConflict && ctx.Err() == nil {
+		// Two authenticated callers can race the same preallocated claim while
+		// its winner has not completed revocation. RFC7009 section2.2.1 permits
+		// unavailable/retry semantics here, not a fabricated completed no-op.
+		// Preserve the actual conflict and never query, retry or reconcile it
+		// as a side effect of this call. Unknown COMMIT and cancellation differ.
+		return oauth.RevokeResult{Outcome: result.Outcome, CommandID: target.Replay}, oauth.ErrUnavailable
+	}
 	return oauth.RevokeResult{Outcome: result.Outcome, CommandID: target.Replay}, publicError(ctx, err, oauth.ErrAccessDenied)
 }
 
@@ -483,13 +497,25 @@ func (s *Store) targetPhase(target artifactRecord, client oauth.Client, t transi
 func (p *phase) bind(id identity.CommandID, operation, record string) {
 	g := p.input.Grant
 	p.input.Binding = identity.CommandBinding{CommandID: id, TenantID: g.Tenant, UserID: g.User, ActorID: identity.ActorID(g.User), ActorKind: authorization.SubjectUser, OperationID: operation, SchemaID: operation + ".public-password-v1", SchemaVersion: 1, PolicyID: p.store.config.PolicyID, PolicyVersion: p.store.config.Coordinator.AdmissionPolicy.PolicyVersion, RecordID: record, CorrelationID: string(id)}
+	if g.Workload != nil {
+		p.input.Binding.AnonymousFlowID = g.ID
+		p.input.Binding.UserID = ""
+		p.input.Binding.ActorID = identity.ActorID(g.Workload.ID)
+		p.input.Binding.ActorKind = authorization.SubjectServiceAccount
+		p.input.Binding.SchemaID = operation + ".configured-workload-v1"
+	}
 }
 func (p *phase) query() identity.RecoveryQuery {
 	b := p.input.Binding
-	return identity.RecoveryQuery{CommandID: b.CommandID, TenantID: b.TenantID, UserID: b.UserID, ActorID: b.ActorID, ActorKind: b.ActorKind, OperationID: b.OperationID, RecordID: b.RecordID}
+	return identity.RecoveryQuery{CommandID: b.CommandID, TenantID: b.TenantID, UserID: b.UserID, AnonymousFlowID: b.AnonymousFlowID, ActorID: b.ActorID, ActorKind: b.ActorKind, OperationID: b.OperationID, RecordID: b.RecordID}
 }
 func (p *phase) caller() authorization.DecisionContext {
 	b := p.input.Binding
+	if p.input.Grant.Workload != nil {
+		// Coordinator admission/recovery authorizes the exact server-owned flow,
+		// not a second workload resource alias (kernel CommandQueryPolicy).
+		return authorization.DecisionContext{PolicyRevision: authorization.Revision(b.PolicyVersion), CorrelationID: b.CorrelationID, Request: authorization.Request{Tenant: authorization.TenantID(b.TenantID), Subject: authorization.Subject{Kind: b.ActorKind, ID: authorization.SubjectID(b.ActorID)}, Action: authorization.Action(b.OperationID), Resource: authorization.Resource{Type: "identity.anonymous-flow", ID: authorization.ResourceID(b.AnonymousFlowID)}}}
+	}
 	return authorization.DecisionContext{PolicyRevision: authorization.Revision(b.PolicyVersion), CorrelationID: b.CorrelationID, Request: authorization.Request{Tenant: authorization.TenantID(b.TenantID), Subject: authorization.Subject{Kind: authorization.SubjectUser, ID: authorization.SubjectID(b.UserID)}, Action: authorization.Action(b.OperationID), Resource: authorization.Resource{Type: "identity.user", ID: authorization.ResourceID(b.UserID)}}}
 }
 
@@ -506,9 +532,13 @@ func (s *Store) lookup(ctx context.Context, wire string, client oauth.Client, ki
 				return artifactRecord{}, oauth.ErrInvalidGrant
 			}
 			var artifact artifactRecord
-			var source, scopes, payload, fingerprint []byte
+			var source, scopes, payload, fingerprint, workload []byte
 			var clientVersion, grantVersion string
-			err = s.pool.Raw().QueryRow(ctx, `SELECT a.artifact_id,a.kind,a.created_at,a.expires_at,a.state,a.transition_command,a.replay_command,a.payload,g.grant_id,g.tenant_id,g.user_id,g.client_id,g.client_version::text,g.client_fingerprint,g.source_session,g.scopes,g.resource,g.created_at,g.expires_at,g.version::text,g.state FROM `+s.schema+`.artifacts a JOIN `+s.schema+`.grants g USING(grant_id) WHERE a.digest_version=$1 AND a.digest=$2 AND a.kind=$3 AND a.client_id=$4`, digest.KeyVersion, digest.Sum[:], kind, client.ID).Scan(&artifact.ID, &artifact.Kind, &artifact.CreatedAt, &artifact.ExpiresAt, &artifact.State, &artifact.Transition, &artifact.Replay, &payload, &artifact.Grant.ID, &artifact.Grant.Tenant, &artifact.Grant.User, &artifact.Grant.ClientID, &clientVersion, &fingerprint, &source, &scopes, &artifact.Grant.Resource, &artifact.Grant.CreatedAt, &artifact.Grant.ExpiresAt, &grantVersion, &artifact.GrantState)
+			workloadColumn := "NULL::jsonb"
+			if workloadSelected(s.config.Protocol.Clients) {
+				workloadColumn = "g.workload_source"
+			}
+			err = s.pool.Raw().QueryRow(ctx, `SELECT a.artifact_id,a.kind,a.created_at,a.expires_at,a.state,a.transition_command,a.replay_command,a.payload,g.grant_id,g.tenant_id,COALESCE(g.user_id,''),g.client_id,g.client_version::text,g.client_fingerprint,g.source_session,g.scopes,g.resource,g.created_at,g.expires_at,g.version::text,g.state,`+workloadColumn+` FROM `+s.schema+`.artifacts a JOIN `+s.schema+`.grants g USING(grant_id) WHERE a.digest_version=$1 AND a.digest=$2 AND a.kind=$3 AND a.client_id=$4`, digest.KeyVersion, digest.Sum[:], kind, client.ID).Scan(&artifact.ID, &artifact.Kind, &artifact.CreatedAt, &artifact.ExpiresAt, &artifact.State, &artifact.Transition, &artifact.Replay, &payload, &artifact.Grant.ID, &artifact.Grant.Tenant, &artifact.Grant.User, &artifact.Grant.ClientID, &clientVersion, &fingerprint, &source, &scopes, &artifact.Grant.Resource, &artifact.Grant.CreatedAt, &artifact.Grant.ExpiresAt, &grantVersion, &artifact.GrantState, &workload)
 			if errors.Is(err, pgx.ErrNoRows) {
 				continue
 			}
@@ -520,6 +550,16 @@ func (s *Store) lookup(ctx context.Context, wire string, client oauth.Client, ki
 				return artifactRecord{}, oauth.ErrUnavailable
 			}
 			copy(artifact.Grant.ClientFingerprint[:], fingerprint)
+			if len(workload) > 0 {
+				var original workloadSource
+				if decodeJSON(workload, &original) != nil {
+					return artifactRecord{}, oauth.ErrUnavailable
+				}
+				artifact.Grant.Workload = &original
+			}
+			if client.Workload != nil && (!s.validWorkload(artifact.Grant, client) || artifact.Kind != oauth.TokenAccess) || client.Workload == nil && artifact.Grant.Workload != nil {
+				return artifactRecord{}, oauth.ErrInvalidGrant
+			}
 			if _, err := fmt.Sscan(grantVersion, &artifact.Grant.Version); err != nil || artifact.Grant.Version == 0 || artifact.Grant.Version == ^uint64(0) {
 				return artifactRecord{}, oauth.ErrUnavailable
 			}

@@ -36,6 +36,19 @@ func (p *phase) mutate(ctx context.Context, w kernel.Work) error {
 		if n != 1 {
 			return identity.ConflictError{}
 		}
+	} else if i.Transition == createWorkload {
+		workload, err := json.Marshal(g.Workload)
+		if err != nil {
+			return identity.UnavailableError{}
+		}
+		defer clear(workload)
+		n, err := w.Exec(ctx, `INSERT INTO `+s+`.grants(grant_id,tenant_id,user_id,client_id,client_version,client_fingerprint,source_session,scopes,resource,state,created_at,expires_at,version,workload_source) VALUES($1,$2,NULL,$3,$4::numeric,$5,'[]'::jsonb,$6::jsonb,$7,'active',$8,$9,1,$10::jsonb)`, g.ID, string(g.Tenant), g.ClientID, strconv.FormatUint(g.ClientVersion, 10), g.ClientFingerprint[:], string(scopes), g.Resource, g.CreatedAt, g.ExpiresAt, string(workload))
+		if err != nil {
+			return err
+		}
+		if n != 1 {
+			return identity.ConflictError{}
+		}
 	} else if i.Transition != revokeAccess {
 		state := "active"
 		if i.Transition == denyInteraction || i.Transition == rejectReplay || i.Transition == revokeFamily {
@@ -111,7 +124,14 @@ func (p *phase) mutate(ctx context.Context, w kernel.Work) error {
 		parent = i.TargetID
 	}
 	for _, artifact := range p.output.Artifacts {
-		n, err := w.Exec(ctx, `INSERT INTO `+s+`.artifacts(artifact_id,digest_version,digest,kind,client_id,grant_id,created_at,expires_at,state,transition_command,replay_command,payload,parent_artifact_id,issued_by) VALUES($11,$1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10::jsonb,$12::text,$13)`, artifact.Digest.KeyVersion, artifact.Digest.Sum[:], int16(artifact.Kind), g.ClientID, g.ID, i.CreatedAt, artifact.ExpiresAt, string(artifact.Transition), string(artifact.Replay), string(payload), artifact.ID, parent, string(i.Binding.CommandID))
+		columns, values := "", ""
+		args := []any{artifact.Digest.KeyVersion, artifact.Digest.Sum[:], int16(artifact.Kind), g.ClientID, g.ID, i.CreatedAt, artifact.ExpiresAt, string(artifact.Transition), string(artifact.Replay), string(payload), artifact.ID, parent, string(i.Binding.CommandID)}
+		if workloadSelected(p.store.config.Protocol.Clients) {
+			columns = ",workload_only"
+			values = ",$14"
+			args = append(args, g.Workload != nil)
+		}
+		n, err := w.Exec(ctx, `INSERT INTO `+s+`.artifacts(artifact_id,digest_version,digest,kind,client_id,grant_id,created_at,expires_at,state,transition_command,replay_command,payload,parent_artifact_id,issued_by`+columns+`) VALUES($11,$1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10::jsonb,$12::text,$13`+values+`)`, args...)
 		if err != nil {
 			return err
 		}
@@ -147,7 +167,7 @@ func effectDigest(b identity.CommandBinding, f kernel.FeatureRegistration, l ker
 // the sole coordinator separately reconciles its journal, audit and lifecycle.
 func (p *phase) RecoverParticipant(ctx context.Context, w kernel.RecoveryWork) (kernel.RecoveryStatus, error) {
 	b, f, life, err := w.FeatureScope(p)
-	if err != nil || f.Contributor != p.Descriptor() || f.Operation != operation(b.OperationID) || !oauthLifecycle(life.EventType) || life.AfterVersion != life.BeforeVersion+1 {
+	if err != nil || f.Contributor != p.Descriptor() || f.Operation != p.operation(b.OperationID) || !oauthLifecycle(life.EventType) || life.AfterVersion != life.BeforeVersion+1 {
 		return kernel.RecoveryUnknown, identity.ForbiddenError{}
 	}
 	rows, err := w.Query(ctx, `SELECT grant_id,before_version::text,after_version::text,binding_digest FROM `+p.store.schema+`.effects WHERE tenant_id=$1 AND command_id=$2 AND operation_id=$3 AND record_id=$4`, string(b.TenantID), string(b.CommandID), b.OperationID, b.RecordID)

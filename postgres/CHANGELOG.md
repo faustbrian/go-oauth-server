@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add configured workload access through the existing coordinator, current
+  directory/workload authorization owners, service-actor audit and lifecycle.
+  Install `WorkloadMigrationSource` before enabling workloads, using an exclusive
+  migration window and table/index/WAL headroom. Published base history and
+  installed human code/refresh lineage remain intact; workload-only services
+  require no password-session configuration. Unknown issuance recovers only
+  original metadata, never access delivery or another issuance.
 - Read actual issued opaque access/refresh state for explicitly selected,
   separately authenticated owning-confidential-client introspection. Recheck
   original primary subject/credential authority without caching or

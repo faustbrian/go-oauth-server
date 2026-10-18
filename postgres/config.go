@@ -9,6 +9,7 @@ import (
 	"time"
 
 	auditpg "github.com/faustbrian/go-audit/postgres"
+	"github.com/faustbrian/go-authorization/v3"
 	authority "github.com/faustbrian/go-authorization/v3/postgres"
 	identity "github.com/faustbrian/go-identity"
 	kernel "github.com/faustbrian/go-identity/postgres"
@@ -24,14 +25,15 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Config selects the platform-owned public/configured-Basic/password single-factor
-// profile. Every authority, schema, policy and key is trusted startup input.
+// Config selects platform-owned public/configured-Basic password single-factor
+// web clients and/or explicitly configured machine workloads. Every authority,
+// schema, policy and key is trusted startup input.
 // Protocol clients are immutable registrations; changing policy invalidates
 // earlier grants instead of silently widening them. IntentKey must be a dedicated
 // nonzero key, independent of token, session, fingerprint and envelope keys.
 // Retain all key versions/configuration needed by outstanding commands.
-// Install kernel preparation/protected-counter, session, authorization, risk
-// lockout, audit/outbox and OAuth histories before enabling calls. Construction
+// Install kernel preparation/protected-counter, applicable session/workload,
+// authorization, risk lockout, audit/outbox and OAuth histories before enabling calls. Construction
 // never installs migrations or adopts existing objects. The pool/keyring and
 // policy dependencies remain borrowed and must outlive concurrent operations.
 type Config struct {
@@ -47,6 +49,9 @@ type Config struct {
 	RequestKeys           kernel.RequestKeyConfig
 	PolicyID              string
 	Counters              riskpg.Config
+	// WorkloadAuthority binds configured machine clients to existing primary
+	// directory and service-account authorization owners, never user substitutes.
+	WorkloadAuthority WorkloadAuthorityConfig
 }
 
 // Format redacts keys, correlated deployment scopes and policy dependencies.
@@ -82,7 +87,19 @@ var _ oauth.Store = (*Store)(nil)
 // no caller-written domain store, Work, coordinator or phase hook is accepted.
 func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, error) {
 	protocol, err := c.Protocol.Validated()
-	if err != nil || pool == nil || pool.Raw() == nil || keys == nil || !validSchema(c.Schema) || c.Session.Profile.Validate() != nil || c.Session.Profile.AuthenticationMethod != "password" || c.Session.Profile.CredentialKind != identity.CredentialPassword || c.Session.Profile.CredentialOwner != "identity/password" || c.Session.Repository.MaximumDuration <= 0 || c.Session.Repository.MaximumDuration > protocol.MaximumDuration || c.IntentKey == ([32]byte{}) || c.ActiveEnvelopeKeyID == "" || len(c.ActiveEnvelopeKeyID) > 256 || c.PolicyID == "" || len(c.PolicyID) > 128 || c.Coordinator.MaximumDuration <= 0 || c.Coordinator.MaximumDuration > protocol.MaximumDuration || c.Coordinator.QueryPolicy == nil || c.Coordinator.AdmissionPolicy == nil || c.Coordinator.QueryPolicy.PolicyVersion != c.Coordinator.AdmissionPolicy.PolicyVersion || c.Counters.CommandCounters == nil || !c.Counters.EnforceLockouts || len(c.TokenKeys) < 1 || len(c.TokenKeys) > 4 || len(c.CSRFKeys) < 1 || len(c.CSRFKeys) > 4 {
+	if err != nil || pool == nil || pool.Raw() == nil || keys == nil || !validSchema(c.Schema) || c.IntentKey == ([32]byte{}) || c.ActiveEnvelopeKeyID == "" || len(c.ActiveEnvelopeKeyID) > 256 || c.PolicyID == "" || len(c.PolicyID) > 128 || c.Coordinator.MaximumDuration <= 0 || c.Coordinator.MaximumDuration > protocol.MaximumDuration || c.Coordinator.QueryPolicy == nil || c.Coordinator.AdmissionPolicy == nil || c.Coordinator.QueryPolicy.PolicyVersion != c.Coordinator.AdmissionPolicy.PolicyVersion || c.Counters.CommandCounters == nil || !c.Counters.EnforceLockouts || len(c.TokenKeys) < 1 || len(c.TokenKeys) > 4 || len(c.CSRFKeys) > 4 {
+		return nil, oauth.ErrInvalidRequest
+	}
+	if webSelected(protocol.Clients) && (c.Session.Profile.Validate() != nil || c.Session.Profile.AuthenticationMethod != "password" || c.Session.Profile.CredentialKind != identity.CredentialPassword || c.Session.Profile.CredentialOwner != "identity/password" || c.Session.Repository.MaximumDuration <= 0 || c.Session.Repository.MaximumDuration > protocol.MaximumDuration || len(c.CSRFKeys) < 1) {
+		return nil, oauth.ErrInvalidRequest
+	}
+	if workloadSelected(protocol.Clients) {
+		for _, client := range protocol.Clients {
+			if client.Workload != nil && ((kernel.DirectoryAuthorityQuery{GlobalAuthorityID: c.WorkloadAuthority.GlobalAuthorityID, TenantID: client.Workload.TenantID()}).Validate() != nil || (authority.AuthorityScope{TenantID: authorization.TenantID(client.Workload.TenantID()), PolicyNamespace: c.WorkloadAuthority.PolicyNamespace, SubjectID: authorization.SubjectID(client.Workload.ID())}).Validate() != nil) {
+				return nil, oauth.ErrInvalidRequest
+			}
+		}
+	} else if c.WorkloadAuthority != (WorkloadAuthorityConfig{}) {
 		return nil, oauth.ErrInvalidRequest
 	}
 	// Privileged's native counters supply exactly velocity. The upstream
@@ -132,7 +149,7 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	if s.domain, err = kernel.NewRepository(pool, kernel.Config{MaximumDuration: protocol.MaximumDuration}); err != nil {
 		return nil, oauth.ErrInvalidRequest
 	}
-	if protocol.OwningClientIntrospection {
+	if protocol.OwningClientIntrospection || workloadSelected(protocol.Clients) {
 		if s.policy, err = authority.NewAuthorityStore(pool.Raw(), protocol.MaximumDuration); err != nil {
 			return nil, oauth.ErrInvalidRequest
 		}
@@ -149,6 +166,11 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	// ciphertext authenticates its own key reference, so rotating a writer while
 	// retaining original keys must not strand native recovery or live grants.
 	type profile sessionpg.IdentifierAdmissionConfig
+	var workloadAuthority *WorkloadAuthorityConfig
+	if workloadSelected(protocol.Clients) {
+		value := c.WorkloadAuthority
+		workloadAuthority = &value
+	}
 	frame, err := json.Marshal(struct {
 		Profile                                       string
 		Schema, Issuer, Environment, Resource, Policy string
@@ -157,7 +179,8 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 		SessionSchema                                 string
 		PolicyVersion                                 uint64
 		Durations                                     []time.Duration
-	}{"oauth-code-public-password-v1", c.Schema, protocol.Issuer.String(), protocol.Environment, protocol.Resource, c.PolicyID, clientPolicies(protocol.Clients), profile(c.Session.Profile), c.Session.Repository.Schema, admission.PolicyVersion, []time.Duration{protocol.CodeTTL, protocol.ContinuationTTL, protocol.AccessTTL, protocol.RefreshTTL}})
+		WorkloadAuthority                             *WorkloadAuthorityConfig `json:",omitempty"`
+	}{"oauth-code-public-password-v1", c.Schema, protocol.Issuer.String(), protocol.Environment, protocol.Resource, c.PolicyID, clientPolicies(protocol.Clients), profile(c.Session.Profile), c.Session.Repository.Schema, admission.PolicyVersion, []time.Duration{protocol.CodeTTL, protocol.ContinuationTTL, protocol.AccessTTL, protocol.RefreshTTL}, workloadAuthority})
 	if err != nil {
 		return nil, oauth.ErrInvalidRequest
 	}
@@ -174,6 +197,9 @@ func NewService(pool *database.Pool, c Config, keys *keyring.Provider) (*oauth.S
 	if err != nil {
 		return nil, err
 	}
+	if !webSelected(store.config.Protocol.Clients) {
+		return oauth.NewService(store.config.Protocol, oauth.Dependencies{Store: store})
+	}
 	sessions, err := sessionpg.NewSessionService(pool, store.config.Session)
 	if err != nil {
 		return nil, oauth.ErrInvalidRequest
@@ -186,12 +212,20 @@ type clientPolicy struct {
 	Version                        uint64
 	Public                         bool
 	Redirects, Scopes              []string
+	Workload                       *workloadPolicy `json:",omitempty"`
+}
+type workloadPolicy struct {
+	Tenant, ID string
+	AccessTTL  time.Duration
 }
 
 func clientPolicies(clients []oauth.Client) []clientPolicy {
 	out := make([]clientPolicy, len(clients))
 	for i, c := range clients {
-		out[i] = clientPolicy{c.ID, c.AuthenticationMethod, c.Resource, c.Owner.PlatformID(), c.Version, c.Public, c.Redirects, c.Scopes}
+		out[i] = clientPolicy{ID: c.ID, Method: c.AuthenticationMethod, Resource: c.Resource, Platform: c.Owner.PlatformID(), Version: c.Version, Public: c.Public, Redirects: c.Redirects, Scopes: c.Scopes}
+		if c.Workload != nil {
+			out[i].Workload = &workloadPolicy{Tenant: string(c.Workload.TenantID()), ID: c.Workload.ID(), AccessTTL: c.Workload.AccessTTL()}
+		}
 	}
 	return out
 }

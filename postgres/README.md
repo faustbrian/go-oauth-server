@@ -52,6 +52,42 @@ command intent/fingerprints and envelope custody. Retain every key/configuration
 required by outstanding grants and command recovery. Client policy/version
 changes cannot silently widen historical authority.
 
+## Optional workload profile installation
+
+For an explicit `Client.Workload`, append `WorkloadMigrationSource{Base: prior,
+Schema: dedicatedSchema, Version: nextAllocatedVersion}` to the **same OAuth
+history namespace**. `prior` includes the exact published `MigrationSource` and
+`nextAllocatedVersion` follows every prior version. Apply before selecting the
+workload client. The forward extension preserves populated human grants,
+consents, parent links and existing history checksums; web-only configuration
+does not require it. It does not backfill humans into machine identities.
+
+The extension changes nullable user/typed source checks, adds a generated root
+discriminator and a unique composite root reference plus artifact foreign key.
+Workload artifacts must be root access records with no consumed/refresh/code
+state; their discriminator must match the actual root. Schedule an exclusive
+migration window without concurrent issuance and allow table/index/WAL
+headroom. This correctness index is not a performance optimization. There is no
+down migration deleting grant history; retain old configurations for recovery.
+
+Supply immutable platform/client/tenant/service-account/scopes/resource/TTL
+policy and `Config.WorkloadAuthority` naming the actual directory and workload
+authorization namespace. Explicit trusted owner bootstrap must already exist;
+constructors/readers never create it. Workload-only configuration may leave
+`Session`/CSRF empty; mixed configuration still requires the existing genuine
+password-session owner. The [workload consumer](workload_integration_test.go)
+installs actual public owner histories but performs no human signup or session
+issuance, and asserts actual service-actor audits and root-access lineage.
+
+Workload unknown issuance recovery uses the returned original command ID,
+token operation, owning Basic client custody, and **empty Token, TenantID and
+Session**. It authenticates retained encrypted preparation before metadata
+reconciliation; it never delivers access or creates another command. A fresh
+`client_credentials` call is a separate issuance, not an unknown-outcome retry.
+Retain original configuration/keys and retire old instances on configured-secret
+changes as for web clients. Owning introspection reads workload epochs instead
+of human/session authority; its subject is the configured service account.
+
 ## Unknown outcomes
 
 Cancellation, connection failure and lost COMMIT acknowledgement do not prove

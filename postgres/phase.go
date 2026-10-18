@@ -75,11 +75,20 @@ func (*phase) Descriptor() kernel.ContributorDescriptor {
 func operation(name string) identity.FeatureOperation {
 	return identity.FeatureOperation{Owner: "oauth-server", OperationID: name, SchemaID: name + ".public-password-v1", SchemaVersion: 1, RecordRequirement: identity.FeatureRecordRequired}
 }
+func workloadOperation(name string) identity.FeatureOperation {
+	return identity.FeatureOperation{Owner: "oauth-server", OperationID: name, SchemaID: name + ".configured-workload-v1", SchemaVersion: 1, RecordRequirement: identity.FeatureRecordRequired, SubjectRequirement: identity.FeatureSubjectAnonymousFlow}
+}
+func (p *phase) operation(name string) identity.FeatureOperation {
+	if p.input.Grant.Workload != nil {
+		return workloadOperation(name)
+	}
+	return operation(name)
+}
 func (*phase) FeatureOperations() []identity.FeatureOperation {
-	return []identity.FeatureOperation{operation("identity.oauth-server.authorize"), operation("identity.oauth-server.continue"), operation("identity.oauth-server.token"), operation("identity.oauth-server.revoke")}
+	return []identity.FeatureOperation{operation("identity.oauth-server.authorize"), operation("identity.oauth-server.continue"), operation("identity.oauth-server.token"), operation("identity.oauth-server.revoke"), workloadOperation("identity.oauth-server.token"), workloadOperation("identity.oauth-server.revoke")}
 }
 func (p *phase) registration() kernel.FeatureRegistration {
-	return kernel.FeatureRegistration{Contributor: p.Descriptor(), Operation: operation(p.input.Binding.OperationID)}
+	return kernel.FeatureRegistration{Contributor: p.Descriptor(), Operation: p.operation(p.input.Binding.OperationID)}
 }
 
 // Protocol operation IDs and security action names intentionally differ. The
@@ -87,7 +96,7 @@ func (p *phase) registration() kernel.FeatureRegistration {
 // and replay revocation each declare their distinct composed actions once.
 func (p *phase) auditActions() []string {
 	switch p.input.Transition {
-	case createInteraction:
+	case createInteraction, createWorkload:
 		return []string{"identity.oauth_server.authorize"}
 	case approveInteraction:
 		return []string{"identity.oauth_server.grant_consent", "identity.oauth_server.authorize"}
@@ -116,7 +125,7 @@ func (p *phase) lifecycle() kernel.LifecyclePlan {
 	before := p.input.Grant.Version
 	event := "grant.revoked.v1"
 	switch p.input.Transition {
-	case createInteraction:
+	case createInteraction, createWorkload:
 		event = "grant.created.v1"
 	case approveInteraction:
 		event = "grant.authorized.v1"
@@ -192,7 +201,7 @@ func (p *phase) execute(ctx context.Context) (result identity.CommandResult, exe
 func (p *phase) buildCommand() error {
 	i := p.input
 	b := i.Binding
-	if i.Schema != 1 || i.Configuration != p.store.identity || b.ValidateFor(operation(b.OperationID)) != nil || i.Grant.Version == math.MaxUint64 || i.Grant.ClientFingerprint != clientFingerprint(p.client) || i.Grant.ClientID != p.client.ID || i.Intent == ([32]byte{}) || i.CreatedAt.IsZero() || i.CreatedAt.Nanosecond()%1000 != 0 || !scopeSubset(i.Scopes, i.Grant.Scopes) {
+	if i.Schema != 1 || i.Configuration != p.store.identity || b.ValidateFor(p.operation(b.OperationID)) != nil || i.Grant.Version == math.MaxUint64 || i.Grant.ClientFingerprint != clientFingerprint(p.client) || i.Grant.ClientID != p.client.ID || i.Intent == ([32]byte{}) || i.CreatedAt.IsZero() || i.CreatedAt.Nanosecond()%1000 != 0 || !scopeSubset(i.Scopes, i.Grant.Scopes) {
 		return oauth.ErrInvalidRequest
 	}
 	if i.Transition == approveInteraction {
@@ -231,7 +240,7 @@ func (p *phase) buildCommand() error {
 			identity.FeatureField{Name: "oauth.consent-created", Value: identity.FeatureValue{Kind: identity.FeatureBool, Bool: i.Consent.Created}},
 		)
 	}
-	spec := identity.FeatureCommandSpec{Binding: b, Operation: operation(b.OperationID), Fields: fields}
+	spec := identity.FeatureCommandSpec{Binding: b, Operation: p.operation(b.OperationID), Fields: fields}
 	var command identity.Command
 	if p.browserRequired() {
 		command, err = identity.NewFeatureSessionCommand(spec, p.browser)
@@ -254,15 +263,19 @@ func (p *phase) buildCommand() error {
 	if err != nil {
 		return err
 	}
-	seed, err := builder.Build(audit.RecordInput{OccurredAt: i.CreatedAt, Action: p.auditActions()[0], Outcome: audit.OutcomeSucceeded, Actor: audit.ActorInput{Kind: audit.ActorHuman, ID: string(b.ActorID)}, Subject: audit.SubjectInput{Type: p.subjectType(), ID: b.RecordID}, Context: audit.ContextInput{TenantID: string(b.TenantID), CorrelationID: b.CorrelationID}, Policy: audit.PolicyMetadata{PolicyID: b.PolicyID, Version: strconv.FormatUint(b.PolicyVersion, 10)}, Changes: audit.ChangeSetInput{Redacted: true}, Attributes: map[string]string{"command.id": string(b.CommandID), "aggregate.type": p.subjectType(), "aggregate.id": b.RecordID, "aggregate.before_version": strconv.FormatUint(life.BeforeVersion, 10), "aggregate.after_version": strconv.FormatUint(life.AfterVersion, 10), "retention.class": "protected"}})
+	actorKind := audit.ActorHuman
+	if i.Grant.Workload != nil {
+		actorKind = audit.ActorService
+	}
+	seed, err := builder.Build(audit.RecordInput{OccurredAt: i.CreatedAt, Action: p.auditActions()[0], Outcome: audit.OutcomeSucceeded, Actor: audit.ActorInput{Kind: actorKind, ID: string(b.ActorID)}, Subject: audit.SubjectInput{Type: p.subjectType(), ID: b.RecordID}, Context: audit.ContextInput{TenantID: string(b.TenantID), CorrelationID: b.CorrelationID}, Policy: audit.PolicyMetadata{PolicyID: b.PolicyID, Version: strconv.FormatUint(b.PolicyVersion, 10)}, Changes: audit.ChangeSetInput{Redacted: true}, Attributes: map[string]string{"command.id": string(b.CommandID), "aggregate.type": p.subjectType(), "aggregate.id": b.RecordID, "aggregate.before_version": strconv.FormatUint(life.BeforeVersion, 10), "aggregate.after_version": strconv.FormatUint(life.AfterVersion, 10), "retention.class": "protected"}})
 	if err != nil {
 		return err
 	}
-	digest, err := kernel.FeatureAuditBindingDigest(b, operation(b.OperationID), p.subjectType(), seed)
+	digest, err := kernel.FeatureAuditBindingDigest(b, p.operation(b.OperationID), p.subjectType(), seed)
 	if err != nil {
 		return err
 	}
-	p.declaration = kernel.CommandPlan{Contributors: p.registry.Descriptors(), Feature: &kernel.FeatureRegistration{Contributor: p.Descriptor(), Operation: operation(b.OperationID)}, SubjectType: p.subjectType(), CommandCounters: &counters, Lifecycle: &life, Audits: p.auditPlans(digest)}
+	p.declaration = kernel.CommandPlan{Contributors: p.registry.Descriptors(), Feature: &kernel.FeatureRegistration{Contributor: p.Descriptor(), Operation: p.operation(b.OperationID)}, SubjectType: p.subjectType(), CommandCounters: &counters, Lifecycle: &life, Audits: p.auditPlans(digest)}
 	p.plan, err = p.coordinator.PrepareFeaturePreparationPlan(command, p.declaration)
 	return err
 }
@@ -342,7 +355,7 @@ func (p *phase) browserRequired() bool {
 	return p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == denyInteraction
 }
 func (p *phase) issuing() bool {
-	return p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == exchangeCode || p.input.Transition == rotateRefresh
+	return p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == exchangeCode || p.input.Transition == rotateRefresh || p.input.Transition == createWorkload
 }
 
 func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
@@ -353,6 +366,18 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 	i := p.input
 	g := i.Grant
 	if g.ClientFingerprint != clientFingerprint(p.client) || g.ClientVersion != p.client.Version || g.ClientID != p.client.ID || i.Configuration != p.store.identity {
+		return identity.ForbiddenError{}
+	}
+	if g.Workload != nil {
+		if !p.store.validWorkload(g, p.client) || b.UserID != "" || b.AnonymousFlowID != g.ID || b.ActorKind != authorization.SubjectServiceAccount || string(b.ActorID) != g.Workload.ID {
+			return identity.ForbiddenError{}
+		}
+		if p.issuing() {
+			if err := p.checkWorkload(ctx, w); err != nil {
+				return err
+			}
+		}
+	} else if p.client.Workload != nil {
 		return identity.ForbiddenError{}
 	}
 	// Public-client revocation is authorized by exact client-bound token
@@ -417,21 +442,25 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 			}
 		}
 	}
-	if i.Transition == createInteraction {
+	if i.Transition == createInteraction || i.Transition == createWorkload {
 		return nil
 	}
-	rows, err := w.Query(ctx, `SELECT state,version::text,client_version::text,client_fingerprint,source_session,scopes,resource,expires_at FROM `+p.store.schema+`.grants WHERE grant_id=$1 AND tenant_id=$2 AND user_id=$3 AND client_id=$4 FOR UPDATE`, g.ID, string(g.Tenant), string(g.User), g.ClientID)
+	workloadColumn := "NULL::jsonb"
+	if workloadSelected(p.store.config.Protocol.Clients) {
+		workloadColumn = "workload_source"
+	}
+	rows, err := w.Query(ctx, `SELECT state,version::text,client_version::text,client_fingerprint,source_session,scopes,resource,expires_at,`+workloadColumn+` FROM `+p.store.schema+`.grants WHERE grant_id=$1 AND tenant_id=$2 AND COALESCE(user_id,'')=$3 AND client_id=$4 FOR UPDATE`, g.ID, string(g.Tenant), string(g.User), g.ClientID)
 	if err != nil {
 		return err
 	}
 	var state, version, clientVersion, resource string
-	var fingerprint, source, scopes []byte
+	var fingerprint, source, scopes, workload []byte
 	var expires time.Time
 	if !rows.Next() {
 		rows.Close()
 		return identity.ForbiddenError{}
 	}
-	err = rows.Scan(&state, &version, &clientVersion, &fingerprint, &source, &scopes, &resource, &expires)
+	err = rows.Scan(&state, &version, &clientVersion, &fingerprint, &source, &scopes, &resource, &expires, &workload)
 	extra := rows.Next()
 	rowErr := rows.Err()
 	rows.Close()
@@ -447,6 +476,14 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 	}
 	var originalFields []identity.FeatureField
 	if decodeJSON(source, &originalFields) != nil || !sameJSON(originalFields, g.Source) {
+		return identity.ForbiddenError{}
+	}
+	if g.Workload != nil {
+		var actual workloadSource
+		if decodeJSON(workload, &actual) != nil || !sameJSON(actual, *g.Workload) {
+			return identity.ForbiddenError{}
+		}
+	} else if len(workload) > 0 {
 		return identity.ForbiddenError{}
 	}
 	expectedScopes := g.Scopes
@@ -623,6 +660,8 @@ func (p *phase) GenerateFeaturePreparation(ctx context.Context, c identity.Comma
 		kinds = []oauth.TokenKind{oauth.TokenCode}
 	case exchangeCode, rotateRefresh:
 		kinds = []oauth.TokenKind{oauth.TokenAccess, oauth.TokenRefresh}
+	case createWorkload:
+		kinds = []oauth.TokenKind{oauth.TokenAccess}
 	}
 	for _, kind := range kinds {
 		id, err := identity.NewSubjectID()
@@ -714,9 +753,20 @@ func (p *phase) restore(ctx context.Context, generation uint64, wire []byte, ini
 	if !initial && !sameJSON(out.Input, p.input) {
 		return identity.ForbiddenError{}
 	}
+	if out.Input.Grant.Workload != nil {
+		if !p.store.validWorkload(out.Input.Grant, p.client) || p.input.Grant.Workload == nil {
+			return identity.ForbiddenError{}
+		}
+		original, retained := p.input.Grant.Workload, out.Input.Grant.Workload
+		if original.ID != retained.ID || original.Platform != retained.Platform || original.GlobalAuthorityID != retained.GlobalAuthorityID || original.PolicyNamespace != retained.PolicyNamespace {
+			return identity.ForbiddenError{}
+		}
+	} else if p.client.Workload != nil {
+		return identity.ForbiddenError{}
+	}
 	want := 0
 	switch out.Input.Transition {
-	case createInteraction, approveInteraction:
+	case createInteraction, approveInteraction, createWorkload:
 		want = 1
 	case exchangeCode, rotateRefresh:
 		want = 2
@@ -732,6 +782,8 @@ func (p *phase) restore(ctx context.Context, generation uint64, wire []byte, ini
 		switch out.Input.Transition {
 		case approveInteraction:
 			expected = oauth.TokenCode
+		case createWorkload:
+			expected = oauth.TokenAccess
 		case exchangeCode, rotateRefresh:
 			expected = oauth.TokenAccess
 			if index == 1 {
@@ -807,7 +859,7 @@ func (p *phase) ApplyFeature(ctx context.Context, w kernel.Work, c identity.Comm
 		return identity.FeatureReceipt{}, err
 	}
 	life := p.lifecycle()
-	return identity.FeatureReceipt{Operation: operation(p.input.Binding.OperationID), BeforeVersion: life.BeforeVersion, AfterVersion: life.AfterVersion}, nil
+	return identity.FeatureReceipt{Operation: p.operation(p.input.Binding.OperationID), BeforeVersion: life.BeforeVersion, AfterVersion: life.AfterVersion}, nil
 }
 func (p *phase) CheckFeatureCommit(ctx context.Context, w kernel.Work, c identity.Command) error {
 	if c != p.command {

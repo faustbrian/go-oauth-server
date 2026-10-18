@@ -21,7 +21,9 @@ var _ oauth.Introspector = (*Store)(nil)
 // match code/refresh admission; ordinary browser logout does not revoke an
 // approved OAuth grant. No source session is authenticated or issued here.
 // Unknown/foreign/inactive/withdrawn tokens return only false; dependency failures
-// and cancellation deny with zero metadata. Token hints never constrain lookup.
+// and cancellation deny with zero metadata. Explicit machine grants instead
+// check their frozen directory/workload authorization epochs, not a fabricated
+// user/session. Token hints never constrain lookup.
 func (s *Store) Introspect(ctx context.Context, c oauth.IntrospectionCommand) (out oauth.IntrospectResult, err error) {
 	defer func() {
 		if recover() != nil {
@@ -64,7 +66,12 @@ func (s *Store) Introspect(ctx context.Context, c oauth.IntrospectionCommand) (o
 	if err != nil || !slices.Equal(scopes, target.Payload.Scopes) || !scopeSubset(scopes, client.Scopes) {
 		return out, nil
 	}
-	credentialExpiry, err := s.introspectionAuthority(ctx, target.Grant, now)
+	var credentialExpiry time.Time
+	if target.Grant.Workload != nil {
+		credentialExpiry, err = s.workloadIntrospectionAuthority(ctx, target.Grant, client)
+	} else {
+		credentialExpiry, err = s.introspectionAuthority(ctx, target.Grant, now)
+	}
 	if err != nil {
 		return out, introspectionError(ctx, err)
 	}
@@ -89,7 +96,11 @@ func (s *Store) Introspect(ctx context.Context, c oauth.IntrospectionCommand) (o
 	if !activeIntrospectionArtifact(current, now) || !sameJSON(current, target) || !credentialExpiry.IsZero() && !now.Before(credentialExpiry) {
 		return out, nil
 	}
-	return oauth.IntrospectResult{Active: true, ClientID: client.ID, Subject: string(target.Grant.User), Resource: target.Grant.Resource, Issuer: s.config.Protocol.Issuer, Scopes: scopes, ExpiresAt: target.ExpiresAt}, nil
+	subject := string(target.Grant.User)
+	if target.Grant.Workload != nil {
+		subject = target.Grant.Workload.ID
+	}
+	return oauth.IntrospectResult{Active: true, ClientID: client.ID, Subject: subject, Resource: target.Grant.Resource, Issuer: s.config.Protocol.Issuer, Scopes: scopes, ExpiresAt: target.ExpiresAt}, nil
 }
 
 func activeIntrospectionArtifact(a artifactRecord, now time.Time) bool {

@@ -18,6 +18,9 @@ import (
 // continue additionally requires its original continuation. Token/revoke require
 // the original client-bound protocol bearer and configured client authentication,
 // with Session/TenantID empty. Browser operations accept no client credentials.
+// Initial configured-workload token issuance has no incoming bearer: Token must
+// be empty and the original command is authenticated against retained encrypted
+// preparation using the owning client's Basic custody and trusted configuration.
 // No user, actor, scope, timestamp, redirect or command override is accepted.
 // Session, Token and ClientAuthentication are borrowed secret custody; never
 // log or serialize them.
@@ -97,6 +100,9 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 	var observed session.GetResult
 	switch request.OperationID {
 	case "identity.oauth-server.authorize", "identity.oauth-server.continue":
+		if client.Workload != nil {
+			return out, oauth.ErrAccessDenied
+		}
 		if request.ClientAuthentication.Method() != "none" {
 			return out, oauth.ErrInvalidRequest
 		}
@@ -136,6 +142,14 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 		if request.TenantID != "" || request.Session.Token() != "" {
 			return out, oauth.ErrInvalidRequest
 		}
+		if request.OperationID == "identity.oauth-server.token" && client.Workload != nil {
+			if request.Token != "" {
+				return out, oauth.ErrInvalidRequest
+			}
+			p = &phase{store: s, client: client, input: phaseInput{Schema: 1, Configuration: s.identity, Transition: createWorkload, Grant: grantRecord{ID: string(request.CommandID), Tenant: client.Workload.TenantID(), Source: []identity.FeatureField{}, Workload: &workloadSource{ID: client.Workload.ID(), Platform: client.Owner.PlatformID(), GlobalAuthorityID: s.config.WorkloadAuthority.GlobalAuthorityID, PolicyNamespace: s.config.WorkloadAuthority.PolicyNamespace}}, Intent: s.intent("client_credentials", string(request.CommandID))}}
+			p.bind(request.CommandID, request.OperationID, string(request.CommandID))
+			break
+		}
 		kinds := []oauth.TokenKind{oauth.TokenCode, oauth.TokenRefresh}
 		if request.OperationID == "identity.oauth-server.revoke" {
 			kinds = []oauth.TokenKind{oauth.TokenAccess, oauth.TokenRefresh}
@@ -165,7 +179,7 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 	if err := s.coordinator(p); err != nil {
 		return out, err
 	}
-	if request.OperationID == "identity.oauth-server.authorize" {
+	if request.OperationID == "identity.oauth-server.authorize" || p.input.Transition == createWorkload {
 		wire, generation, err := p.coordinator.QueryFeaturePreparation(ctx, p.query(), p.caller(), p.registration(), p)
 		if err != nil {
 			return out, publicError(ctx, err, oauth.ErrAccessDenied)

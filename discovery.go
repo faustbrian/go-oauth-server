@@ -118,6 +118,10 @@ func (s *Service) DiscoveryOauth(ctx context.Context, _ DiscoveryOauthRequest) (
 	d := c.Discovery
 	web, workload, basic, public := discoveryProfiles(c.Clients)
 	m := DiscoveryOauthMetadata{Issuer: c.Issuer.String(), AuthorizationEndpoint: d.AuthorizationEndpoint, TokenEndpoint: d.TokenEndpoint, RevocationEndpoint: d.RevocationEndpoint, IntrospectionEndpoint: d.IntrospectionEndpoint, ScopesSupported: c.Scopes.Scopes(), ResponseTypesSupported: []string{}, ProtectedResources: []string{c.Resource}}
+	if !nilDependency(s.deps.OIDC) {
+		m.ScopesSupported = append(m.ScopesSupported, s.deps.OIDC.Scopes().Scopes()...)
+		slices.Sort(m.ScopesSupported)
+	}
 	if web {
 		m.ResponseTypesSupported = []string{"code"}
 		m.ResponseModesSupported = []string{"query"}

@@ -2,7 +2,14 @@
 
 [Documentation index](README.md)
 
-Status: planned
+Status: experimental selected profiles; full goal remains unverified.
+
+The original planning record below is historical. Current selected behavior is
+documented in [OAuth profiles](selected-profile.md) and the finite optional
+[OIDC code profile](selected-oidc-profile.md). The latter preserves the existing
+public Service struct and adds the four-method child extension rather than
+breaking that API to follow older proposed-interface wording. Neither selected
+consumer closes the complete OAuth/OIDC/shared-issuer goal.
 
 The coordination plan identifies `github.com/faustbrian/go-oauth-server` as the
 future storage-neutral owner of OAuth 2.1 authorization-server clients,

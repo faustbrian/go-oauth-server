@@ -38,6 +38,9 @@ const (
 type AuthorizationRequest struct {
 	ClientID, RedirectURI, State, CodeChallenge, Resource string
 	Scopes                                                []string
+	// Nonce is uninterpreted extension input. Core bounds/preserves it; only an
+	// explicitly composed OIDC extension may authorize its semantics.
+	Nonce string `json:",omitempty"`
 }
 
 // Format prevents correlated request/state data from appearing in diagnostics.
@@ -144,11 +147,33 @@ func S256Challenge(verifier string) (string, error) {
 // policy's responsibility; a parsed RedirectURI must never itself enable a
 // redirect error. Unknown parameters fail rather than silently change profiles.
 func ParseAuthorizationQuery(raw string) (AuthorizationRequest, error) {
-	values, err := parseFields(raw, []string{"response_type", "client_id", "redirect_uri", "scope", "state", "code_challenge", "code_challenge_method", "resource"})
+	return parseAuthorizationQuery(raw, false)
+}
+
+// ParseAuthorizationQueryWithOIDC explicitly selects bounded nonce syntax in
+// addition to the existing code/S256 fields. It establishes no OIDC semantics or
+// grant authority: Service still requires its configured extension. The default
+// OAuth parser remains unchanged and rejects every nonce parameter.
+func ParseAuthorizationQueryWithOIDC(raw string) (AuthorizationRequest, error) {
+	return parseAuthorizationQuery(raw, true)
+}
+
+func parseAuthorizationQuery(raw string, oidc bool) (AuthorizationRequest, error) {
+	fields := []string{"response_type", "client_id", "redirect_uri", "scope", "state", "code_challenge", "code_challenge_method", "resource"}
+	if oidc {
+		fields = append(fields, "nonce")
+	}
+	values, err := parseFields(raw, fields)
 	if err != nil || values.Get("response_type") != "code" || values.Get("code_challenge_method") != "S256" {
 		return AuthorizationRequest{}, ErrInvalidRequest
 	}
 	r := AuthorizationRequest{ClientID: values.Get("client_id"), RedirectURI: values.Get("redirect_uri"), State: values.Get("state"), CodeChallenge: values.Get("code_challenge"), Resource: values.Get("resource")}
+	if hasField(values, "nonce") {
+		if !visible(values.Get("nonce"), 256) {
+			return AuthorizationRequest{}, ErrInvalidRequest
+		}
+		r.Nonce = values.Get("nonce")
+	}
 	r.Scopes, err = parseScopes(values.Get("scope"))
 	if err != nil || !visible(r.ClientID, 128) || !validRedirect(r.RedirectURI) || !optionalVisible(r.State, 1024) || !opaque32(r.CodeChallenge) || !validOrigin(r.Resource) {
 		return AuthorizationRequest{}, ErrInvalidRequest

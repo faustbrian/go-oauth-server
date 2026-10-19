@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add the optional four-method OIDC seam without replacing the Service struct,
+  bounded nonce custody, explicit reserved-scope composition and core-owned
+  ES256/durable signing. ID tokens are reveal-once existing native grant output.
+- Keep resource and extension scope catalogs separately owned at configuration
+  admission; uncomposed services deny explicit or inherited identity refresh
+  authority before native credential consumption.
+
 - Add opt-in OAuth authorization-server discovery with immutable trusted
   endpoints and metadata derived from actual selected public, Basic and workload
   profiles. It publishes no OIDC, device, registration or signing capabilities;

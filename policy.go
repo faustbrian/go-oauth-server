@@ -30,6 +30,10 @@ type ScopeCatalog struct{ values []string }
 // scopes belong to the optional OIDC extension and are rejected by this core
 // constructor even if supplied by configuration. No IO or defaults occur.
 func NewScopeCatalog(values []string) (ScopeCatalog, error) {
+	return newScopeCatalog(values, false)
+}
+
+func newScopeCatalog(values []string, oidc bool) (ScopeCatalog, error) {
 	if len(values) < 1 || len(values) > 16 {
 		return ScopeCatalog{}, ErrInvalidRequest
 	}
@@ -37,7 +41,7 @@ func NewScopeCatalog(values []string) (ScopeCatalog, error) {
 	slices.Sort(owned)
 	for i, value := range owned {
 		parsed, err := parseScopes(value)
-		if err != nil || len(parsed) != 1 || isOIDCScope(value) || i > 0 && value == owned[i-1] {
+		if err != nil || len(parsed) != 1 || !oidc && isOIDCScope(value) || i > 0 && value == owned[i-1] {
 			return ScopeCatalog{}, ErrInvalidRequest
 		}
 	}
@@ -115,7 +119,7 @@ func ValidateClient(input Client) (Client, error) {
 			return Client{}, err
 		}
 	}
-	scopes, err := NewScopeCatalog(input.Scopes)
+	scopes, err := newScopeCatalog(input.Scopes, true)
 	if err != nil {
 		return Client{}, err
 	}

@@ -8,6 +8,12 @@ consent, S256 code exchange, refresh rotation and revocation.
 An additional explicit startup workload policy selects confidential
 client-credentials access without a human/session/consent substitute.
 
+The optional [OIDC profile](selected-oidc-profile.md) adds only the finite
+public-subject ES256 code-flow consumer. Statements below that describe OIDC as
+unselected apply to the original OAuth-only composition; broader OIDC features
+remain unsupported. The public Service struct is retained, not replaced with
+the older goal's proposed interface.
+
 ## Owning public boundary
 
 Core owns protocol policy and typed requests/results. `postgres/` owns OAuth

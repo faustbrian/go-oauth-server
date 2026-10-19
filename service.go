@@ -37,7 +37,10 @@ type Config struct {
 	Issuer                Issuer
 	Environment, Resource string
 	Scopes                ScopeCatalog
-	Clients               []Client
+	// OIDCScopes declares the optional child's reserved scope catalog to native
+	// persistence. It grants no semantics until WithOIDC composes the child.
+	OIDCScopes ScopeCatalog
+	Clients    []Client
 	// ClientSecrets contains exactly one verifier per confidential client ID and
 	// version, none for public clients. See NewClientSecretVerifier's startup policy.
 	ClientSecrets []ClientSecretVerifier
@@ -67,6 +70,16 @@ func (c Config) Validated() (Config, error) {
 	if c.RefreshTTL%time.Microsecond != 0 {
 		return Config{}, ErrInvalidRequest
 	}
+	// Catalog constructors return the same immutable value type, so admission
+	// must enforce ownership even when callers cross-assign the two fields.
+	if hasExtensionScope(c.Scopes.values) {
+		return Config{}, ErrInvalidRequest
+	}
+	for _, scope := range c.OIDCScopes.values {
+		if !isOIDCScope(scope) || c.Scopes.Contains(scope) {
+			return Config{}, ErrInvalidRequest
+		}
+	}
 	c.Clients = slices.Clone(c.Clients)
 	slices.SortFunc(c.Clients, func(a, b Client) int {
 		if a.ID < b.ID {
@@ -79,7 +92,7 @@ func (c Config) Validated() (Config, error) {
 	})
 	for i, client := range c.Clients {
 		owned, err := ValidateClient(client)
-		if err != nil || owned.Resource != c.Resource || i > 0 && c.Clients[i-1].ID == owned.ID || !scopeSubset(owned.Scopes, c.Scopes.values) || owned.Workload != nil && owned.Workload.AccessTTL() > c.AccessTTL {
+		if err != nil || owned.Resource != c.Resource || i > 0 && c.Clients[i-1].ID == owned.ID || !scopeSubset(owned.Scopes, append(slices.Clone(c.Scopes.values), c.OIDCScopes.values...)) || owned.Workload != nil && (owned.Workload.AccessTTL() > c.AccessTTL || hasExtensionScope(owned.Scopes)) {
 			return Config{}, ErrInvalidRequest
 		}
 		c.Clients[i] = owned
@@ -89,6 +102,7 @@ func (c Config) Validated() (Config, error) {
 	}
 	c.ClientSecrets = slices.Clone(c.ClientSecrets)
 	c.Scopes.values = slices.Clone(c.Scopes.values)
+	c.OIDCScopes.values = slices.Clone(c.OIDCScopes.values)
 	if err := validateDiscovery(c); err != nil {
 		return Config{}, err
 	}
@@ -103,6 +117,7 @@ func (c Config) Validated() (Config, error) {
 type Dependencies struct {
 	Sessions *session.SessionService
 	Store    Store
+	OIDC     OIDCExtension
 }
 
 // Store is the consumer-owned storage-neutral OAuth execution seam. Commands
@@ -124,6 +139,10 @@ type Service struct {
 	deps   Dependencies
 }
 
+// Format prevents recursive diagnostics from traversing borrowed secret-bearing
+// extension/store configuration. Public metadata has explicit read operations.
+func (*Service) Format(f fmt.State, _ rune) { _, _ = f.Write([]byte("oauthserver.Service(redacted)")) }
+
 // NewService validates/copies selected composition without IO or generation.
 func NewService(config Config, dependencies Dependencies) (*Service, error) {
 	c, err := config.Validated()
@@ -139,6 +158,9 @@ func NewService(config Config, dependencies Dependencies) (*Service, error) {
 		if reader, ok := dependencies.Store.(Introspector); !ok || nilDependency(reader) {
 			return nil, ErrInvalidRequest
 		}
+	}
+	if !nilDependency(dependencies.OIDC) && !slices.Equal(dependencies.OIDC.Scopes().Scopes(), c.OIDCScopes.Scopes()) {
+		return nil, ErrInvalidRequest
 	}
 	return &Service{config: c, deps: dependencies}, nil
 }
@@ -247,6 +269,10 @@ type ContinuationCommand struct {
 type TokenCommand struct {
 	Request TokenRequest
 	Client  Client
+	// OIDC is a trusted composition callback, invoked only for a genuine native
+	// human grant in encrypted preparation. Adapters must never invoke it during
+	// metadata-only replay/recovery or deliver it before known commitment.
+	OIDC func(context.Context, OIDCClaimsInput) (OIDCClaimsProjection, error)
 }
 
 // TokenResult distinguishes fresh known commitment from metadata-only replay
@@ -257,6 +283,7 @@ type TokenResult struct {
 	CommandID                 identity.CommandID
 	Replayed                  bool
 	AccessToken, RefreshToken Token
+	IDToken                   IDToken
 	ExpiresAt                 time.Time
 	Resource                  string
 	Scopes                    []string
@@ -327,7 +354,7 @@ func (s *Service) client(id string) (Client, error) {
 
 func (s *Service) validateAuthorization(r AuthorizationRequest) (AuthorizationRequest, Client, error) {
 	c, err := s.client(r.ClientID)
-	if err != nil || !slices.Contains(c.Redirects, r.RedirectURI) || !opaque32(r.CodeChallenge) || r.Resource != c.Resource || !optionalVisible(r.State, 1024) {
+	if err != nil || !slices.Contains(c.Redirects, r.RedirectURI) || !opaque32(r.CodeChallenge) || r.Resource != c.Resource || !optionalVisible(r.State, 1024) || !optionalVisible(r.Nonce, 256) {
 		return AuthorizationRequest{}, Client{}, ErrInvalidRequest
 	}
 	scopes, err := validatedScopes(r.Scopes)
@@ -335,6 +362,9 @@ func (s *Service) validateAuthorization(r AuthorizationRequest) (AuthorizationRe
 		return AuthorizationRequest{}, Client{}, ErrInvalidScope
 	}
 	r.Scopes = scopes
+	if (hasExtensionScope(scopes) || r.Nonce != "") && nilDependency(s.deps.OIDC) {
+		return AuthorizationRequest{}, Client{}, ErrInvalidScope
+	}
 	return r, c, nil
 }
 
@@ -399,6 +429,15 @@ func (s *Service) Authorize(ctx context.Context, request AuthorizeRequest) (out 
 	}
 	if !source.Authenticated {
 		return AuthorizeResult{Outcome: LoginRequired}, nil
+	}
+	if hasExtensionScope(input.Scopes) || input.Nonce != "" {
+		projection, e := s.deps.OIDC.ValidateAuthorization(ctx, OIDCAuthorizationInput{Request: input, Session: source})
+		if e != nil || !projection.Accepted {
+			if e != nil {
+				return out, e
+			}
+			return out, ErrAccessDenied
+		}
 	}
 	out, err = s.deps.Store.Authorize(ctx, AuthorizationCommand{Request: input, Client: client.snapshot(), Session: source, Browser: request.Session, Network: request.Network})
 	if err != nil || ctx.Err() != nil {
@@ -522,6 +561,9 @@ func (s *Service) Token(ctx context.Context, request TokenRequest) (out TokenRes
 				return out, ErrInvalidScope
 			}
 		}
+		if hasExtensionScope(request.Scopes) && nilDependency(s.deps.OIDC) {
+			return out, ErrAccessDenied
+		}
 	case ClientCredentialsGrant:
 		if client.Public || request.Code != "" || request.RedirectURI != "" || request.CodeVerifier != "" || request.RefreshToken != "" {
 			return out, ErrInvalidRequest
@@ -541,12 +583,16 @@ func (s *Service) Token(ctx context.Context, request TokenRequest) (out TokenRes
 	if err := s.config.AuthenticateClient(ctx, client.ID, request.ClientAuthentication); err != nil {
 		return out, err
 	}
-	out, err = s.deps.Store.Token(ctx, TokenCommand{Request: request, Client: client.snapshot()})
+	var issuer func(context.Context, OIDCClaimsInput) (OIDCClaimsProjection, error)
+	if !nilDependency(s.deps.OIDC) {
+		issuer = s.deps.OIDC.Claims
+	}
+	out, err = s.deps.Store.Token(ctx, TokenCommand{Request: request, Client: client.snapshot(), OIDC: issuer})
 	if err != nil || ctx.Err() != nil {
 		return TokenResult{Outcome: out.Outcome, CommandID: out.CommandID}, operationError(ctx, err)
 	}
 	if out.Outcome != identity.CommitOutcomeCommitted || out.Replayed {
-		if out.AccessToken.state != nil || out.RefreshToken.state != nil {
+		if out.AccessToken.state != nil || out.RefreshToken.state != nil || out.IDToken.state != nil {
 			return TokenResult{Outcome: out.Outcome, CommandID: out.CommandID, Replayed: out.Replayed}, ErrUnavailable
 		}
 		return TokenResult{Outcome: out.Outcome, CommandID: out.CommandID, Replayed: out.Replayed}, nil
@@ -560,10 +606,16 @@ func (s *Service) Token(ctx context.Context, request TokenRequest) (out TokenRes
 		}
 	}
 	scopes, e := validatedScopes(out.Scopes)
-	if e != nil || !scopeSubset(scopes, client.Scopes) || request.Scopes != nil && !scopeSubset(scopes, request.Scopes) || out.AccessToken.state == nil || out.Resource != client.Resource || !now.Before(out.ExpiresAt) || out.ExpiresAt.After(now.Add(accessTTL)) {
+	if e != nil || !scopeSubset(scopes, client.Scopes) || request.Scopes != nil && !scopeSubset(scopes, request.Scopes) || hasExtensionScope(scopes) && nilDependency(s.deps.OIDC) || out.AccessToken.state == nil || out.Resource != client.Resource || !now.Before(out.ExpiresAt) || out.ExpiresAt.After(now.Add(accessTTL)) {
 		return TokenResult{Outcome: identity.CommitOutcomeCommitted, CommandID: out.CommandID}, ErrUnavailable
 	}
 	out.Scopes = scopes
+	if out.IDToken.state != nil && (request.GrantType != AuthorizationCodeGrant || !hasExtensionScope(scopes) || nilDependency(s.deps.OIDC)) {
+		return TokenResult{Outcome: identity.CommitOutcomeCommitted, CommandID: out.CommandID}, ErrUnavailable
+	}
+	if request.GrantType == AuthorizationCodeGrant && hasExtensionScope(scopes) && out.IDToken.state == nil {
+		return TokenResult{Outcome: identity.CommitOutcomeCommitted, CommandID: out.CommandID}, ErrUnavailable
+	}
 	return out, nil
 }
 

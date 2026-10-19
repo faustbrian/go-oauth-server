@@ -12,27 +12,33 @@ import (
 
 func FuzzAuthorizationQuery(f *testing.F) {
 	f.Add("response_type=code&client_id=public-client&redirect_uri=https%3A%2F%2Fclient.example%2Fcb&scope=identity%3Aread&state=original&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&resource=https%3A%2F%2Fresource.example")
+	f.Add("response_type=code&client_id=public-client&redirect_uri=https%3A%2F%2Fclient.example%2Fcb&scope=openid&nonce=original-nonce&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&resource=https%3A%2F%2Fresource.example")
 	for _, seed := range []string{"", "%zz", "scope=a&scope=b", strings.Repeat("x", 16385), "response_type=token&nonce=foreign"} {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, raw string) {
-		r, err := oauth.ParseAuthorizationQuery(raw)
-		if err != nil {
-			if !errors.Is(err, oauth.ErrInvalidRequest) {
-				t.Fatal("unexpected parser error")
+		for _, parser := range []func(string) (oauth.AuthorizationRequest, error){oauth.ParseAuthorizationQuery, oauth.ParseAuthorizationQueryWithOIDC} {
+			r, err := parser(raw)
+			if err != nil {
+				if !errors.Is(err, oauth.ErrInvalidRequest) {
+					t.Fatal("unexpected parser error")
+				}
+				continue
 			}
-			return
-		}
-		if len(raw) > 16384 || len(strings.Join(r.Scopes, " ")) > 1024 {
-			t.Fatal("parser widened input budget")
-		}
-		q := url.Values{"response_type": {"code"}, "client_id": {r.ClientID}, "redirect_uri": {r.RedirectURI}, "scope": {strings.Join(r.Scopes, " ")}, "state": {r.State}, "code_challenge": {r.CodeChallenge}, "code_challenge_method": {"S256"}, "resource": {r.Resource}}
-		copy, err := oauth.ParseAuthorizationQuery(q.Encode())
-		if err != nil || !reflect.DeepEqual(copy, r) {
-			t.Fatal("authorization projection is not stable")
-		}
-		if _, err := oauth.ParseAuthorizationQuery(raw + "&client_id=foreign"); err == nil {
-			t.Fatal("duplicate identity channel accepted")
+			if len(raw) > 16384 || len(strings.Join(r.Scopes, " ")) > 1024 {
+				t.Fatal("parser widened input budget")
+			}
+			q := url.Values{"response_type": {"code"}, "client_id": {r.ClientID}, "redirect_uri": {r.RedirectURI}, "scope": {strings.Join(r.Scopes, " ")}, "state": {r.State}, "code_challenge": {r.CodeChallenge}, "code_challenge_method": {"S256"}, "resource": {r.Resource}}
+			if r.Nonce != "" {
+				q.Set("nonce", r.Nonce)
+			}
+			copy, err := parser(q.Encode())
+			if err != nil || !reflect.DeepEqual(copy, r) {
+				t.Fatal("authorization projection is not stable")
+			}
+			if _, err := parser(raw + "&client_id=foreign"); err == nil {
+				t.Fatal("duplicate identity channel accepted")
+			}
 		}
 	})
 }

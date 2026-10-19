@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Add selected OIDC preparation to the existing consent/code/S256 transaction
+  and subject-bound current-authority UserInfo. Install forward signing history
+  before selection: publication, active kid, greatest reserved expiry and
+  compromise/retirement survive restart without private persistence. Unknown
+  or replayed commands never redeliver signed material.
+- Serialize signing selection, reservation, retirement and compromise against
+  one native selection lock, rechecking key predicates after contention. Bound
+  optional nonces before encoding and require the extension for inherited
+  identity refresh authority without consuming rejected credentials.
+- Conserve one whole-second access/ID-token expiry through native preparation,
+  restoration, commit and return; recheck expiry after signing-key lock waits.
+  Selected OIDC code access lifetime may be shortened by less than one second.
+
 - Expose explicitly selected core OAuth discovery through the existing native
   service, without changing stored grants, migrations or recovery identity.
   A matching discovery-capable root pin is required; existing configuration

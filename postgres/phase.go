@@ -34,10 +34,13 @@ type generatedArtifact struct {
 	Transition, Replay identity.CommandID
 }
 type preparedOutput struct {
-	Schema     uint32
-	Generation uint64
-	Input      phaseInput
-	Artifacts  []generatedArtifact
+	Schema       uint32
+	Generation   uint64
+	Input        phaseInput
+	Artifacts    []generatedArtifact
+	IDToken      string `json:",omitempty"`
+	Subject      string `json:",omitempty"`
+	SigningKeyID string `json:",omitempty"`
 }
 
 // Generated credentials exist only in invocation memory or the existing
@@ -64,6 +67,7 @@ type phase struct {
 	coordinator       *kernel.Coordinator
 	output            preparedOutput
 	applied           bool
+	oidc              func(context.Context, oauth.OIDCClaimsInput) (oauth.OIDCClaimsProjection, error)
 }
 
 var _ kernel.FeaturePreparationContributor = (*phase)(nil)
@@ -690,6 +694,8 @@ func (p *phase) GenerateFeaturePreparation(ctx context.Context, c identity.Comma
 		return nil, identity.ForbiddenError{}
 	}
 	out := preparedOutput{Schema: 1, Generation: generation, Input: i}
+	out.Subject = i.TargetPayload.Subject
+	out.SigningKeyID = i.TargetPayload.SigningKeyID
 	var kinds []oauth.TokenKind
 	switch i.Transition {
 	case createInteraction:
@@ -736,6 +742,48 @@ func (p *phase) GenerateFeaturePreparation(ctx context.Context, c identity.Comma
 			expires = minTime(expires, i.CreatedAt.Add(p.store.config.Protocol.AccessTTL))
 		}
 		out.Artifacts = append(out.Artifacts, generatedArtifact{ID: string(id), Kind: kind, Wire: wire, Digest: digest, ExpiresAt: expires, Transition: next, Replay: replay})
+	}
+	if i.Transition == exchangeCode {
+		selected := false
+		for _, scope := range i.Scopes {
+			if p.store.config.Protocol.OIDCScopes.Contains(scope) {
+				selected = true
+			}
+		}
+		if selected {
+			if p.oidc == nil {
+				return nil, oauth.ErrAccessDenied
+			}
+			// The selected child emits whole-second NumericDates. Conserve that
+			// exact deadline as the native access deadline too, so preparation,
+			// restored Work fences, persistence and core delivery cannot outlive
+			// the signed exp. Never round above the original grant/TTL ceiling.
+			out.Artifacts[0].ExpiresAt = out.Artifacts[0].ExpiresAt.Truncate(time.Second)
+			if !i.CreatedAt.Before(out.Artifacts[0].ExpiresAt) {
+				return nil, oauth.ErrAccessDenied
+			}
+			original, err := sessionpg.OriginalSessionFromFields(i.Grant.Tenant, i.Grant.User, i.Grant.Source)
+			if err != nil {
+				return nil, oauth.ErrAccessDenied
+			}
+			bindings, err := original.Bindings()
+			if err != nil {
+				return nil, oauth.ErrAccessDenied
+			}
+			claims, err := p.oidc(ctx, oauth.OIDCClaimsInput{Issuer: p.store.config.Protocol.Issuer, TenantID: i.Grant.Tenant, UserID: i.Grant.User, ClientID: p.client.ID, Nonce: i.Request.Nonce, Scopes: slices.Clone(i.Scopes), IssuedAt: i.CreatedAt, ExpiresAt: out.Artifacts[0].ExpiresAt, AuthenticatedAt: bindings.Authentication.Proof.IssuedAt})
+			if err != nil {
+				return nil, err
+			}
+			if !boundedText(claims.Subject, 128) || !boundedText(claims.SigningKeyID, 128) {
+				return nil, oauth.ErrUnavailable
+			}
+			out.IDToken, err = claims.IDToken.Reveal()
+			if err != nil {
+				return nil, oauth.ErrUnavailable
+			}
+			out.Subject = claims.Subject
+			out.SigningKeyID = claims.SigningKeyID
+		}
 	}
 	plain, err := json.Marshal(out)
 	if err != nil {
@@ -832,6 +880,9 @@ func (p *phase) restore(ctx context.Context, generation uint64, wire []byte, ini
 		if err != nil || a.Kind != expected || !a.ExpiresAt.After(out.Input.CreatedAt) || a.ExpiresAt.After(out.Input.Grant.ExpiresAt) {
 			return oauth.ErrUnavailable
 		}
+		if out.IDToken != "" && (out.Input.Transition != exchangeCode || index == 0 && a.ExpiresAt.Nanosecond() != 0) {
+			return oauth.ErrUnavailable
+		}
 		var matched bool
 		for _, key := range p.store.config.TokenKeys {
 			digest, err := token.Digest(key, oauth.TokenScope{Issuer: p.store.config.Protocol.Issuer, Environment: p.store.config.Protocol.Environment, ClientID: p.client.ID, Kind: a.Kind})
@@ -880,14 +931,8 @@ func (p *phase) ApplyFeature(ctx context.Context, w kernel.Work, c identity.Comm
 	if err := p.restore(ctx, generation, wire, false); err != nil {
 		return identity.FeatureReceipt{}, err
 	}
-	now, err := w.DatabaseTime(ctx)
-	if err != nil {
+	if err := p.checkArtifactExpiry(ctx, w); err != nil {
 		return identity.FeatureReceipt{}, err
-	}
-	for _, artifact := range p.output.Artifacts {
-		if !now.Before(artifact.ExpiresAt) {
-			return identity.FeatureReceipt{}, identity.ForbiddenError{}
-		}
 	}
 	if err := p.mutate(ctx, w); err != nil {
 		return identity.FeatureReceipt{}, err
@@ -903,7 +948,31 @@ func (p *phase) CheckFeatureCommit(ctx context.Context, w kernel.Work, c identit
 	if c != p.command {
 		return identity.ForbiddenError{}
 	}
-	return p.check(ctx, w, true)
+	if err := p.check(ctx, w, true); err != nil {
+		return err
+	}
+	if p.output.IDToken != "" {
+		if err := p.checkSigning(ctx, w); err != nil {
+			return err
+		}
+		// The signing-key fence can wait on compromise/publication work. Sample
+		// authoritative time after it, not before that potentially blocking lock.
+		return p.checkArtifactExpiry(ctx, w)
+	}
+	return nil
+}
+
+func (p *phase) checkArtifactExpiry(ctx context.Context, w kernel.Work) error {
+	now, err := w.DatabaseTime(ctx)
+	if err != nil {
+		return err
+	}
+	for _, artifact := range p.output.Artifacts {
+		if !now.Before(artifact.ExpiresAt) {
+			return identity.ForbiddenError{}
+		}
+	}
+	return nil
 }
 
 func (p *phase) generatedToken(kind oauth.TokenKind) oauth.Token {

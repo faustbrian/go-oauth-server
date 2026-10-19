@@ -2,6 +2,11 @@
 
 Experimental persistence and public service composition for the
 [selected authorization-code profile](../docs/selected-profile.md).
+
+The optional [selected OIDC profile](../docs/selected-oidc-profile.md) adds native
+encrypted ID-token preparation, subject-bound UserInfo and public signing-key
+lifecycle. Install SigningMigrationSource before enabling it; existing OAuth
+history and current identity/session/grant owners are retained.
 `NewService(pool, Config, keys)` composes the native primary session reader,
 OAuth participant and root protocol. `NewStore` exposes that same participant
 for explicit composition and metadata-only `Recover`; applications do not

@@ -1,0 +1,293 @@
+//go:build integration && oauthflow
+
+package oauthpostgres_test
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/faustbrian/go-clock"
+	identity "github.com/faustbrian/go-identity"
+	"github.com/faustbrian/go-identity/session"
+	oauth "github.com/faustbrian/go-oauth-server"
+	"github.com/jackc/pgx/v5"
+	"golang.org/x/oauth2"
+)
+
+// This hook preserves the real native reservation and only controls a physical
+// key-row lock so the final commit fence must wait across the signed deadline.
+type signingReservationHook struct {
+	oauth.SigningLifecycle
+	after func(context.Context, string, time.Time) error
+}
+
+func (h signingReservationHook) ReserveSigningKey(ctx context.Context, kid string, expiry time.Time) error {
+	if err := h.SigningLifecycle.ReserveSigningKey(ctx, kid, expiry); err != nil {
+		return err
+	}
+	return h.after(ctx, kid, expiry)
+}
+
+func TestNativeOIDCSignedDeadlineCrossingKeyWaitRollsBack(t *testing.T) {
+	f := passwordFixture(t)
+	type heldKey struct {
+		tx     pgx.Tx
+		expiry time.Time
+	}
+	held := make(chan heldKey, 1)
+	service, _, _, _, _ := oidcFixtureWithLifecycle(t, &f, clock.System{}, func(native oauth.SigningLifecycle) oauth.SigningLifecycle {
+		return signingReservationHook{SigningLifecycle: native, after: func(ctx context.Context, kid string, expiry time.Time) error {
+			tx, err := f.pool.Raw().Begin(ctx)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `SELECT kid FROM oauth_store.signing_keys WHERE kid=$1 FOR UPDATE`, kid); err != nil {
+				_ = tx.Rollback(ctx)
+				return err
+			}
+			held <- heldKey{tx: tx, expiry: expiry}
+			return nil
+		}}
+	})
+	code, proof := oidcCode(t, f, service, "crossing-signed-deadline")
+	ceiling := time.Now().UTC().Add(2 * time.Second).Truncate(time.Second).Add(900 * time.Millisecond)
+	if _, err := f.pool.Raw().Exec(f.ctx, `UPDATE oauth_store.grants SET expires_at=$1`, ceiling); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(f.ctx)
+	done := make(chan struct{})
+	type result struct {
+		out oauth.TokenResult
+		err error
+	}
+	results := make(chan result, 1)
+	go func() {
+		defer close(done)
+		out, err := service.Token(ctx, oauth.TokenRequest{GrantType: oauth.AuthorizationCodeGrant, ClientID: "public-web", Code: code, CodeVerifier: proof, RedirectURI: "https://client.example/callback", Network: "192.0.2.1"})
+		results <- result{out, err}
+	}()
+	defer func() { cancel(); <-done }()
+	var lock heldKey
+	select {
+	case lock = <-held:
+	case <-done:
+		t.Fatal("issuance did not reach real signing reservation")
+	case <-f.ctx.Done():
+		t.Fatal("reservation timed out")
+	}
+	defer lock.tx.Rollback(f.ctx)
+	deadline := time.Now().Add(time.Second)
+	for {
+		var waiting bool
+		if err := f.pool.Raw().QueryRow(f.ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT state FROM %signing_keys%FOR SHARE%')`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("final native signing-key fence did not block")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	// Exact deadline crossing, not an arbitrary delay: the precise native
+	// ceiling remains future for another 800ms after the signed second expires.
+	timer := time.NewTimer(time.Until(ceiling.Truncate(time.Second).Add(100 * time.Millisecond)))
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-f.ctx.Done():
+		t.Fatal("deadline wait canceled")
+	}
+	var observed time.Time
+	if err := f.pool.Raw().QueryRow(f.ctx, `SELECT clock_timestamp()`).Scan(&observed); err != nil || !observed.Before(ceiling) || observed.Before(ceiling.Truncate(time.Second)) {
+		t.Fatal("test did not cross only signed deadline", err)
+	}
+	if err := lock.tx.Commit(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := <-results
+	if got.err == nil || got.out.Outcome == identity.CommitOutcomeCommitted {
+		t.Fatal("code committed after signed expiry while precise native deadline remained future", got.err)
+	}
+	if _, err := got.out.IDToken.Reveal(); err == nil {
+		t.Fatal("expired ID token delivered")
+	}
+	var state string
+	var descendants int
+	if err := f.pool.Raw().QueryRow(f.ctx, `SELECT state FROM oauth_store.artifacts WHERE kind=2`).Scan(&state); err != nil || state != "active" {
+		t.Fatal("expired signing wait consumed code", err)
+	}
+	if err := f.pool.Raw().QueryRow(f.ctx, `SELECT count(*) FROM oauth_store.artifacts WHERE kind IN(3,4)`).Scan(&descendants); err != nil || descendants != 0 {
+		t.Fatal("expired signing wait committed descendants", err)
+	}
+}
+
+func TestNativeOIDCRefreshRequiresComposedExtensionBeforeConsumption(t *testing.T) {
+	f := passwordFixture(t)
+	service, child, _, store, _ := oidcFixture(t, &f)
+	original, err := oauth.NewService(f.oauth.Protocol, oauth.Dependencies{Sessions: f.sessions, Store: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, proof := oidcCode(t, f, service, "refresh-composition")
+	issued, err := service.Token(f.ctx, oauth.TokenRequest{GrantType: oauth.AuthorizationCodeGrant, ClientID: "public-web", Code: code, CodeVerifier: proof, RedirectURI: "https://client.example/callback", Network: "192.0.2.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	refresh, err := issued.RefreshToken.Reveal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := oauth.TokenRequest{GrantType: oauth.RefreshTokenGrant, ClientID: "public-web", RefreshToken: refresh, Network: "192.0.2.1"}
+	for _, scopes := range [][]string{nil, {"identity:read", "openid"}} {
+		r.Scopes = scopes
+		out, err := original.Token(f.ctx, r)
+		if !errors.Is(err, oauth.ErrAccessDenied) || out.CommandID != "" {
+			t.Fatal("uncomposed service consumed identity refresh", err)
+		}
+		out, err = store.Token(f.ctx, oauth.TokenCommand{Client: f.oauth.Protocol.Clients[0], Request: r})
+		if !errors.Is(err, oauth.ErrAccessDenied) || out.CommandID != "" {
+			t.Fatal("direct native identity refresh bypassed extension", err)
+		}
+	}
+	r.Scopes = nil
+	rotated, err := service.Token(f.ctx, r)
+	if err != nil {
+		t.Fatal("denial consumed original refresh", err)
+	}
+	access, _ := rotated.AccessToken.Reveal()
+	if info, err := child.UserInfo(f.ctx, oauth.UserInfoRequest{ClientID: "public-web", AccessToken: access}); err != nil || info.Subject == "" {
+		t.Fatal("composed refresh lost original identity authority", err)
+	}
+	r.RefreshToken, err = rotated.RefreshToken.Reveal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Scopes = []string{"identity:read"}
+	narrowed, err := original.Token(f.ctx, r)
+	if err != nil {
+		t.Fatal("OAuth-only narrowing rejected", err)
+	}
+	access, _ = narrowed.AccessToken.Reveal()
+	if info, err := child.UserInfo(f.ctx, oauth.UserInfoRequest{ClientID: "public-web", AccessToken: access}); err == nil || info.Subject != "" {
+		t.Fatal("resource-only refresh retained UserInfo")
+	}
+}
+
+func TestNativeOIDCNonceIngressIsBoundedBeforeEncoding(t *testing.T) {
+	f := passwordFixture(t)
+	_, _, _, store, _ := oidcFixture(t, &f)
+	token, err := session.ParseToken(f.browser.Token())
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential, err := session.NewCredential(session.CredentialCookie, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed, err := f.sessions.Get(f.ctx, session.GetRequest{TenantID: f.tenant, Credential: credential})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := oauth.AuthorizationCommand{Client: f.oauth.Protocol.Clients[0], Browser: f.browser, Session: observed, Network: "192.0.2.1", Request: oauth.AuthorizationRequest{ClientID: "public-web", RedirectURI: "https://client.example/callback", Resource: "https://resource.example", Scopes: []string{"openid"}, CodeChallenge: oauth2.S256ChallengeFromVerifier(oauth2.GenerateVerifier())}}
+	for _, nonce := range []string{strings.Repeat("%", 257), strings.Repeat("a", 1<<20), "bad\nnonce", "bad\x7fnonce", "bad\u0080nonce"} {
+		c.Request.Nonce = nonce
+		if out, err := store.Authorize(f.ctx, c); !errors.Is(err, oauth.ErrInvalidRequest) || out.CommandID != "" {
+			t.Fatal("native nonce was not rejected at ingress", err)
+		}
+	}
+	c.Request.Nonce = strings.Repeat("%", 256)
+	if out, err := store.Authorize(f.ctx, c); err != nil || out.Outcome != oauth.ConsentRequired || out.Request.Nonce != c.Request.Nonce {
+		t.Fatal("valid escaped nonce boundary rejected or changed", err)
+	}
+}
+
+type oidcTestClock struct{ now time.Time }
+
+func (c *oidcTestClock) Now() time.Time {
+	if c.now.IsZero() {
+		return time.Now().UTC()
+	}
+	return c.now
+}
+
+func TestNativeOIDCNumericDateExpiryDenialDoesNotConsumeCode(t *testing.T) {
+	f := passwordFixture(t)
+	// Native expiry is second+.900; child time second+.500 leaves 400ms
+	// real lifetime, but no future whole-second NumericDate under that ceiling.
+	childClock := &oidcTestClock{}
+	service, _, _, _, _ := oidcFixtureWithClock(t, &f, childClock)
+	code, proof := oidcCode(t, f, service, "subsecond-expiry")
+	expiry := time.Now().UTC().Add(3 * time.Second).Truncate(time.Second).Add(900 * time.Millisecond)
+	// A short, still-current native grant ceiling is authoritative even when
+	// less than the configured access TTL remains.
+	if _, err := f.pool.Raw().Exec(f.ctx, `UPDATE oauth_store.grants SET expires_at=$1`, expiry); err != nil {
+		t.Fatal(err)
+	}
+	childClock.now = expiry.Add(-400 * time.Millisecond)
+	r := oauth.TokenRequest{GrantType: oauth.AuthorizationCodeGrant, ClientID: "public-web", Code: code, CodeVerifier: proof, RedirectURI: "https://client.example/callback", Network: "192.0.2.1"}
+	if out, err := service.Token(f.ctx, r); err == nil || out.Outcome == identity.CommitOutcomeCommitted {
+		t.Fatal("unrepresentable future JWT expiry consumed code", err)
+	}
+	var state string
+	if err := f.pool.Raw().QueryRow(f.ctx, `SELECT state FROM oauth_store.artifacts WHERE kind=2`).Scan(&state); err != nil || state != "active" {
+		t.Fatal("expiry denial spent code", err)
+	}
+	// A started native command is never a fresh issuance instruction on retry,
+	// even if a caller later changes its clock. Preserve that recovery contract.
+	retried, _ := service.Token(f.ctx, r)
+	if _, err := retried.AccessToken.Reveal(); err == nil {
+		t.Fatal("failed native preparation minted fresh access on retry")
+	}
+	if _, err := retried.IDToken.Reveal(); err == nil {
+		t.Fatal("failed native preparation minted fresh ID token on retry")
+	}
+	childClock.now = time.Time{}
+	code, proof = oidcCode(t, f, service, "representable-expiry-control")
+	r.Code, r.CodeVerifier = code, proof
+	if out, err := service.Token(f.ctx, r); err != nil {
+		t.Fatal("representable expiry control failed", err)
+	} else if _, err := out.IDToken.Reveal(); err != nil {
+		t.Fatal("representable expiry omitted ID token", err)
+	}
+}
+
+func TestNativeOIDCConsentNarrowingNeverIssuesIdentityAuthority(t *testing.T) {
+	f := passwordFixture(t)
+	service, child, _, _, _ := oidcFixture(t, &f)
+	verifier := oauth2.GenerateVerifier()
+	begin, err := service.Authorize(f.ctx, oauth.AuthorizeRequest{TenantID: f.tenant, Session: f.browser, Network: "192.0.2.1", Request: oauth.AuthorizationRequest{ClientID: "public-web", RedirectURI: "https://client.example/callback", Resource: "https://resource.example", Scopes: []string{"identity:read", "openid"}, Nonce: "narrowed-nonce", CodeChallenge: oauth2.S256ChallengeFromVerifier(verifier)}})
+	if err != nil || begin.Outcome != oauth.ConsentRequired {
+		t.Fatal("original OIDC request did not reach consent", err)
+	}
+	continuation, err := begin.Continuation.Reveal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	approved, err := service.Continue(f.ctx, oauth.ContinueRequest{TenantID: f.tenant, Session: f.browser, CSRF: f.csrf, ClientID: "public-web", Continuation: continuation, Origin: f.oauth.Protocol.Issuer.String(), Network: "192.0.2.1", Approve: true, Scopes: []string{"identity:read"}})
+	if err != nil || approved.Outcome != oauth.AuthorizationRedirect {
+		t.Fatal("narrowed consent did not produce code", err)
+	}
+	code, err := approved.Code.Reveal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := service.Token(f.ctx, oauth.TokenRequest{GrantType: oauth.AuthorizationCodeGrant, ClientID: "public-web", Code: code, CodeVerifier: verifier, RedirectURI: "https://client.example/callback", Network: "192.0.2.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := out.IDToken.Reveal(); !errors.Is(err, oauth.ErrInvalidRequest) {
+		t.Fatal("withdrawn openid scope issued ID token")
+	}
+	access, err := out.AccessToken.Reveal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, err := child.UserInfo(f.ctx, oauth.UserInfoRequest{ClientID: "public-web", AccessToken: access}); err == nil || info.Subject != "" {
+		t.Fatal("withdrawn openid scope retained UserInfo")
+	}
+}

@@ -161,7 +161,7 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	if s.domain, err = kernel.NewRepository(pool, kernel.Config{MaximumDuration: protocol.MaximumDuration}); err != nil {
 		return nil, oauth.ErrInvalidRequest
 	}
-	if protocol.OwningClientIntrospection || workloadSelected(protocol.Clients) {
+	if protocol.OwningClientIntrospection || workloadSelected(protocol.Clients) || len(protocol.OIDCScopes.Scopes()) > 0 {
 		if s.policy, err = authority.NewAuthorityStore(pool.Raw(), protocol.MaximumDuration); err != nil {
 			return nil, oauth.ErrInvalidRequest
 		}

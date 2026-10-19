@@ -16,6 +16,7 @@ import (
 
 	identity "github.com/faustbrian/go-identity"
 	oauth "github.com/faustbrian/go-oauth-server"
+	op "github.com/faustbrian/go-oauth-server/oidc"
 	oauthpostgres "github.com/faustbrian/go-oauth-server/postgres"
 	"golang.org/x/oauth2"
 )
@@ -28,6 +29,7 @@ type discoveryConsumerTransport struct {
 	service                                                          *oauth.Service
 	endpoints                                                        oauth.DiscoveryConfig
 	metadataReads, authorizations, exchanges, refreshes, revocations int
+	oidc                                                             *op.Service
 }
 
 func discoveryResponse(r *http.Request, status int, value any) (*http.Response, error) {
@@ -42,6 +44,32 @@ func (p *discoveryConsumerTransport) RoundTrip(r *http.Request) (*http.Response,
 	if r.Context().Err() != nil {
 		return nil, r.Context().Err()
 	}
+	if p.oidc != nil && r.Method == http.MethodGet {
+		switch r.URL.String() {
+		case p.f.oauth.Protocol.Issuer.String() + "/.well-known/openid-configuration":
+			out, err := p.oidc.Discovery(r.Context())
+			if err != nil {
+				return nil, err
+			}
+			return discoveryResponse(r, 200, out)
+		case p.f.oauth.Protocol.Issuer.String() + "/oauth2/jwks":
+			out, err := p.oidc.JWKS(r.Context())
+			if err != nil {
+				return nil, err
+			}
+			return discoveryResponse(r, 200, out)
+		case p.f.oauth.Protocol.Issuer.String() + "/oauth2/userinfo":
+			access, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+			if !ok {
+				return discoveryResponse(r, 401, map[string]string{"error": "invalid_token"})
+			}
+			out, err := p.oidc.UserInfo(r.Context(), oauth.UserInfoRequest{ClientID: p.f.oauth.Protocol.Clients[0].ID, AccessToken: access})
+			if err != nil {
+				return discoveryResponse(r, 401, map[string]string{"error": "invalid_token"})
+			}
+			return discoveryResponse(r, 200, out)
+		}
+	}
 	if r.Method == http.MethodGet && r.URL.String() == p.f.oauth.Protocol.Issuer.String()+"/.well-known/oauth-authorization-server" {
 		p.metadataReads++
 		out, err := p.service.DiscoveryOauth(r.Context(), oauth.DiscoveryOauthRequest{})
@@ -54,7 +82,11 @@ func (p *discoveryConsumerTransport) RoundTrip(r *http.Request) (*http.Response,
 	endpoint.RawQuery = ""
 	if r.Method == http.MethodGet && endpoint.String() == p.endpoints.AuthorizationEndpoint {
 		p.authorizations++
-		request, err := oauth.ParseAuthorizationQuery(r.URL.RawQuery)
+		parser := oauth.ParseAuthorizationQuery
+		if p.oidc != nil {
+			parser = oauth.ParseAuthorizationQueryWithOIDC
+		}
+		request, err := parser(r.URL.RawQuery)
 		if err != nil {
 			return nil, err
 		}
@@ -115,7 +147,15 @@ func (p *discoveryConsumerTransport) RoundTrip(r *http.Request) (*http.Response,
 		if err != nil {
 			return nil, err
 		}
-		return discoveryResponse(r, http.StatusOK, map[string]any{"access_token": access, "token_type": "Bearer", "refresh_token": refresh, "expires_in": int64(time.Until(issued.ExpiresAt).Seconds()), "scope": strings.Join(issued.Scopes, " "), "resource": issued.Resource})
+		result := map[string]any{"access_token": access, "token_type": "Bearer", "refresh_token": refresh, "expires_in": int64(time.Until(issued.ExpiresAt).Seconds()), "scope": strings.Join(issued.Scopes, " "), "resource": issued.Resource}
+		if p.oidc != nil && request.GrantType == oauth.AuthorizationCodeGrant {
+			idToken, err := issued.IDToken.Reveal()
+			if err != nil {
+				return nil, err
+			}
+			result["id_token"] = idToken
+		}
+		return discoveryResponse(r, http.StatusOK, result)
 	}
 	if r.URL.String() == p.endpoints.RevocationEndpoint {
 		request, err := oauth.ParseRevocationForm(string(body), r.Header.Values("Authorization"))

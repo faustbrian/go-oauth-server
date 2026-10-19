@@ -129,7 +129,7 @@ func (p *phase) mutate(ctx context.Context, w kernel.Work) error {
 			return err
 		}
 	}
-	payload, err := json.Marshal(artifactPayload{Schema: 1, Request: i.Request, Scopes: i.Scopes})
+	payload, err := json.Marshal(artifactPayload{Schema: 1, Request: i.Request, Scopes: i.Scopes, Subject: p.output.Subject, SigningKeyID: p.output.SigningKeyID})
 	if err != nil {
 		return identity.UnavailableError{}
 	}

@@ -58,9 +58,11 @@ type grantRecord struct {
 	ConsentGeneration    uint64          `json:",omitempty"`
 }
 type artifactPayload struct {
-	Schema  uint32
-	Request oauth.AuthorizationRequest
-	Scopes  []string
+	Schema       uint32
+	Request      oauth.AuthorizationRequest
+	Scopes       []string
+	Subject      string `json:",omitempty"`
+	SigningKeyID string `json:",omitempty"`
 }
 type artifactRecord struct {
 	ID                   string
@@ -220,7 +222,7 @@ func (s *Store) Authorize(ctx context.Context, c oauth.AuthorizationCommand) (oa
 		return oauth.AuthorizeResult{}, err
 	}
 	defer stop()
-	if !boundedText(c.Network, 128) || !boundedText(c.Request.ClientID, 128) || !boundedText(c.Request.RedirectURI, 2048) || !boundedText(c.Request.CodeChallenge, 43) || !boundedText(c.Request.Resource, 2048) || c.Request.State != "" && !boundedText(c.Request.State, 1024) {
+	if !boundedText(c.Network, 128) || !boundedText(c.Request.ClientID, 128) || !boundedText(c.Request.RedirectURI, 2048) || !boundedText(c.Request.CodeChallenge, 43) || !boundedText(c.Request.Resource, 2048) || c.Request.State != "" && !boundedText(c.Request.State, 1024) || c.Request.Nonce != "" && !boundedText(c.Request.Nonce, 256) {
 		return oauth.AuthorizeResult{}, oauth.ErrInvalidRequest
 	}
 	if c.Request.Scopes, err = selectedScopes(c.Request.Scopes); err != nil {
@@ -234,7 +236,14 @@ func (s *Store) Authorize(ctx context.Context, c oauth.AuthorizationCommand) (oa
 	if c.Request.State != "" {
 		q.Set("state", c.Request.State)
 	}
-	request, err := oauth.ParseAuthorizationQuery(q.Encode())
+	if c.Request.Nonce != "" {
+		q.Set("nonce", c.Request.Nonce)
+	}
+	parser := oauth.ParseAuthorizationQuery
+	if len(s.config.Protocol.OIDCScopes.Scopes()) > 0 {
+		parser = oauth.ParseAuthorizationQueryWithOIDC
+	}
+	request, err := parser(q.Encode())
 	if err != nil || request.ClientID != client.ID || !slices.Contains(client.Redirects, request.RedirectURI) || request.Resource != client.Resource || !scopeSubset(request.Scopes, client.Scopes) || c.Session.ValidateAt(s.now()) != nil {
 		return oauth.AuthorizeResult{}, oauth.ErrAccessDenied
 	}
@@ -398,6 +407,13 @@ func (s *Store) Token(ctx context.Context, c oauth.TokenCommand) (oauth.TokenRes
 	if !scopeSubset(selected, target.Payload.Scopes) || !scopeSubset(selected, client.Scopes) {
 		return oauth.TokenResult{}, oauth.ErrInvalidScope
 	}
+	// Omitted refresh scopes inherit original authority. Admission therefore
+	// belongs after native lookup but before any consumption/replay effects.
+	for _, scope := range selected {
+		if s.config.Protocol.OIDCScopes.Contains(scope) && c.OIDC == nil {
+			return oauth.TokenResult{}, oauth.ErrAccessDenied
+		}
+	}
 	id := target.Transition
 	if target.State == "consumed" {
 		operation, id = rejectReplay, target.Replay
@@ -406,6 +422,9 @@ func (s *Store) Token(ctx context.Context, c oauth.TokenCommand) (oauth.TokenRes
 	}
 	p := s.targetPhase(target, client, operation, "identity.oauth-server.token", id, s.intent("token", string(r.GrantType), wire, r.RedirectURI, r.CodeVerifier, strings.Join(selected, " "), r.Resource, r.Network), r.Network)
 	p.input.Scopes = slices.Clone(selected)
+	if r.GrantType == oauth.AuthorizationCodeGrant {
+		p.oidc = c.OIDC
+	}
 	result, err := p.execute(ctx)
 	out := oauth.TokenResult{Outcome: result.Outcome, CommandID: id, Replayed: !p.applied}
 	if err != nil {
@@ -438,6 +457,12 @@ func (s *Store) Token(ctx context.Context, c oauth.TokenCommand) (oauth.TokenRes
 	if result.Outcome == identity.CommitOutcomeCommitted && p.applied {
 		out.AccessToken, out.RefreshToken, out.ExpiresAt = p.generatedToken(oauth.TokenAccess), p.generatedToken(oauth.TokenRefresh), p.generatedExpiry(oauth.TokenAccess)
 		out.Resource, out.Scopes = target.Grant.Resource, slices.Clone(selected)
+		if p.output.IDToken != "" {
+			out.IDToken, err = oauth.ParseIDToken(p.output.IDToken)
+			if err != nil {
+				return oauth.TokenResult{Outcome: out.Outcome, CommandID: out.CommandID}, oauth.ErrUnavailable
+			}
+		}
 	}
 	return out, nil
 }

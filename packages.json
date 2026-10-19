@@ -25,6 +25,18 @@
       "coverage_required": true,
       "build_required": true,
       "build_tags": []
+    },
+    {
+      "module_directory": "oidc",
+      "directory": "oidc",
+      "name": "oidc",
+      "import_path": "github.com/faustbrian/go-oauth-server/oidc",
+      "kind": "public",
+      "production": true,
+      "executable": true,
+      "coverage_required": true,
+      "build_required": true,
+      "build_tags": []
     }
   ]
 }

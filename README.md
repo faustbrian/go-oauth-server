@@ -6,6 +6,11 @@ single-factor user sessions, plus explicitly configured workload client-credenti
 This is not a complete OAuth/OIDC provider or a
 stable released API.
 
+The optional [OIDC child](oidc/README.md) selects public-subject ES256 code flow
+through the same native password-session/consent authority. Its
+[finite profile](docs/selected-oidc-profile.md) explains composition and remaining
+full-goal work; existing OAuth-only configuration remains unchanged.
+
 The root package owns bounded protocol parsing, exact HTTPS redirect/issuer/
 resource policy, explicit consent and scope ceilings. The optional
 [PostgreSQL adapter](postgres/README.md) implements the durable flow using the

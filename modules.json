@@ -196,6 +196,7 @@
         "github.com/faustbrian/go-identity/session/postgres",
         "github.com/faustbrian/go-migrations/v3",
         "github.com/faustbrian/go-oauth-server",
+        "github.com/faustbrian/go-oauth-server/oidc",
         "github.com/faustbrian/go-password/v2",
         "github.com/faustbrian/go-postgres",
         "github.com/faustbrian/go-secret-envelope/v2",
@@ -305,6 +306,138 @@
         "race": false,
         "security": false,
         "tests": false
+      }
+    },
+    {
+      "directory": "oidc",
+      "module_path": "github.com/faustbrian/go-oauth-server/oidc",
+      "go_version": "1.27.0",
+      "packages": [
+        {
+          "module_directory": "oidc",
+          "directory": "oidc",
+          "name": "oidc",
+          "import_path": "github.com/faustbrian/go-oauth-server/oidc",
+          "kind": "public",
+          "production": true,
+          "executable": true,
+          "coverage_required": true,
+          "build_required": true,
+          "build_tags": []
+        }
+      ],
+      "purpose": "Experimental optional public-subject ES256 code-flow OIDC extension; full provider qualification remains pending.",
+      "lifecycle": "experimental",
+      "kind": "optional companion",
+      "releasable": true,
+      "family": "service-edge",
+      "family_label": "Service Edge",
+      "family_description": "Request-edge policy, identity, access decisions, routing, middleware, and process lifecycle.",
+      "family_order": 2,
+      "version": "0.0.0",
+      "tag_prefix": "oidc/v",
+      "owned_dependencies": [
+        "github.com/faustbrian/go-oauth-server",
+        "github.com/faustbrian/go-identity"
+      ],
+      "reverse_owned_dependencies": [],
+      "external_runtime_dependencies": [],
+      "required_services": [],
+      "build_tags": [],
+      "test_tags": [],
+      "interoperability_tools": [],
+      "specifications": [],
+      "conformance_corpora": [],
+      "provenance": [],
+      "goal_files": [
+        "oidc/README.md"
+      ],
+      "goal_status": "in-progress",
+      "goal_evidence": [],
+      "cohesion": {
+        "family": "service-edge",
+        "secondary_capabilities": [
+          "cryptography-and-secrets",
+          "identity-and-access",
+          "protocols-and-schemas",
+          "resilience-and-admission"
+        ],
+        "responsibility": "Selected code-flow ID-token claims, UserInfo subject projection, OIDC discovery and public JWKS, borrowing core durable signing and native grant authority.",
+        "non_goals": [
+          "Own OAuth parsing, grants, sessions, transactions, private signing custody or a relying-party runtime.",
+          "Claim full OIDC qualification, pairwise subjects, logout, private session exchange or resource-JWT verification."
+        ],
+        "public_package_identifier": "oidc",
+        "primary_entry_packages": [
+          "github.com/faustbrian/go-oauth-server/oidc"
+        ],
+        "package_selection": {
+          "github.com/faustbrian/go-oauth-server/oidc": "Experimental opt-in public-subject ES256 code-flow child; native durable signing and current grant/subject authority are mandatory."
+        },
+        "lifecycle_status": "active",
+        "maturity": "experimental",
+        "construction_styles": [
+          "new-config",
+          "validated-value"
+        ],
+        "lifecycle_styles": [
+          "stateless"
+        ],
+        "ownership": {
+          "configuration": "caller",
+          "mutable_inputs": [
+            "copy"
+          ],
+          "runtime_resources": "caller",
+          "background_work": "none"
+        },
+        "optional_owned_dependencies": [],
+        "adapters": [],
+        "companions": [],
+        "supported_go": {
+          "minimum": "1.27.0",
+          "tested": [
+            "1.27.2"
+          ]
+        },
+        "supported_platforms": [
+          "portable-go"
+        ],
+        "supported_backends": [],
+        "supported_protocols": [],
+        "documentation": {
+          "readme": "oidc/README.md",
+          "api": "oidc/README.md",
+          "adoption": "docs/selected-oidc-profile.md",
+          "security": "docs/security.md",
+          "compatibility": null,
+          "performance": null,
+          "examples": "oidc/README.md",
+          "faq": null,
+          "changelog": "oidc/CHANGELOG.md",
+          "pkg_go_dev": "https://pkg.go.dev/github.com/faustbrian/go-oauth-server/oidc",
+          "ecosystem_index": "https://github.com/faustbrian/go-library-tools/blob/v2.5.1/docs/ecosystem/README.md"
+        },
+        "known_good_compatibility_sets": [],
+        "delivery": {
+          "implementation": "in-progress",
+          "hardening": "in-progress",
+          "release": "blocked"
+        }
+      },
+      "gates": {
+        "api_compatibility": false,
+        "benchmarks": false,
+        "conformance": false,
+        "coverage": false,
+        "documentation": true,
+        "fuzz": false,
+        "interoperability": false,
+        "lint": false,
+        "mutation": false,
+        "race": true,
+        "security": false,
+        "tests": true
       }
     }
   ]

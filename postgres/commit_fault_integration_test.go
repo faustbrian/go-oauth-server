@@ -13,10 +13,12 @@ import (
 
 // This disposable transport seam follows the native identity registration
 // integration fixture's PostgreSQL framing. It never replaces SQL/authority:
-// only the COMMIT acknowledgement after an actual OAuth effect is withheld.
+// it can withhold the COMMIT acknowledgement after an actual OAuth effect or
+// schedule a bounded actual PostgreSQL row-lock wait before a named statement.
 type oauthCommitFault struct {
-	armed, hit atomic.Bool
-	before     bool
+	armed, hit  atomic.Bool
+	before      bool
+	beforeWrite func([]byte)
 }
 
 func (f *oauthCommitFault) dial(ctx context.Context, network, address string) (net.Conn, error) {
@@ -35,6 +37,9 @@ type oauthFaultConn struct {
 }
 
 func (c *oauthFaultConn) Write(p []byte) (int, error) {
+	if c.fault.beforeWrite != nil {
+		c.fault.beforeWrite(p)
+	}
 	if c.fault.armed.Load() && bytes.Contains(p, []byte(`INSERT INTO "oauth_store".effects(`)) {
 		c.mutation.Store(true)
 	}

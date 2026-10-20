@@ -26,6 +26,31 @@ policy requires another actual validation fetch. Existing bindings and migration
 bytes are reused, with no runtime document TTL or network renewal. See the
 selected OIDC profile for explicit egress pins, TLS trust and document limits.
 
+Selected OIDC login/maximum-age requests retain their original encrypted native
+continuation and return `FreshAuthenticationRequired` when another password
+authentication is needed. Complete genuine password sign-in, then call
+`Continue` with that continuation, the new current session and its synchronizer.
+The native owner checks the same tenant/user, distinct post-request proof and
+both source authorities; source adoption, consent and code commit atomically.
+Original client/request/subject/deadlines survive. Metadata-only `Recover`
+requires the exact new session authenticated by original preparation even when
+the grant update rolled back; historical `NotCommitted` retains its failure error.
+Use matching core/child/native versions: selected results echo the original
+request, and native pre-Work child decisions remain fenced through core return.
+If a committed code/continuation expires before core delivery, retain the
+metadata-only historical command ID for `Recover`; the withheld credential
+cannot be replayed and its delivery error does not prove absence of commit.
+Append the shared kernel's `OAuthReauthenticationMigrationSource` at a fresh
+allocated version before enabling this profile. It permits the closed denied
+`OAuthReauthenticationRequiredError` classification without rewriting installed
+journal migrations.
+Only its actual terminal `NotCommitted` receipt permits a genuinely new login
+to select another random attempt on the same original continuation. The sole
+coordinator checks that receipt and advances the native current-attempt pointer
+atomically with acknowledged preparation start. Pending, Unknown, committed and
+other failures never permit that handoff. Original-attempt recovery remains
+independent of the pointer; no private login engine or outcome journal is added.
+
 `NewService(pool, Config, keys)` composes the native primary session reader,
 OAuth participant and root protocol. `NewStore` exposes that same participant
 for explicit composition and metadata-only `Recover`; applications do not

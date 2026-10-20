@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Complete original OIDC login/maximum-age continuations with genuine newly
+  authenticated same-user password sessions. Fence both original and new
+  authority, preserve original deadlines/subject/request, and atomically adopt
+  the source with consent and one-use code issuance. Existing encrypted
+  preparation authenticates metadata-only recovery of ambiguous adoption;
+  recovery and spent continuations never restart or redeliver the flow.
+- Preserve terminal authentication-age denial and allow genuine fresh login
+  to complete the same original continuation through the sole coordinator's
+  checked preparation-start handoff. Install the shared kernel's forward
+  `OAuthReauthenticationMigrationSource` before selecting this profile;
+  other failures and ambiguous outcomes cannot start another attempt.
+
 - Adopt core-validated HTTPS multi-host sector policy through existing client
   admission, fingerprints and durable bindings. Missing or changed registration
   provenance denies before execution. No new migration or document-expiry

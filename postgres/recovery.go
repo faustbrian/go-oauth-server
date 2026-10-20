@@ -102,6 +102,7 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 	}
 	var p *phase
 	var observed session.GetResult
+	authenticationContinuation := false
 	if request.OperationID != "identity.oauth-server.consent-delete" && request.ConsentID != "" {
 		return out, oauth.ErrInvalidRequest
 	}
@@ -153,10 +154,20 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 			if err != nil {
 				return out, publicError(ctx, err, oauth.ErrAccessDenied)
 			}
-			if request.CommandID != target.Transition || target.Grant.Tenant != bindings.TenantID || target.Grant.User != bindings.UserID || !sameJSON(source, target.Grant.Source) {
+			authenticationContinuation = authenticationRequested(target.Payload.Request)
+			if target.Grant.Tenant != bindings.TenantID || target.Grant.User != bindings.UserID || !authenticationContinuation && (request.CommandID != target.Transition || !sameJSON(source, target.Grant.Source)) {
 				return out, oauth.ErrAccessDenied
 			}
+			if authenticationContinuation {
+				// Before COMMIT the grant still points at the old source. Only
+				// authenticated original preparation can establish which fresh
+				// source attempted adoption; a current timestamp/subject cannot.
+				// The same ciphertext authenticates an older attempt independently
+				// of the current pointer after a checked reauthentication handoff.
+				target.Grant.Source = source
+			}
 			p = s.targetPhase(target, client, approveInteraction, request.OperationID, request.CommandID, s.intent("recover"), "")
+			p.metadataRecovery = authenticationContinuation
 		}
 	case "identity.oauth-server.token", "identity.oauth-server.revoke":
 		if err := s.config.Protocol.AuthenticateClient(ctx, client.ID, request.ClientAuthentication); err != nil {
@@ -202,7 +213,7 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 	if err := s.coordinator(p); err != nil {
 		return out, err
 	}
-	if request.OperationID == "identity.oauth-server.authorize" || p.input.Transition == createWorkload || p.input.Transition == deleteConsent {
+	if request.OperationID == "identity.oauth-server.authorize" || p.input.Transition == createWorkload || p.input.Transition == deleteConsent || authenticationContinuation {
 		wire, generation, err := p.coordinator.QueryFeaturePreparation(ctx, p.query(), p.caller(), p.registration(), p)
 		if err != nil {
 			return out, publicError(ctx, err, oauth.ErrAccessDenied)

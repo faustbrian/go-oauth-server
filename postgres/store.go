@@ -21,6 +21,7 @@ import (
 
 	"github.com/faustbrian/go-authorization/v3"
 	identity "github.com/faustbrian/go-identity"
+	kernel "github.com/faustbrian/go-identity/postgres"
 	sessionpg "github.com/faustbrian/go-identity/session/postgres"
 	oauth "github.com/faustbrian/go-oauth-server"
 	"github.com/jackc/pgx/v5"
@@ -95,6 +96,9 @@ type phaseInput struct {
 	Consent                     consentMutation
 	Deletion                    *consentDeletion            `json:",omitempty"`
 	SubjectCandidate            *oauth.OIDCSubjectCandidate `json:",omitempty"`
+	Authentication              *authenticationSelection    `json:",omitempty"`
+	PreviousSource              []identity.FeatureField     `json:",omitempty"`
+	ContinuationPrevious        identity.CommandID          `json:",omitempty"`
 }
 
 type consentMutation struct {
@@ -224,7 +228,7 @@ func (s *Store) Authorize(ctx context.Context, c oauth.AuthorizationCommand) (oa
 		return oauth.AuthorizeResult{}, err
 	}
 	defer stop()
-	if !boundedText(c.Network, 128) || !boundedText(c.Request.ClientID, 128) || !boundedText(c.Request.RedirectURI, 2048) || !boundedText(c.Request.CodeChallenge, 43) || !boundedText(c.Request.Resource, 2048) || c.Request.State != "" && !boundedText(c.Request.State, 1024) || c.Request.Nonce != "" && !boundedText(c.Request.Nonce, 256) {
+	if !boundedText(c.Network, 128) || !boundedText(c.Request.ClientID, 128) || !boundedText(c.Request.RedirectURI, 2048) || !boundedText(c.Request.CodeChallenge, 43) || !boundedText(c.Request.Resource, 2048) || c.Request.State != "" && !boundedText(c.Request.State, 1024) || c.Request.Nonce != "" && !boundedText(c.Request.Nonce, 256) || c.Request.Prompt != "" && c.Request.Prompt != "login" {
 		return oauth.AuthorizeResult{}, oauth.ErrInvalidRequest
 	}
 	if c.Request.Scopes, err = selectedScopes(c.Request.Scopes); err != nil {
@@ -241,6 +245,12 @@ func (s *Store) Authorize(ctx context.Context, c oauth.AuthorizationCommand) (oa
 	if c.Request.Nonce != "" {
 		q.Set("nonce", c.Request.Nonce)
 	}
+	if c.Request.Prompt != "" {
+		q.Set("prompt", c.Request.Prompt)
+	}
+	if c.Request.MaxAge != nil {
+		q.Set("max_age", strconv.FormatUint(uint64(*c.Request.MaxAge), 10))
+	}
 	parser := oauth.ParseAuthorizationQuery
 	if len(s.config.Protocol.OIDCScopes.Scopes()) > 0 {
 		parser = oauth.ParseAuthorizationQueryWithOIDC
@@ -248,6 +258,10 @@ func (s *Store) Authorize(ctx context.Context, c oauth.AuthorizationCommand) (oa
 	request, err := parser(q.Encode())
 	if err != nil || request.ClientID != client.ID || !slices.Contains(client.Redirects, request.RedirectURI) || request.Resource != client.Resource || !scopeSubset(request.Scopes, client.Scopes) || c.Session.ValidateAt(s.now()) != nil {
 		return oauth.AuthorizeResult{}, oauth.ErrAccessDenied
+	}
+	authentication, err := s.authenticationPolicy(ctx, c.OIDC, client, request, c.Session, nil)
+	if err != nil {
+		return oauth.AuthorizeResult{}, err
 	}
 	var subjectCandidate *oauth.OIDCSubjectCandidate
 	if pairwiseClient(client) && slices.Contains(request.Scopes, "openid") {
@@ -277,7 +291,7 @@ func (s *Store) Authorize(ctx context.Context, c oauth.AuthorizationCommand) (oa
 	// bearer authority; existing native recovery still authenticates its scope.
 	grant := grantRecord{ID: string(command), Tenant: bindings.TenantID, User: bindings.UserID, ClientID: client.ID, ClientVersion: client.Version, ClientFingerprint: clientFingerprint(client), Source: source, Scopes: slices.Clone(request.Scopes), Resource: request.Resource, CreatedAt: now, ExpiresAt: now.Add(s.config.Protocol.RefreshTTL)}
 	p := &phase{store: s, client: client, browser: c.Browser, observation: c.Session}
-	p.input = phaseInput{Schema: 1, Configuration: s.identity, Transition: createInteraction, Grant: grant, Request: request, Scopes: slices.Clone(request.Scopes), CreatedAt: now, ObservationUntil: c.Session.ValidUntil(), Intent: s.intent("authorize", string(command)), Network: c.Network, SubjectCandidate: subjectCandidate}
+	p.input = phaseInput{Schema: 1, Configuration: s.identity, Transition: createInteraction, Grant: grant, Request: copyAuthorizationRequest(request), Scopes: slices.Clone(request.Scopes), CreatedAt: now, ObservationUntil: c.Session.ValidUntil(), Intent: s.intent("authorize", string(command)), Network: c.Network, SubjectCandidate: subjectCandidate, Authentication: authentication}
 	p.bind(command, "identity.oauth-server.authorize", string(command))
 	result, err := p.execute(ctx)
 	if err != nil {
@@ -286,9 +300,11 @@ func (s *Store) Authorize(ctx context.Context, c oauth.AuthorizationCommand) (oa
 	return p.authorizationResult(result), nil
 }
 
-// Continue consumes only the originally issued interaction for the exact same
-// current browser/session and synchronizer. Explicit denial is still a protected
-// one-use transition. An earlier consent never silently approves a new request.
+// Continue consumes only the originally issued interaction with its current
+// browser/session and synchronizer. Selected OIDC freshness may adopt a genuine
+// newly authenticated same-user session while fencing the original source too.
+// Explicit denial remains a protected one-use transition; earlier consent never
+// silently approves a new request.
 func (s *Store) Continue(ctx context.Context, c oauth.ContinuationCommand) (oauth.AuthorizeResult, error) {
 	ctx, stop, err := s.bounded(ctx)
 	if err != nil {
@@ -314,8 +330,37 @@ func (s *Store) Continue(ctx context.Context, c oauth.ContinuationCommand) (oaut
 	if err != nil {
 		return oauth.AuthorizeResult{}, publicError(ctx, err, oauth.ErrAccessDenied)
 	}
+	// A spent interaction is historical custody, never a new authentication
+	// request. Reject it before evaluating freshness against its adopted source.
+	if target.State != "active" {
+		return oauth.AuthorizeResult{}, oauth.ErrAccessDenied
+	}
 	current, err := sessionpg.OriginalSessionFields(c.Session.Session)
-	if err != nil || !sameJSON(current, target.Grant.Source) || c.Request.TenantID != target.Grant.Tenant {
+	if err != nil || c.Request.TenantID != target.Grant.Tenant {
+		return oauth.AuthorizeResult{}, oauth.ErrAccessDenied
+	}
+	var authentication *authenticationSelection
+	var previous []identity.FeatureField
+	if c.Request.Approve && authenticationRequested(target.Payload.Request) {
+		original, err := sessionpg.OriginalSessionFromFields(target.Grant.Tenant, target.Grant.User, target.Grant.Source)
+		if err != nil {
+			return oauth.AuthorizeResult{}, oauth.ErrAccessDenied
+		}
+		authentication, err = s.authenticationPolicy(ctx, c.OIDC, client, target.Payload.Request, c.Session, &oauth.OIDCReauthenticationInput{OriginalSession: original, RequestedAt: target.Grant.CreatedAt})
+		if err != nil {
+			return oauth.AuthorizeResult{}, err
+		}
+		if authentication.Requirement == oauth.OIDCAuthenticationFresh {
+			return oauth.AuthorizeResult{}, oauth.ErrLoginRequired
+		}
+		if !sameJSON(current, target.Grant.Source) {
+			if err := validateFreshSource(original, c.Session, target.Grant.CreatedAt); err != nil {
+				return oauth.AuthorizeResult{}, err
+			}
+			previous = target.Grant.Source
+			target.Grant.Source = current
+		}
+	} else if !sameJSON(current, target.Grant.Source) {
 		return oauth.AuthorizeResult{}, oauth.ErrAccessDenied
 	}
 	selected := c.Request.Scopes
@@ -324,9 +369,6 @@ func (s *Store) Continue(ctx context.Context, c oauth.ContinuationCommand) (oaut
 	}
 	if !scopeSubset(selected, target.Payload.Scopes) {
 		return oauth.AuthorizeResult{}, oauth.ErrInvalidScope
-	}
-	if target.State != "active" {
-		return oauth.AuthorizeResult{}, oauth.ErrAccessDenied
 	}
 	p := s.targetPhase(target, client, approveInteraction, "identity.oauth-server.continue", target.Transition, s.intent("continue", c.Request.Continuation, fmt.Sprint(c.Request.Approve), strings.Join(selected, " "), c.Request.Network), c.Request.Network)
 	if !c.Request.Approve {
@@ -338,13 +380,14 @@ func (s *Store) Continue(ctx context.Context, c oauth.ContinuationCommand) (oaut
 		}
 	}
 	p.input.Scopes = slices.Clone(selected)
+	p.input.Authentication, p.input.PreviousSource = authentication, previous
 	p.input.ObservationUntil = c.Session.ValidUntil()
 	p.browser = c.Request.Session
 	p.csrf = c.Request.CSRF
 	p.observation = c.Session
 	result, err := p.execute(ctx)
 	if err != nil {
-		return oauth.AuthorizeResult{CommandID: target.Transition, Outcome: authorizeOutcome(result)}, publicError(ctx, err, oauth.ErrAccessDenied)
+		return oauth.AuthorizeResult{CommandID: p.input.Binding.CommandID, Outcome: authorizeOutcome(result)}, publicError(ctx, err, oauth.ErrAccessDenied)
 	}
 	return p.authorizationResult(result), nil
 }
@@ -675,6 +718,13 @@ func publicError(ctx context.Context, err, denied error) error {
 	}
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, oauth.ErrLoginRequired) {
+		return oauth.ErrLoginRequired
+	}
+	var reauthentication kernel.OAuthReauthenticationRequiredError
+	if errors.As(err, &reauthentication) {
+		return oauth.ErrLoginRequired
 	}
 	var forbidden identity.ForbiddenError
 	var conflict identity.ConflictError

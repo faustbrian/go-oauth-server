@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -67,6 +68,7 @@ type phase struct {
 	coordinator       *kernel.Coordinator
 	output            preparedOutput
 	applied           bool
+	metadataRecovery  bool
 	oidc              func(context.Context, oauth.OIDCClaimsInput) (oauth.OIDCClaimsProjection, error)
 }
 
@@ -191,10 +193,24 @@ func (p *phase) execute(ctx context.Context) (result identity.CommandResult, exe
 		return identity.CommandResult{}, identity.ForbiddenError{}
 	}
 	admission, err := p.coordinator.ObserveCommandAdmission(ctx, p.query(), p.caller())
+	handoff := false
 	if err != nil {
-		return identity.CommandResult{}, err
+		var reauthentication kernel.OAuthReauthenticationRequiredError
+		if !errors.As(err, &reauthentication) || admission.Record.Outcome != identity.CommitOutcomeNotCommitted || p.input.Transition != approveInteraction || p.input.PreviousSource == nil || p.input.Authentication == nil || p.input.Authentication.Requirement != oauth.OIDCAuthenticationCurrent {
+			return identity.CommandResult{Binding: p.input.Binding, Outcome: admission.Record.Outcome}, err
+		}
+		// Only an actual classified terminal predecessor selects a candidate.
+		// The sole coordinator re-proves it under journal locks and advances the
+		// native pointer atomically with acknowledged start; this read cannot.
+		next, err := identity.NewCommandID()
+		if err != nil {
+			return identity.CommandResult{}, err
+		}
+		p.input.ContinuationPrevious = p.input.Binding.CommandID
+		p.bind(next, p.input.Binding.OperationID, p.input.Binding.RecordID)
+		handoff = true
 	}
-	if !admission.Absent {
+	if !handoff && !admission.Absent {
 		// A terminal result is historical metadata, never an instruction to
 		// decrypt/redeliver output or reconstruct today's aggregate as success.
 		if admission.Record.Outcome != identity.CommitOutcomeInProgress {
@@ -219,6 +235,14 @@ func (p *phase) buildCommand() error {
 	i := p.input
 	b := i.Binding
 	if i.Schema != 1 || i.Configuration != p.store.identity || b.ValidateFor(p.operation(b.OperationID)) != nil || i.Grant.Version == math.MaxUint64 || i.Grant.ClientFingerprint != clientFingerprint(p.client) || i.Grant.ClientID != p.client.ID || i.Intent == ([32]byte{}) || i.CreatedAt.IsZero() || i.CreatedAt.Nanosecond()%1000 != 0 || !scopeSubset(i.Scopes, i.Grant.Scopes) {
+		return oauth.ErrInvalidRequest
+	}
+	if i.Authentication != nil {
+		if !authenticationRequested(i.Request) || i.Transition != createInteraction && i.Transition != approveInteraction || i.Authentication.Requirement != oauth.OIDCAuthenticationCurrent && (i.Authentication.Requirement != oauth.OIDCAuthenticationFresh || i.Transition != createInteraction) {
+			return oauth.ErrInvalidRequest
+		}
+	}
+	if i.PreviousSource != nil && (i.Transition != approveInteraction || i.Authentication == nil || i.Authentication.Requirement != oauth.OIDCAuthenticationCurrent) {
 		return oauth.ErrInvalidRequest
 	}
 	if i.Transition == approveInteraction {
@@ -379,7 +403,12 @@ func (p *phase) AdmitFeaturePreparation(ctx context.Context, w kernel.Work, c id
 	if c != p.command {
 		return identity.ForbiddenError{}
 	}
-	return p.check(ctx, w, false)
+	if err := p.check(ctx, w, false); err != nil {
+		return err
+	}
+	// Current-source/grant/consent checks can wait. Do not acknowledge a start
+	// using the authentication age sampled before those protected locks.
+	return p.checkArtifactExpiry(ctx, w)
 }
 func (p *phase) browserRequired() bool {
 	return p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == denyInteraction || p.input.Transition == deleteConsent
@@ -458,9 +487,15 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 	if err := p.checkSubjectBinding(ctx, w, final); err != nil {
 		return err
 	}
+	if err := p.checkPreviousSource(ctx, w); err != nil {
+		return err
+	}
 	now, err := w.DatabaseTime(ctx)
 	if err != nil {
 		return err
+	}
+	if i.Authentication != nil && !i.Authentication.Until.IsZero() && !now.Before(i.Authentication.Until) {
+		return kernel.OAuthReauthenticationRequiredError{}
 	}
 	if p.browserRequired() && (p.observation.ValidateAt(now) != nil || !now.Before(i.ObservationUntil)) {
 		return identity.ForbiddenError{}
@@ -517,7 +552,11 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 		return identity.ForbiddenError{}
 	}
 	var originalFields []identity.FeatureField
-	if decodeJSON(source, &originalFields) != nil || !sameJSON(originalFields, g.Source) {
+	expectedSource := g.Source
+	if i.PreviousSource != nil && !(final && p.applied) {
+		expectedSource = i.PreviousSource
+	}
+	if decodeJSON(source, &originalFields) != nil || !sameJSON(originalFields, expectedSource) {
 		return identity.ForbiddenError{}
 	}
 	if g.Workload != nil {
@@ -741,6 +780,9 @@ func (p *phase) GenerateFeaturePreparation(ctx context.Context, c identity.Comma
 			expires = minTime(expires, i.CreatedAt.Add(p.store.config.Protocol.ContinuationTTL))
 		case oauth.TokenCode:
 			expires = minTime(expires, i.CreatedAt.Add(p.store.config.Protocol.CodeTTL))
+			if authenticationRequested(i.Request) {
+				expires = minTime(expires, i.TargetExpires)
+			}
 		case oauth.TokenAccess:
 			expires = minTime(expires, i.CreatedAt.Add(p.store.config.Protocol.AccessTTL))
 		}
@@ -840,7 +882,20 @@ func (p *phase) restore(ctx context.Context, generation uint64, wire []byte, ini
 	}
 	defer clear(plain)
 	var out preparedOutput
-	if decodeJSON(plain, &out) != nil || out.Schema != 1 || out.Generation != generation || out.Input.Configuration != p.store.identity || out.Input.Binding != p.input.Binding || out.Input.Intent != p.input.Intent || out.Input.Transition != p.input.Transition || out.Input.Grant.ID != p.input.Grant.ID || out.Input.Grant.ClientFingerprint != clientFingerprint(p.client) || !sameJSON(out.Input.Grant.Source, p.input.Grant.Source) {
+	if decodeJSON(plain, &out) != nil {
+		return identity.ForbiddenError{}
+	}
+	transitionMatches := out.Input.Transition == p.input.Transition
+	if p.metadataRecovery {
+		// Recovery has no proposed consent/network intent. The owning
+		// preparation authenticates that original intent, but never authorizes
+		// execution or redelivery. Keep exact continuation/client/source scope.
+		transitionMatches = p.input.Transition == approveInteraction && (out.Input.Transition == approveInteraction || out.Input.Transition == denyInteraction)
+		if out.Input.Target != p.input.Target || out.Input.TargetID != p.input.TargetID || out.Input.TargetKind != oauth.TokenContinuation || !out.Input.TargetExpires.Equal(p.input.TargetExpires) || !sameJSON(out.Input.TargetPayload, p.input.TargetPayload) {
+			return identity.ForbiddenError{}
+		}
+	}
+	if out.Schema != 1 || out.Generation != generation || out.Input.Configuration != p.store.identity || out.Input.Binding != p.input.Binding || !p.metadataRecovery && out.Input.Intent != p.input.Intent || !transitionMatches || out.Input.Grant.ID != p.input.Grant.ID || out.Input.Grant.ClientFingerprint != clientFingerprint(p.client) || !sameJSON(out.Input.Grant.Source, p.input.Grant.Source) {
 		return identity.ForbiddenError{}
 	}
 	if !initial && !sameJSON(out.Input, p.input) {
@@ -938,6 +993,9 @@ func (p *phase) ApplyFeature(ctx context.Context, w kernel.Work, c identity.Comm
 	if err := p.restore(ctx, generation, wire, false); err != nil {
 		return identity.FeatureReceipt{}, err
 	}
+	if err := p.checkContinuationAttempt(ctx, w); err != nil {
+		return identity.FeatureReceipt{}, err
+	}
 	if err := p.checkArtifactExpiry(ctx, w); err != nil {
 		return identity.FeatureReceipt{}, err
 	}
@@ -962,17 +1020,19 @@ func (p *phase) CheckFeatureCommit(ctx context.Context, w kernel.Work, c identit
 		if err := p.checkSigning(ctx, w); err != nil {
 			return err
 		}
-		// The signing-key fence can wait on compromise/publication work. Sample
-		// authoritative time after it, not before that potentially blocking lock.
-		return p.checkArtifactExpiry(ctx, w)
 	}
-	return nil
+	// Source/grant/consent and signing fences can wait. Sample authoritative
+	// expiry after all of them, including continuations without an ID token.
+	return p.checkArtifactExpiry(ctx, w)
 }
 
 func (p *phase) checkArtifactExpiry(ctx context.Context, w kernel.Work) error {
 	now, err := w.DatabaseTime(ctx)
 	if err != nil {
 		return err
+	}
+	if p.input.Authentication != nil && !p.input.Authentication.Until.IsZero() && !now.Before(p.input.Authentication.Until) {
+		return kernel.OAuthReauthenticationRequiredError{}
 	}
 	for _, artifact := range p.output.Artifacts {
 		if !now.Before(artifact.ExpiresAt) {
@@ -1008,6 +1068,9 @@ func (p *phase) authorizationResult(r identity.CommandResult) oauth.AuthorizeRes
 	switch p.input.Transition {
 	case createInteraction:
 		out.Outcome = oauth.ConsentRequired
+		if p.input.Authentication != nil && p.input.Authentication.Requirement == oauth.OIDCAuthenticationFresh {
+			out.Outcome = oauth.FreshAuthenticationRequired
+		}
 		out.Continuation = p.generatedToken(oauth.TokenContinuation)
 		out.ExpiresAt = p.generatedExpiry(oauth.TokenContinuation)
 	case approveInteraction:

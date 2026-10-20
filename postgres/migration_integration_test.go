@@ -3,10 +3,13 @@
 package oauthpostgres_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,8 +19,84 @@ import (
 	oauthpostgres "github.com/faustbrian/go-oauth-server/postgres"
 	database "github.com/faustbrian/go-postgres"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/stdlib"
 )
+
+type terminalMigrationSnapshot struct {
+	rows   int
+	digest []byte
+	checks map[string]string
+}
+
+func terminalMigrationState(t *testing.T, ctx context.Context, pool *database.Pool) terminalMigrationSnapshot {
+	t.Helper()
+	state := terminalMigrationSnapshot{checks: make(map[string]string)}
+	if err := pool.Raw().QueryRow(ctx, `SELECT count(*),sha256(convert_to(COALESCE(jsonb_agg(to_jsonb(c) ORDER BY command_id)::text,'[]'),'UTF8')) FROM identity.commands c WHERE state IN ('committed','aborted')`).Scan(&state.rows, &state.digest); err != nil || state.rows == 0 {
+		t.Fatal("populated real terminal history unavailable for forward migration", err)
+	}
+	rows, err := pool.Raw().Query(ctx, `SELECT conname,pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='identity.commands'::regclass AND contype='c'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name, definition string
+		if err := rows.Scan(&name, &definition); err != nil {
+			t.Fatal(err)
+		}
+		state.checks[name] = definition
+	}
+	if rows.Err() != nil || state.checks["identity_command_terminal_shape"] == "" {
+		t.Fatal("installed terminal shape unavailable", rows.Err())
+	}
+	return state
+}
+
+func requireTerminalMigrationPreserved(t *testing.T, ctx context.Context, pool *database.Pool, before terminalMigrationSnapshot) {
+	t.Helper()
+	after := terminalMigrationState(t, ctx, pool)
+	if before.rows != after.rows || !bytes.Equal(before.digest, after.digest) || len(before.checks) != len(after.checks) {
+		t.Fatal("forward OAuth classification migration changed populated terminal history or old CHECK inventory")
+	}
+	for name, definition := range before.checks {
+		actual := after.checks[name]
+		if name == "identity_command_terminal_shape" {
+			const addition = ", 'reauthentication-required'::text"
+			if strings.Contains(definition, "reauthentication-required") || strings.Count(actual, addition) != 1 {
+				t.Fatal("forward migration did not add only the closed OAuth terminal classification")
+			}
+			actual = strings.Replace(actual, addition, "", 1)
+		}
+		if actual != definition {
+			t.Fatal("forward migration changed an existing CHECK invariant")
+		}
+	}
+	tx, err := pool.Raw().Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	probe, err := tx.Begin(ctx) // A real savepoint; no malformed history survives.
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = probe.Exec(ctx, `UPDATE identity.commands SET result_version=NULL WHERE command_id=(SELECT command_id FROM identity.commands WHERE state='committed' ORDER BY command_id LIMIT 1)`)
+	var constraint *pgconn.PgError
+	if !errors.As(err, &constraint) || constraint.Code != "23514" || constraint.ConstraintName != "identity_command_terminal_shape" {
+		t.Fatal("forward migration weakened populated committed terminal-shape rejection")
+	}
+	if err := probe.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	unchanged := terminalMigrationState(t, ctx, pool)
+	if unchanged.rows != after.rows || !bytes.Equal(unchanged.digest, after.digest) {
+		t.Fatal("rolled-back malformed-row probe changed terminal history")
+	}
+}
 
 // The caller must explicitly provide a task-owned disposable
 // loopback cluster. Every test creates and drops its own separate database.

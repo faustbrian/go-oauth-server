@@ -255,7 +255,8 @@ func passwordFixtureWithChange(t *testing.T, change bool, faults ...*oauthCommit
 	// These are the existing native owners' standalone allocations, also used
 	// by the reference password-change/enrollment composition. Selecting OAuth
 	// must not require those feature implementations merely for common custody.
-	kernelSteps, err := (kernel.CounterPreparationMigrationSource{Base: graph.stores.MigrationSource(), Version: 1700}).Load(ctx)
+	kernelBase := kernel.CounterPreparationMigrationSource{Base: graph.stores.MigrationSource(), Version: 1700}
+	kernelSteps, err := (kernel.OAuthReauthenticationMigrationSource{Base: kernelBase, Version: 1701}).Load(ctx)
 	if err != nil {
 		t.Fatal("native preparation source unavailable", err)
 	}
@@ -272,9 +273,17 @@ func passwordFixtureWithChange(t *testing.T, change bool, faults ...*oauthCommit
 		extensions = append(extensions, struct {
 			namespace string
 			steps     []migrations.Migration
-		}{"identity_password_change_kernel", kernelSteps[len(kernelSteps)-1:]})
+		}{"identity_password_change_kernel", kernelSteps[len(kernelSteps)-2 : len(kernelSteps)-1]})
 	}
+	extensions = append(extensions, struct {
+		namespace string
+		steps     []migrations.Migration
+	}{"identity_oauth_reauthentication", kernelSteps[len(kernelSteps)-1:]})
 	for _, extension := range extensions {
+		var terminalBefore terminalMigrationSnapshot
+		if extension.namespace == "identity_oauth_reauthentication" {
+			terminalBefore = terminalMigrationState(t, ctx, pool)
+		}
 		owner, err := migrationdb.New(sqlDB)
 		if err != nil {
 			t.Fatal(err)
@@ -289,6 +298,9 @@ func passwordFixtureWithChange(t *testing.T, change bool, faults ...*oauthCommit
 		}
 		if _, err := runner.Up(ctx); err != nil {
 			t.Fatal("native common-custody migration failed", err)
+		}
+		if extension.namespace == "identity_oauth_reauthentication" {
+			requireTerminalMigrationPreserved(t, ctx, pool, terminalBefore)
 		}
 	}
 	browser := auth.NewBearerCredential(cookies[0].Value)

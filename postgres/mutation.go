@@ -68,7 +68,13 @@ func (p *phase) mutate(ctx context.Context, w kernel.Work) error {
 			}
 			defer clear(grantScopes)
 		}
-		n, err := w.Exec(ctx, `UPDATE `+s+`.grants SET state=$3,scopes=$4::jsonb,version=version+1 WHERE grant_id=$1 AND version=$2::numeric AND state='active'`, g.ID, strconv.FormatUint(g.Version, 10), state, string(grantScopes))
+		var n int64
+		var err error
+		if i.PreviousSource != nil {
+			n, err = w.Exec(ctx, `UPDATE `+s+`.grants SET state=$3,scopes=$4::jsonb,source_session=$5::jsonb,version=version+1 WHERE grant_id=$1 AND version=$2::numeric AND state='active'`, g.ID, strconv.FormatUint(g.Version, 10), state, string(grantScopes), string(source))
+		} else {
+			n, err = w.Exec(ctx, `UPDATE `+s+`.grants SET state=$3,scopes=$4::jsonb,version=version+1 WHERE grant_id=$1 AND version=$2::numeric AND state='active'`, g.ID, strconv.FormatUint(g.Version, 10), state, string(grantScopes))
+		}
 		if err != nil {
 			return err
 		}

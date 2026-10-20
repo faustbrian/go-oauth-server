@@ -21,6 +21,12 @@ type clockFunc func() time.Time
 
 func (f clockFunc) Now() time.Time { return f() }
 
+func isolatedClaimsService(c Config) *Service {
+	derive, _ := opaqueHMAC(c.SubjectKey, "golib.oidc.public-subject.v1\x00")
+	clear(c.SubjectKey[:])
+	return &Service{config: c, publicSubject: derive}
+}
+
 // The child test isolates NumericDate projection; native lifecycle/commit
 // behavior has separate real PostgreSQL consumers.
 type acceptingReservation struct{ oauth.SigningLifecycle }
@@ -52,7 +58,7 @@ func TestClaimsRequiresFutureRepresentableNumericDate(t *testing.T) {
 		t.Fatal(err)
 	}
 	issuer, _ := oauth.NewIssuer("https://issuer.example")
-	s := &Service{config: Config{Issuer: issuer, SubjectKey: [32]byte{1}, Signing: signer, Clock: clock, MaximumDuration: time.Second}}
+	s := isolatedClaimsService(Config{Issuer: issuer, SubjectKey: [32]byte{1}, Signing: signer, Clock: clock, MaximumDuration: time.Second})
 	in := oauth.OIDCClaimsInput{Issuer: issuer, TenantID: "tenant", UserID: "user", ClientID: "client", Scopes: []string{"openid"}, IssuedAt: now, ExpiresAt: now.Add(400 * time.Millisecond), AuthenticatedAt: now.Add(-time.Minute)}
 	if out, err := s.Claims(context.Background(), in); !errors.Is(err, oauth.ErrAccessDenied) || out.Subject != "" {
 		t.Fatal("already-expired encoded exp was signed", err)
@@ -81,7 +87,7 @@ func TestClaimsRequiresFutureRepresentableNumericDate(t *testing.T) {
 func TestPublicSubjectAndUserInfoProjectionAreScopeAndIssuerBound(t *testing.T) {
 	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
 	issuer, _ := oauth.NewIssuer("https://issuer.example")
-	s := &Service{config: Config{Issuer: issuer, SubjectKey: [32]byte{1}, Clock: clockFunc(func() time.Time { return now }), MaximumDuration: time.Second}}
+	s := isolatedClaimsService(Config{Issuer: issuer, SubjectKey: [32]byte{1}, Clock: clockFunc(func() time.Time { return now }), MaximumDuration: time.Second})
 	if fmt.Sprintf("%#v", s) != "oidc.Service(redacted)" {
 		t.Fatal("service diagnostics traversed private subject custody")
 	}
@@ -116,7 +122,7 @@ func FuzzUserInfoClaimBounds(f *testing.F) {
 	f.Fuzz(func(t *testing.T, tenant, user, nonce, scope string) {
 		now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
 		issuer, _ := oauth.NewIssuer("https://issuer.example")
-		s := &Service{config: Config{Issuer: issuer, SubjectKey: [32]byte{1}, Clock: clockFunc(func() time.Time { return now }), MaximumDuration: time.Second}}
+		s := isolatedClaimsService(Config{Issuer: issuer, SubjectKey: [32]byte{1}, Clock: clockFunc(func() time.Time { return now }), MaximumDuration: time.Second})
 		in := oauth.OIDCClaimsInput{Issuer: issuer, TenantID: identity.TenantID(tenant), UserID: identity.UserID(user), ClientID: "client", Scopes: []string{scope}, Nonce: nonce, IssuedAt: now, ExpiresAt: now.Add(time.Minute), AuthenticatedAt: now, UserInfo: true}
 		if len(tenant) <= 128 && len(user) <= 128 {
 			in.ExpectedSubject = s.subject(in)

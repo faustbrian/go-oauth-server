@@ -1,7 +1,8 @@
 # Selected OIDC provider extension
 
-This experimental module implements the finite public-subject, ES256,
-authorization-code/S256 profile. It is not complete OIDC qualification.
+This experimental module implements public and registered-single-host pairwise
+subjects for the finite ES256 authorization-code/S256 profile. It is not complete
+OIDC qualification.
 
 Declare Config.OIDCScopes with NewOIDCScopeCatalog([]string{"openid"}) and
 allow openid in selected human clients. Build the native store and established
@@ -15,7 +16,7 @@ ordinary OAuth parser still rejects nonce and other unselected fields.
 The child implements exactly the frozen four-method OIDCExtension. Claims
 consumes trusted native grant results, never token forms/client credentials.
 Only openid is selected. UserInfo contains only sub; ID tokens contain issuer,
-public subject, actual client audience/authorized party, issued/expiry time,
+selected subject, actual client audience/authorized party, issued/expiry time,
 original password auth_time/amr and the original nonce when supplied. Resource
 scopes add no identity attributes. Signature/issuer/audience/time/nonce and the
 UserInfo subject must be validated by the relying party.
@@ -24,10 +25,39 @@ Signing requires core SigningService with the native durable SigningLifecycle,
 not an isolated in-memory SigningAuthority. Private custody stays in core.
 Install the forward signing migration first; publish/serve JWKS before explicit
 activation. Retain the dedicated stable subject key: replacement changes all
-subjects. Serve exact configured HTTPS endpoints, no-store token/UserInfo
+legacy public subjects. Serve exact configured HTTPS endpoints, no-store token/UserInfo
 responses and no positive JWKS cache across activation.
 
-See [selected profile](../docs/selected-oidc-profile.md). Pairwise, prompt/max_age,
+## Optional pairwise policy
+
+Register `Client.SubjectRegistration` with `NewOIDCSubjectRegistration` and an
+immutable policy ID/version. Its sector host must match **every** registered
+redirect host; `Client.Public` still means client authentication, not subject type.
+URI-based/multi-host sector registration is unavailable and fails closed.
+
+Supply dedicated 32-byte HMAC material encrypted with the existing envelope
+owner. `NewSubjectPolicy` authenticates/copies up to eight retained envelopes;
+its Go documentation specifies exact issuer/environment/policy/version AAD.
+Select it through `Config.SubjectPolicy`. Install the native forward pairwise
+migration, stage authenticated `policy.KeyRegistration(version)` through the
+native store and explicitly activate that writer before serving pairwise grants.
+No caller supplies a domain store or private session/grant engine.
+
+Native authenticated Authorize Work resolves one stable subject before signing.
+Existing bindings win across clients in the same sector, new grants, restart and
+key rotation; different sectors are unlinkable. Original code/refresh/UserInfo
+grants use that binding, never rederive it under a new key. Key version is writer
+custody, not an identity namespace. Native encrypted key readback reconstructs
+the policy. Explicit same-material envelope rewrap and inactive-key retirement
+preserve subjects; retired versions cannot be resurrected. Do not change policy
+identity/version merely to rotate a key. See the detailed adoption/security
+contract in the [selected profile](../docs/selected-oidc-profile.md).
+
+Constructed services/policies retain plaintext HMAC material only behind opaque
+closures. Exported `Config.SubjectKey` is still explicit sensitive caller input:
+do not log or nest-format caller-owned configuration or plaintext buffers.
+
+See [selected profile](../docs/selected-oidc-profile.md). Sector-URI registration, prompt/max_age,
 profile/email/address/phone/offline scopes, logout, private session JWT exchange,
 shared-issuer access-JWT/delegation, HTTP/reference integration and complete
 conformance/release qualification remain open, unadvertised and unstubbed.

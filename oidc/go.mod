@@ -4,7 +4,8 @@ go 1.27.0
 
 require (
 	github.com/faustbrian/go-identity v0.0.0-20261016003032-9785b1c5a551
-	github.com/faustbrian/go-oauth-server v0.0.0-20261019130444-1cbd6cc50f61
+	github.com/faustbrian/go-oauth-server v0.0.0-20261020070034-f1cec653f1c2
+	github.com/faustbrian/go-secret-envelope/v2 v2.0.1
 )
 
 require (
@@ -15,7 +16,6 @@ require (
 	github.com/faustbrian/go-clock v1.2.0 // indirect
 	github.com/faustbrian/go-identity/session v0.0.0-20261016125355-af740fb7fb76 // indirect
 	github.com/faustbrian/go-password/v2 v2.0.2-0.20261015050515-4eb0fefa60ff // indirect
-	github.com/faustbrian/go-secret-envelope/v2 v2.0.1 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 )

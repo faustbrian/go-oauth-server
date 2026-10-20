@@ -1,15 +1,12 @@
-// Package oidc supplies the selected public-subject, ES256 authorization-code
-// provider extension. Native OAuth, consent, session and transaction authority
-// remain in their existing owners. This is not a complete OIDC provider profile.
+// Package oidc supplies selected public and registered-single-host pairwise
+// subjects for the ES256 authorization-code extension. Native OAuth, consent,
+// session and transaction authority remain in their existing owners. This is not
+// a complete OIDC provider profile.
 package oidc
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -34,6 +31,9 @@ type Config struct {
 	SubjectKey                [32]byte
 	Clock                     oauth.Clock
 	MaximumDuration           time.Duration
+	// SubjectPolicy optionally selects authenticated pairwise key custody.
+	// Native durable activation/binding remains independently required.
+	SubjectPolicy *SubjectPolicy
 }
 
 func (Config) Format(f fmt.State, _ rune)   { _, _ = f.Write([]byte("oidc.Config(redacted)")) }
@@ -46,9 +46,10 @@ func (Config) MarshalText() ([]byte, error) { return nil, oauth.ErrInvalidReques
 // with OIDCScopes declared, create child, then use core.WithOIDC(child) for OAuth
 // authorization/token operations. The original core never admits OIDC issuance.
 type Service struct {
-	config Config
-	core   *oauth.Service
-	scopes oauth.ScopeCatalog
+	config        Config
+	core          *oauth.Service
+	scopes        oauth.ScopeCatalog
+	publicSubject func([]string) string
 }
 
 // Format prevents recursive diagnostics from traversing subject-key custody.
@@ -62,8 +63,15 @@ func NewService(c Config, core *oauth.Service) (*Service, error) {
 	if core == nil || c.Issuer.String() == "" || c.Signing == nil || c.SubjectKey == ([32]byte{}) || nilClock(c.Clock) || c.MaximumDuration < time.Millisecond || c.MaximumDuration > 5*time.Second || !endpoint(c.Issuer, c.JWKSURI) || !endpoint(c.Issuer, c.UserInfoEndpoint) || c.JWKSURI == c.UserInfoEndpoint {
 		return nil, oauth.ErrInvalidRequest
 	}
+	if c.SubjectPolicy != nil {
+		if _, present := c.SubjectPolicy.keys[c.SubjectPolicy.active]; !present || c.SubjectPolicy.issuer != c.Issuer {
+			return nil, oauth.ErrInvalidRequest
+		}
+	}
 	scopes, _ := oauth.NewOIDCScopeCatalog([]string{"openid"})
-	return &Service{config: c, core: core, scopes: scopes}, nil
+	publicSubject, _ := opaqueHMAC(c.SubjectKey, "golib.oidc.public-subject.v1\x00")
+	clear(c.SubjectKey[:])
+	return &Service{config: c, core: core, scopes: scopes, publicSubject: publicSubject}, nil
 }
 
 func nilClock(clock oauth.Clock) bool {
@@ -97,7 +105,7 @@ func (s *Service) bounded(ctx context.Context) (context.Context, context.CancelF
 }
 
 // Scopes returns only implemented scope ownership. Profile/email/address/phone
-// claims, offline_access, pairwise subjects and every logout profile remain
+// claims, offline_access and every logout profile remain
 // unselected, unadvertised and unavailable rather than approximated.
 func (s *Service) Scopes() oauth.ScopeCatalog {
 	if s == nil {
@@ -134,19 +142,32 @@ func (s *Service) ValidateAuthorization(ctx context.Context, in oauth.OIDCAuthor
 	if err := ctx.Err(); err != nil {
 		return oauth.OIDCAuthorizationProjection{}, err
 	}
-	return oauth.OIDCAuthorizationProjection{Accepted: true}, nil
+	out := oauth.OIDCAuthorizationProjection{Accepted: true}
+	if in.Client.SubjectRegistration != nil {
+		client, err := oauth.ValidateClient(in.Client)
+		registration := in.Client.SubjectRegistration
+		if err != nil || client.ID != in.Request.ClientID || in.Issuer != s.config.Issuer || !s.config.SubjectPolicy.matches(registration, in.Environment) {
+			return oauth.OIDCAuthorizationProjection{}, oauth.ErrAccessDenied
+		}
+		if registration.SubjectType() == "pairwise" {
+			bindings, err := in.Session.Session.Bindings()
+			if err != nil {
+				return oauth.OIDCAuthorizationProjection{}, oauth.ErrAccessDenied
+			}
+			policy := s.config.SubjectPolicy
+			key := policy.keys[policy.active]
+			sub := policy.derive(string(bindings.TenantID), string(bindings.UserID), registration.SectorHost())
+			out.SubjectCandidate = &oauth.OIDCSubjectCandidate{Registration: *registration, Subject: sub, KeyVersion: policy.active, KeyCommitment: key.registration.Commitment}
+		}
+	}
+	return out, nil
 }
 
 func (s *Service) subject(in oauth.OIDCClaimsInput) string {
-	mac := hmac.New(sha256.New, s.config.SubjectKey[:])
-	_, _ = mac.Write([]byte("golib.oidc.public-subject.v1\x00"))
-	for _, value := range []string{in.Issuer.String(), string(in.TenantID), string(in.UserID)} {
-		var length [4]byte
-		binary.BigEndian.PutUint32(length[:], uint32(len(value)))
-		_, _ = mac.Write(length[:])
-		_, _ = mac.Write([]byte(value))
+	if s.publicSubject == nil {
+		return ""
 	}
-	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return s.publicSubject([]string{in.Issuer.String(), string(in.TenantID), string(in.UserID)})
 }
 
 type idClaims struct {
@@ -176,7 +197,10 @@ func (s *Service) Claims(ctx context.Context, in oauth.OIDCClaimsInput) (oauth.O
 	if in.Issuer != s.config.Issuer || len(in.TenantID) < 1 || len(in.TenantID) > 128 || len(in.UserID) < 1 || len(in.UserID) > 128 || len(in.ClientID) < 1 || len(in.ClientID) > 128 || len(in.ExpectedSubject) > 128 || !selected(in.Scopes) || len(in.Nonce) > 256 || in.AuthenticatedAt.IsZero() || in.AuthenticatedAt.After(in.IssuedAt) || in.IssuedAt.After(now) || !now.Before(in.ExpiresAt) || in.ExpiresAt.After(in.IssuedAt.Add(5*time.Minute)) {
 		return oauth.OIDCClaimsProjection{}, oauth.ErrAccessDenied
 	}
-	sub := s.subject(in)
+	sub, err := s.claimSubject(in)
+	if err != nil {
+		return oauth.OIDCClaimsProjection{}, err
+	}
 	if in.UserInfo {
 		if subtle.ConstantTimeCompare([]byte(sub), []byte(in.ExpectedSubject)) != 1 {
 			return oauth.OIDCClaimsProjection{}, oauth.ErrAccessDenied
@@ -220,7 +244,11 @@ func (s *Service) OIDCDiscovery(ctx context.Context) (oauth.OIDCDiscoveryProject
 			return oauth.OIDCDiscoveryProjection{}, oauth.ErrInvalidRequest
 		}
 	}
-	return oauth.OIDCDiscoveryProjection{JWKSURI: s.config.JWKSURI, UserInfoEndpoint: s.config.UserInfoEndpoint, SubjectTypesSupported: []string{"public"}, IDTokenSigningAlgValuesSupported: []string{"ES256"}, ClaimsSupported: []string{"iss", "sub", "aud", "azp", "iat", "exp", "nonce", "auth_time", "amr"}}, nil
+	subjectTypes := []string{"public"}
+	if s.config.SubjectPolicy != nil {
+		subjectTypes = append(subjectTypes, "pairwise")
+	}
+	return oauth.OIDCDiscoveryProjection{JWKSURI: s.config.JWKSURI, UserInfoEndpoint: s.config.UserInfoEndpoint, SubjectTypesSupported: subjectTypes, IDTokenSigningAlgValuesSupported: []string{"ES256"}, ClaimsSupported: []string{"iss", "sub", "aud", "azp", "iat", "exp", "nonce", "auth_time", "amr"}}, nil
 }
 
 type Discovery struct {

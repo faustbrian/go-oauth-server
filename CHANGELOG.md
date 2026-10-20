@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Preserve selected OIDC `prompt=login` and optional `max_age`, distinguishing
+  absence from explicit zero. Return a bound fresh-authentication continuation
+  rather than an unbound login loop; genuine completion retains the original
+  client, redirect, state, nonce and S256 request. Other prompt variants deny.
+- Fail closed when an older adapter drops selected authentication intent or
+  ignores the child decision. Retain the earliest observed age deadline through
+  Store waits/return; historical and unknown results disclose only metadata.
+- Preserve the original command's historical correlation when a known native
+  commitment returns after an authentication or original code/continuation
+  deadline, without revealing a code, continuation or redirect or implying the
+  consumed interaction is pending.
+
 - Validate explicitly allowed HTTPS sector identifier URIs against actual
   registered redirect sets, enabling multi-host pairwise clients only with
   opaque issuer/environment/client/version-bound fetch provenance. Keep legacy

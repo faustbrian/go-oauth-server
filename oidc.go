@@ -51,7 +51,27 @@ type OIDCAuthorizationInput struct {
 	Client      Client
 	Request     AuthorizationRequest
 	Session     session.GetResult
+	// Reauthentication is original native continuation context, never protocol
+	// input. The adapter must authenticate/fence this stored original session
+	// and request time as well as the newly submitted current session.
+	Reauthentication *OIDCReauthenticationInput
 }
+
+// OIDCReauthenticationInput conserves the original pending authorization's
+// native context. Reconstructed metadata alone cannot authorize a transition.
+type OIDCReauthenticationInput struct {
+	OriginalSession session.Session
+	RequestedAt     time.Time
+}
+
+// OIDCAuthenticationRequirement is the extension's typed policy projection;
+// it never authenticates a session or permits bypassing native current owners.
+type OIDCAuthenticationRequirement uint8
+
+const (
+	OIDCAuthenticationCurrent OIDCAuthenticationRequirement = iota + 1
+	OIDCAuthenticationFresh
+)
 
 func (OIDCAuthorizationInput) Format(f fmt.State, _ rune) {
 	_, _ = f.Write([]byte("oauthserver.OIDCAuthorizationInput(redacted)"))
@@ -75,6 +95,11 @@ func (OIDCSubjectCandidate) Format(f fmt.State, _ rune) {
 type OIDCAuthorizationProjection struct {
 	Accepted         bool
 	SubjectCandidate *OIDCSubjectCandidate
+	// Authentication is zero only for requests without selected prompt/max_age.
+	// AuthenticationUntil is an exclusive positive max_age policy deadline, not
+	// renewable session admission; native Work must check it after waits.
+	Authentication      OIDCAuthenticationRequirement
+	AuthenticationUntil time.Time
 }
 
 func validSubjectCandidate(c Client, candidate *OIDCSubjectCandidate) bool {

@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -41,6 +42,22 @@ type AuthorizationRequest struct {
 	// Nonce is uninterpreted extension input. Core bounds/preserves it; only an
 	// explicitly composed OIDC extension may authorize its semantics.
 	Nonce string `json:",omitempty"`
+	// Prompt preserves absence as empty; this selected profile accepts login
+	// only. Other OIDC prompt variants remain unsupported, not silently ignored.
+	Prompt string `json:",omitempty"`
+	// MaxAge is optional elapsed authentication age in uint32 seconds; nil is
+	// absent and a nonnil zero requires real fresh login (OIDC Core3.1.2.1).
+	// Callers own this input; services copy it before retaining a request.
+	MaxAge *uint32 `json:",omitempty"`
+}
+
+func (r AuthorizationRequest) snapshot() AuthorizationRequest {
+	r.Scopes = slices.Clone(r.Scopes)
+	if r.MaxAge != nil {
+		owned := *r.MaxAge
+		r.MaxAge = &owned
+	}
+	return r
 }
 
 // Format prevents correlated request/state data from appearing in diagnostics.
@@ -161,7 +178,7 @@ func ParseAuthorizationQueryWithOIDC(raw string) (AuthorizationRequest, error) {
 func parseAuthorizationQuery(raw string, oidc bool) (AuthorizationRequest, error) {
 	fields := []string{"response_type", "client_id", "redirect_uri", "scope", "state", "code_challenge", "code_challenge_method", "resource"}
 	if oidc {
-		fields = append(fields, "nonce")
+		fields = append(fields, "nonce", "prompt", "max_age")
 	}
 	values, err := parseFields(raw, fields)
 	if err != nil || values.Get("response_type") != "code" || values.Get("code_challenge_method") != "S256" {
@@ -173,6 +190,29 @@ func parseAuthorizationQuery(raw string, oidc bool) (AuthorizationRequest, error
 			return AuthorizationRequest{}, ErrInvalidRequest
 		}
 		r.Nonce = values.Get("nonce")
+	}
+	if hasField(values, "prompt") {
+		if values.Get("prompt") != "login" {
+			return AuthorizationRequest{}, ErrInvalidRequest
+		}
+		r.Prompt = "login"
+	}
+	if hasField(values, "max_age") {
+		wire := values.Get("max_age")
+		if len(wire) == 0 || len(wire) > 10 {
+			return AuthorizationRequest{}, ErrInvalidRequest
+		}
+		for i := range len(wire) {
+			if wire[i] < '0' || wire[i] > '9' {
+				return AuthorizationRequest{}, ErrInvalidRequest
+			}
+		}
+		seconds, err := strconv.ParseUint(wire, 10, 32)
+		if err != nil {
+			return AuthorizationRequest{}, ErrInvalidRequest
+		}
+		owned := uint32(seconds)
+		r.MaxAge = &owned
 	}
 	r.Scopes, err = parseScopes(values.Get("scope"))
 	if err != nil || !visible(r.ClientID, 128) || !validRedirect(r.RedirectURI) || !optionalVisible(r.State, 1024) || !opaque32(r.CodeChallenge) || !validOrigin(r.Resource) {

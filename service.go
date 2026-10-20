@@ -23,6 +23,11 @@ var (
 	ErrAccessDenied = errors.New("oauthserver: access denied")
 	// ErrInvalidScope denies malformed or expanding requested scope authority.
 	ErrInvalidScope = errors.New("oauthserver: invalid scope")
+	// ErrLoginRequired is the standard OIDC login_required condition. It does not
+	// prove rollback or a pending continuation: a late known commitment retains
+	// metadata-only AuthorizationHistorical and CommandID for recovery. It never
+	// permits replay or supplies another credential.
+	ErrLoginRequired = errors.New("oauthserver: login_required")
 )
 
 // Clock is trusted, fast, local and concurrent-safe. Callers cannot supply time
@@ -207,12 +212,18 @@ const (
 	AuthorizationDenied
 	AuthorizationUnknown
 	AuthorizationHistorical
+	// FreshAuthenticationRequired retains an original native one-use
+	// continuation while requesting genuine newly authenticated password
+	// session custody. It is not a completed login or consent authorization.
+	FreshAuthenticationRequired
 )
 
 // AuthorizeResult is a closed interaction/redirect/durability result. Core fills
 // redirect/issuer/state only after checking exact current client registration.
 // Tokens are explicit reveal custody and cannot be implicitly serialized.
 // Historical and unknown outcomes contain no fresh material or redirect.
+// A known commit whose credential expires before delivery retains only
+// Historical and CommandID alongside its error; recover metadata, never replay.
 type AuthorizeResult struct {
 	Outcome            AuthorizeOutcome
 	CommandID          identity.CommandID
@@ -220,7 +231,10 @@ type AuthorizeResult struct {
 	ExpiresAt          time.Time
 	RedirectURI, State string
 	Issuer             Issuer
-	Request            AuthorizationRequest
+	// Request is the original retained request, not a newly proposed redirect
+	// or policy. Adapters selecting prompt/max_age must echo it on known initial
+	// interaction/success results and protected continuation success.
+	Request AuthorizationRequest
 }
 
 // Location explicitly encodes a known committed success/denial for transport.
@@ -264,15 +278,26 @@ type AuthorizationCommand struct {
 	// SubjectCandidate is never a resolved identity. The native owner must
 	// resolve it in the existing authenticated transaction before signing.
 	SubjectCandidate *OIDCSubjectCandidate
+	// OIDC is the composed extension's actual authorization policy, for native
+	// admission of prompt/max_age against original sealed session observations.
+	// Invoke synchronously before protected Work, never while holding row locks;
+	// it is borrowed only until this Store call returns. Core conserves the
+	// originally observed decision/deadline, not a later freshness renewal.
+	OIDC func(context.Context, OIDCAuthorizationInput) (OIDCAuthorizationProjection, error)
 }
 
-// ContinuationCommand preserves the current original-browser observation for
-// one consent transition. The adapter must authenticate the original interaction
-// and synchronizer, not infer authority from this projection's identifiers.
+// ContinuationCommand preserves the current browser observation for one
+// protected transition. Selected OIDC policy may require a newly authenticated
+// same-user session. The adapter authenticates/fences the original interaction,
+// both applicable sources and synchronizer; identifiers alone confer no authority.
 type ContinuationCommand struct {
 	Request ContinueRequest
 	Client  Client
 	Session session.GetResult
+	// OIDC has AuthorizationCommand.OIDC's synchronous borrowed lifetime.
+	// Selected success requires evaluation against the original stored request
+	// and applicable original/new session context before protected Work.
+	OIDC func(context.Context, OIDCAuthorizationInput) (OIDCAuthorizationProjection, error)
 }
 
 // TokenCommand borrows exactly one code/S256 or refresh credential until the
@@ -364,8 +389,9 @@ func (s *Service) client(id string) (Client, error) {
 }
 
 func (s *Service) validateAuthorization(r AuthorizationRequest) (AuthorizationRequest, Client, error) {
+	r = r.snapshot()
 	c, err := s.client(r.ClientID)
-	if err != nil || !slices.Contains(c.Redirects, r.RedirectURI) || !opaque32(r.CodeChallenge) || r.Resource != c.Resource || !optionalVisible(r.State, 1024) || !optionalVisible(r.Nonce, 256) {
+	if err != nil || !slices.Contains(c.Redirects, r.RedirectURI) || !opaque32(r.CodeChallenge) || r.Resource != c.Resource || !optionalVisible(r.State, 1024) || !optionalVisible(r.Nonce, 256) || r.Prompt != "" && r.Prompt != "login" {
 		return AuthorizationRequest{}, Client{}, ErrInvalidRequest
 	}
 	scopes, err := validatedScopes(r.Scopes)
@@ -373,7 +399,7 @@ func (s *Service) validateAuthorization(r AuthorizationRequest) (AuthorizationRe
 		return AuthorizationRequest{}, Client{}, ErrInvalidScope
 	}
 	r.Scopes = scopes
-	if (hasExtensionScope(scopes) || r.Nonce != "") && nilDependency(s.deps.OIDC) {
+	if (hasExtensionScope(scopes) || r.Nonce != "" || r.Prompt != "" || r.MaxAge != nil) && nilDependency(s.deps.OIDC) {
 		return AuthorizationRequest{}, Client{}, ErrInvalidScope
 	}
 	return r, c, nil
@@ -442,8 +468,11 @@ func (s *Service) Authorize(ctx context.Context, request AuthorizeRequest) (out 
 		return AuthorizeResult{Outcome: LoginRequired}, nil
 	}
 	var subjectCandidate *OIDCSubjectCandidate
-	if hasExtensionScope(input.Scopes) || input.Nonce != "" {
-		projection, e := s.deps.OIDC.ValidateAuthorization(ctx, OIDCAuthorizationInput{Issuer: s.config.Issuer, Environment: s.config.Environment, Client: client.snapshot(), Request: input, Session: source})
+	var oidcAuthorization func(context.Context, OIDCAuthorizationInput) (OIDCAuthorizationProjection, error)
+	var authentication oidcAuthorizationCall
+	if hasExtensionScope(input.Scopes) || input.Nonce != "" || input.Prompt != "" || input.MaxAge != nil {
+		oidcAuthorization = authentication.wrap(s.deps.OIDC.ValidateAuthorization)
+		projection, e := oidcAuthorization(ctx, OIDCAuthorizationInput{Issuer: s.config.Issuer, Environment: s.config.Environment, Client: client.snapshot(), Request: input.snapshot(), Session: source})
 		if e != nil || !projection.Accepted || !validSubjectCandidate(client, projection.SubjectCandidate) {
 			if e != nil {
 				return out, e
@@ -455,11 +484,11 @@ func (s *Service) Authorize(ctx context.Context, request AuthorizeRequest) (out 
 			subjectCandidate = &owned
 		}
 	}
-	out, err = s.deps.Store.Authorize(ctx, AuthorizationCommand{Request: input, Client: client.snapshot(), Session: source, Browser: request.Session, Network: request.Network, SubjectCandidate: subjectCandidate})
+	out, err = s.deps.Store.Authorize(ctx, AuthorizationCommand{Request: input.snapshot(), Client: client.snapshot(), Session: source, Browser: request.Session, Network: request.Network, SubjectCandidate: subjectCandidate, OIDC: oidcAuthorization})
 	if err != nil || ctx.Err() != nil {
 		return AuthorizeResult{Outcome: out.Outcome, CommandID: out.CommandID}, operationError(ctx, err)
 	}
-	return s.authorizeResult(out, input, client)
+	return s.authorizeResult(out, input, client, &authentication, true)
 }
 
 // Continue requires a current genuine source session plus exact issuer origin
@@ -493,29 +522,40 @@ func (s *Service) Continue(ctx context.Context, request ContinueRequest) (out Au
 	if !source.Authenticated {
 		return out, ErrAccessDenied
 	}
-	out, err = s.deps.Store.Continue(ctx, ContinuationCommand{Request: request, Client: client.snapshot(), Session: source})
+	command := ContinuationCommand{Request: request, Client: client.snapshot(), Session: source}
+	var authentication oidcAuthorizationCall
+	if !nilDependency(s.deps.OIDC) {
+		command.OIDC = authentication.wrap(s.deps.OIDC.ValidateAuthorization)
+	}
+	out, err = s.deps.Store.Continue(ctx, command)
 	if err != nil || ctx.Err() != nil {
 		return AuthorizeResult{Outcome: out.Outcome, CommandID: out.CommandID}, operationError(ctx, err)
+	}
+	if out.Outcome == AuthorizationUnknown || out.Outcome == AuthorizationHistorical {
+		return s.authorizeResult(out, AuthorizationRequest{}, client, &authentication, false)
 	}
 	input, current, err := s.validateAuthorization(out.Request)
 	if err != nil || current.ID != client.ID {
 		return AuthorizeResult{}, ErrUnavailable
 	}
-	return s.authorizeResult(out, input, current)
+	return s.authorizeResult(out, input, current, &authentication, false)
 }
 
-func (s *Service) authorizeResult(out AuthorizeResult, input AuthorizationRequest, client Client) (AuthorizeResult, error) {
+func (s *Service) authorizeResult(out AuthorizeResult, input AuthorizationRequest, client Client, authentication *oidcAuthorizationCall, initial bool) (AuthorizeResult, error) {
 	now := s.config.Clock.Now()
+	var ttl time.Duration
 	switch out.Outcome {
-	case ConsentRequired:
-		if out.Continuation.state == nil || out.Code.state != nil || !now.Before(out.ExpiresAt) || out.ExpiresAt.After(now.Add(s.config.ContinuationTTL)) {
+	case ConsentRequired, FreshAuthenticationRequired:
+		if out.Continuation.state == nil || out.Code.state != nil {
 			return AuthorizeResult{}, ErrUnavailable
 		}
+		ttl = s.config.ContinuationTTL
 		out.RedirectURI, out.State, out.Issuer = "", "", Issuer{}
 	case AuthorizationRedirect:
-		if out.Code.state == nil || out.Continuation.state != nil || !now.Before(out.ExpiresAt) || out.ExpiresAt.After(now.Add(s.config.CodeTTL)) {
+		if out.Code.state == nil || out.Continuation.state != nil {
 			return AuthorizeResult{}, ErrUnavailable
 		}
+		ttl = s.config.CodeTTL
 		out.RedirectURI, out.State, out.Issuer = input.RedirectURI, input.State, s.config.Issuer
 	case AuthorizationDenied:
 		if out.Code.state != nil || out.Continuation.state != nil {
@@ -526,6 +566,22 @@ func (s *Service) authorizeResult(out AuthorizeResult, input AuthorizationReques
 		return AuthorizeResult{Outcome: out.Outcome, CommandID: out.CommandID}, nil
 	default:
 		return AuthorizeResult{}, ErrUnavailable
+	}
+	if ttl != 0 && (out.ExpiresAt.IsZero() || out.ExpiresAt.After(now.Add(ttl))) {
+		return AuthorizeResult{}, ErrUnavailable
+	}
+	deliveryErr := authentication.check(out, input, now, initial)
+	if deliveryErr != nil && !errors.Is(deliveryErr, ErrLoginRequired) {
+		return AuthorizeResult{}, deliveryErr // Malformed/unaware projections deny.
+	}
+	if deliveryErr == nil && ttl != 0 && !now.Before(out.ExpiresAt) {
+		deliveryErr = ErrUnavailable
+	}
+	if deliveryErr != nil {
+		// A valid known Store response can become undeliverable after COMMIT.
+		// Suppress all material, not the original recovery correlation; no
+		// expired age, code or interaction deadline proves rollback or pending.
+		return AuthorizeResult{Outcome: AuthorizationHistorical, CommandID: out.CommandID}, deliveryErr
 	}
 	out.Request = input
 	return out, nil
@@ -728,7 +784,7 @@ func operationError(ctx context.Context, err error) error {
 	if err == nil {
 		return nil
 	}
-	for _, known := range []error{ErrInvalidRequest, ErrInvalidClient, ErrInvalidGrant, ErrAccessDenied, ErrInvalidScope, ErrUnsupportedGrant} {
+	for _, known := range []error{ErrInvalidRequest, ErrInvalidClient, ErrInvalidGrant, ErrAccessDenied, ErrInvalidScope, ErrUnsupportedGrant, ErrLoginRequired} {
 		if errors.Is(err, known) {
 			return known
 		}

@@ -39,6 +39,70 @@ authority read without positive caching, then the child compares the persisted
 grant/client subject. Browser logout keeps the existing approved-grant policy;
 credential/owner withdrawal and grant/access revocation deny UserInfo.
 
+## Original authorization and fresh login
+
+[OIDC Core 1.0 errata2 section3.1.2.1](https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest)
+defines `prompt=login` and elapsed authentication age: `max_age=0` is equivalent
+to requesting login, and `auth_time` is required with maximum age. This profile
+selects only `login`; `none`, `consent`, `select_account` and combinations deny
+rather than being ignored. `AuthorizationRequest.MaxAge` is optional uint32
+seconds: nil preserves absence, a nonnil zero explicitly requires fresh login.
+Request snapshots and encrypted preparation preserve that distinction.
+
+When selected policy needs authentication, `Authorize` returns
+`FreshAuthenticationRequired` and the existing opaque native continuation, not
+an invented login URL or permission to issue a code. The application retains it
+through actual password sign-in and submits the new session's cookie custody
+and synchronizer to the existing protected `Continue`. The child requires a
+different same-user/tenant session and authentication proof issued strictly
+after the original native request. A timestamp, reissued session or a different
+preexisting session is insufficient. Native Work checks current primary
+directory/credential/authorization/session state for both original and new
+sources and checks the submitted new cookie/CSRF. Original session withdrawal
+or flow expiry prevents adoption; a successful new login does not revive them.
+
+Without login or explicit zero, a still-young positive maximum age permits the
+original session. Its exclusive age deadline is checked by native Work, including
+after protected waits. Absence retains ordinary consent behavior. Old or
+insufficient authentication returns `ErrLoginRequired` without issuing code.
+Source adoption, consent and one-use code issuance share the existing sole
+transaction. Original client/version/redirect/state/PKCE/nonce, pairwise binding
+and exclusive flow deadline remain fixed; the code cannot renew that deadline.
+Token preparation uses the adopted session owner's authentic `auth_time`.
+
+Select matching core/child/native versions for this optional profile. An older
+adapter cannot silently drop login or explicit-zero/positive-age intent: known
+initial results must echo the exact retained request, and a fresh child decision
+requires the typed fresh-authentication result. Protected continuation adapters
+must invoke the configured policy synchronously before Work. Core conserves
+those observed decisions and the earliest positive-age deadline through Store
+waits and return, without a new authority read or freshness renewal. Missing,
+changed or ignored policy fails closed; absent-policy clients remain unchanged.
+If a known native commitment returns after an authentication-age or original
+code/continuation deadline, core withholds all code/continuation/redirect
+material. The error remains `ErrLoginRequired` for authentication age and
+`ErrUnavailable` for expired credential delivery, with only
+`AuthorizationHistorical` and the original `CommandID`. Retain that ID for
+`Recover`; no delivery error alone implies a pending interaction or rollback.
+
+Spent continuations deny before reevaluating authentication, never creating a
+new login loop. Ambiguous continuation commits are recovered as historical
+metadata only through the existing coordinator: exact authenticated encrypted
+preparation binds the attempting new session even when the grant's source update
+rolled back. Old/foreign sessions cannot substitute. Committed recovery cannot
+redeliver code; proven noncommit retains its original dependency-failure error
+alongside `NotCommitted`. Neither result starts another flow or renews time.
+A distinct attempt is permitted only for actual terminal `NotCommitted` with
+the shared kernel's closed reauthentication-required classification: a genuine newer login
+may select another random attempt on the same original continuation. The sole
+coordinator rechecks the immutable predecessor receipt and advances the native
+current-attempt pointer in its existing acknowledged-start transaction. It does
+not reopen the old command or change the original token/request/deadline. Install
+the shared kernel's forward `OAuthReauthenticationMigrationSource` before this
+profile; pending, Unknown, committed and unrelated failures never permit handoff.
+Original attempts remain independently recoverable through their authenticated
+encrypted preparation after pointer advancement and service reconstruction.
+
 ## Optional registered pairwise subjects
 
 The selected pairwise profile implements OIDC Core 1.0 errata 2 section 8.1's
@@ -161,7 +225,7 @@ References: OpenID Connect Core 1.0 and Discovery 1.0, errata set 2. Only actual
 code/query/S256/ES256, public subjects, selected pairwise policy and configured
 client methods are advertised.
 Core 3.1.3.6 does not require at_hash/c_hash for this token-endpoint-only ID token.
-Prompt/max_age, other identity scopes,
+Other prompt variants and identity scopes,
 implicit/hybrid, request objects,
 logout, private session exchange, shared-issuer access-JWT/delegation and
 HTTP/reference integration remain open/unadvertised.

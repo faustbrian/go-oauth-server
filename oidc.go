@@ -125,6 +125,12 @@ type OIDCClaimsInput struct {
 	// and the original grant's durable native binding, never caller selectors.
 	SubjectRegistration *OIDCSubjectRegistration
 	BoundSubject        string
+	// Identifiers is optional trusted-only primary directory custody for the
+	// selected UserInfo extension, never caller input or an authentication proof.
+	// AuthorityExpiresAt retains the earliest original contributing deadline;
+	// copying or projecting this input cannot renew primary-read freshness.
+	Identifiers        *identity.IdentifierState
+	AuthorityExpiresAt time.Time
 }
 
 func (OIDCClaimsInput) Format(f fmt.State, _ rune) {
@@ -223,7 +229,7 @@ func (s *Service) UserInfoSource(ctx context.Context, r UserInfoRequest) (out OI
 	if err != nil || ctx.Err() != nil {
 		return OIDCClaimsInput{}, operationError(ctx, err)
 	}
-	if out.Issuer != s.config.Issuer || out.ClientID != c.ID || out.TenantID == "" || out.UserID == "" || out.ExpectedSubject == "" || !scopeSubset(out.Scopes, c.Scopes) || !out.UserInfo || !s.config.Clock.Now().Before(out.ExpiresAt) {
+	if out.Issuer != s.config.Issuer || out.ClientID != c.ID || out.TenantID == "" || out.UserID == "" || out.ExpectedSubject == "" || !scopeSubset(out.Scopes, c.Scopes) || !out.UserInfo || !s.config.Clock.Now().Before(out.ExpiresAt) || !out.AuthorityExpiresAt.IsZero() && !s.config.Clock.Now().Before(out.AuthorityExpiresAt) {
 		return OIDCClaimsInput{}, ErrAccessDenied
 	}
 	if c.SubjectRegistration != nil && (out.SubjectRegistration == nil || *out.SubjectRegistration != *c.SubjectRegistration || out.Environment != s.config.Environment) || c.SubjectRegistration == nil && out.SubjectRegistration != nil {

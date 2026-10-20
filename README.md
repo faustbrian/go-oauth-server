@@ -11,6 +11,8 @@ subjects (single-host or validated HTTPS sector URI) for ES256 code flow
 through the same native password-session/consent authority. Its
 [finite profile](docs/selected-oidc-profile.md) explains composition and remaining
 full-goal work; existing OAuth-only configuration remains unchanged.
+The child separately opts into consented email UserInfo; openid-only remains
+the default and email never expands the ID token.
 
 The root package owns bounded protocol parsing, exact HTTPS redirect/issuer/
 resource policy, explicit consent and scope ceilings. The optional

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Carry optional native identifier custody and its original validity deadline
+  for explicitly selected consented email UserInfo, without adding claim
+  semantics to OAuth core or changing default openid-only composition.
+
 - Preserve selected OIDC `prompt=login` and optional `max_age`, distinguishing
   absence from explicit zero. Return a bound fresh-authentication continuation
   rather than an unbound login loop; genuine completion retains the original

@@ -46,7 +46,7 @@ defines `prompt=login` and elapsed authentication age: `max_age=0` is equivalent
 to requesting login, and `auth_time` is required with maximum age. This profile
 selects only `login`; `none`, `consent`, `select_account` and combinations deny
 rather than being ignored. `AuthorizationRequest.MaxAge` is optional uint32
-seconds: nil preserves absence, a nonnil zero explicitly requires fresh login.
+seconds: nil preserves absence, a non-nil zero explicitly requires fresh login.
 Request snapshots and encrypted preparation preserve that distinction.
 
 When selected policy needs authentication, `Authorize` returns
@@ -90,11 +90,12 @@ new login loop. Ambiguous continuation commits are recovered as historical
 metadata only through the existing coordinator: exact authenticated encrypted
 preparation binds the attempting new session even when the grant's source update
 rolled back. Old/foreign sessions cannot substitute. Committed recovery cannot
-redeliver code; proven noncommit retains its original dependency-failure error
-alongside `NotCommitted`. Neither result starts another flow or renews time.
+redeliver code; proven absence of commit retains the original dependency-failure
+error alongside `NotCommitted`. Neither result starts another flow or renews time.
 A distinct attempt is permitted only for actual terminal `NotCommitted` with
-the shared kernel's closed reauthentication-required classification: a genuine newer login
-may select another random attempt on the same original continuation. The sole
+the shared kernel's closed `OAuthReauthenticationRequiredError` classification:
+a genuine newer login may select another random attempt on the same original
+continuation. The sole
 coordinator rechecks the immutable predecessor receipt and advances the native
 current-attempt pointer in its existing acknowledged-start transaction. It does
 not reopen the old command or change the original token/request/deadline. Install

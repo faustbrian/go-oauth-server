@@ -34,6 +34,9 @@ type Config struct {
 	// SubjectPolicy optionally selects authenticated pairwise key custody.
 	// Native durable activation/binding remains independently required.
 	SubjectPolicy *SubjectPolicy
+	// EmailUserInfo explicitly enables consented email/email_verified UserInfo
+	// projection from native primary identifier custody. It never expands ID tokens.
+	EmailUserInfo bool
 }
 
 func (Config) Format(f fmt.State, _ rune)   { _, _ = f.Write([]byte("oidc.Config(redacted)")) }
@@ -69,6 +72,9 @@ func NewService(c Config, core *oauth.Service) (*Service, error) {
 		}
 	}
 	scopes, _ := oauth.NewOIDCScopeCatalog([]string{"openid"})
+	if c.EmailUserInfo {
+		scopes, _ = oauth.NewOIDCScopeCatalog([]string{"openid", "email"})
+	}
 	publicSubject, _ := opaqueHMAC(c.SubjectKey, "golib.oidc.public-subject.v1\x00")
 	clear(c.SubjectKey[:])
 	return &Service{config: c, core: core, scopes: scopes, publicSubject: publicSubject}, nil
@@ -104,7 +110,7 @@ func (s *Service) bounded(ctx context.Context) (context.Context, context.CancelF
 	return c, stop, nil
 }
 
-// Scopes returns only implemented scope ownership. Profile/email/address/phone
+// Scopes returns only implemented scope ownership. Profile/address/phone
 // claims, offline_access and every logout profile remain
 // unselected, unadvertised and unavailable rather than approximated.
 func (s *Service) Scopes() oauth.ScopeCatalog {
@@ -114,13 +120,17 @@ func (s *Service) Scopes() oauth.ScopeCatalog {
 	return s.scopes
 }
 
-func selected(scopes []string) bool {
+func (s *Service) selected(scopes []string) bool {
 	if len(scopes) < 1 || len(scopes) > 16 || !slices.Contains(scopes, "openid") {
 		return false
 	}
 	for _, scope := range scopes {
 		switch scope {
-		case "profile", "email", "address", "phone", "offline_access":
+		case "email":
+			if !s.config.EmailUserInfo {
+				return false
+			}
+		case "profile", "address", "phone", "offline_access":
 			return false
 		}
 	}
@@ -137,7 +147,7 @@ func (s *Service) ValidateAuthorization(ctx context.Context, in oauth.OIDCAuthor
 		return oauth.OIDCAuthorizationProjection{}, err
 	}
 	defer stop()
-	if !selected(in.Request.Scopes) || len(in.Request.Nonce) > 256 || in.Session.ValidateAt(s.config.Clock.Now()) != nil {
+	if !s.selected(in.Request.Scopes) || len(in.Request.Nonce) > 256 || in.Session.ValidateAt(s.config.Clock.Now()) != nil {
 		return oauth.OIDCAuthorizationProjection{}, oauth.ErrAccessDenied
 	}
 	if err := ctx.Err(); err != nil {
@@ -225,7 +235,10 @@ func (s *Service) Claims(ctx context.Context, in oauth.OIDCClaimsInput) (oauth.O
 	}
 	defer stop()
 	now := s.config.Clock.Now()
-	if in.Issuer != s.config.Issuer || len(in.TenantID) < 1 || len(in.TenantID) > 128 || len(in.UserID) < 1 || len(in.UserID) > 128 || len(in.ClientID) < 1 || len(in.ClientID) > 128 || len(in.ExpectedSubject) > 128 || !selected(in.Scopes) || len(in.Nonce) > 256 || in.AuthenticatedAt.IsZero() || in.AuthenticatedAt.After(in.IssuedAt) || in.IssuedAt.After(now) || !now.Before(in.ExpiresAt) || in.ExpiresAt.After(in.IssuedAt.Add(5*time.Minute)) {
+	if in.Issuer != s.config.Issuer || len(in.TenantID) < 1 || len(in.TenantID) > 128 || len(in.UserID) < 1 || len(in.UserID) > 128 || len(in.ClientID) < 1 || len(in.ClientID) > 128 || len(in.ExpectedSubject) > 128 || !s.selected(in.Scopes) || len(in.Nonce) > 256 || in.AuthenticatedAt.IsZero() || in.AuthenticatedAt.After(in.IssuedAt) || in.IssuedAt.After(now) || !now.Before(in.ExpiresAt) || in.ExpiresAt.After(in.IssuedAt.Add(5*time.Minute)) {
+		return oauth.OIDCClaimsProjection{}, oauth.ErrAccessDenied
+	}
+	if in.UserInfo && !in.AuthorityExpiresAt.IsZero() && !now.Before(in.AuthorityExpiresAt) {
 		return oauth.OIDCClaimsProjection{}, oauth.ErrAccessDenied
 	}
 	sub, err := s.claimSubject(in)
@@ -279,7 +292,11 @@ func (s *Service) OIDCDiscovery(ctx context.Context) (oauth.OIDCDiscoveryProject
 	if s.config.SubjectPolicy != nil {
 		subjectTypes = append(subjectTypes, "pairwise")
 	}
-	return oauth.OIDCDiscoveryProjection{JWKSURI: s.config.JWKSURI, UserInfoEndpoint: s.config.UserInfoEndpoint, SubjectTypesSupported: subjectTypes, IDTokenSigningAlgValuesSupported: []string{"ES256"}, ClaimsSupported: []string{"iss", "sub", "aud", "azp", "iat", "exp", "nonce", "auth_time", "amr"}}, nil
+	claims := []string{"iss", "sub", "aud", "azp", "iat", "exp", "nonce", "auth_time", "amr"}
+	if s.config.EmailUserInfo {
+		claims = append(claims, "email", "email_verified")
+	}
+	return oauth.OIDCDiscoveryProjection{JWKSURI: s.config.JWKSURI, UserInfoEndpoint: s.config.UserInfoEndpoint, SubjectTypesSupported: subjectTypes, IDTokenSigningAlgValuesSupported: []string{"ES256"}, ClaimsSupported: claims}, nil
 }
 
 type Discovery struct {
@@ -327,11 +344,17 @@ func (s *Service) JWKS(ctx context.Context) (JWKS, error) {
 	return JWKS{Keys: keys}, nil
 }
 
-// UserInfo is a minimized subject-only response. Expected subject equality is
-// rechecked against the same grant/client artifact, never a caller ID token.
+// UserInfo contains the grant subject and only explicitly selected consented
+// claims. EmailVerified is nil when email is omitted and non-nil for actual
+// pending(false)/verified(true) custody. JSON is intentional RP disclosure;
+// diagnostics redact. No field is an authentication credential or identity key.
 type UserInfo struct {
-	Subject string `json:"sub"`
+	Subject       string `json:"sub"`
+	Email         string `json:"email,omitempty"`
+	EmailVerified *bool  `json:"email_verified,omitempty"`
 }
+
+func (UserInfo) Format(f fmt.State, _ rune) { _, _ = f.Write([]byte("oidc.UserInfo(redacted)")) }
 
 func (s *Service) UserInfo(ctx context.Context, request oauth.UserInfoRequest) (UserInfo, error) {
 	ctx, stop, err := s.bounded(ctx)
@@ -347,5 +370,19 @@ func (s *Service) UserInfo(ctx context.Context, request oauth.UserInfoRequest) (
 	if err != nil {
 		return UserInfo{}, err
 	}
-	return UserInfo{Subject: claims.Subject}, nil
+	info := UserInfo{Subject: claims.Subject}
+	if slices.Contains(source.Scopes, "email") {
+		info, err = s.emailClaims(ctx, source)
+		if err != nil {
+			return UserInfo{}, err
+		}
+		info.Subject = claims.Subject
+	}
+	if err := ctx.Err(); err != nil {
+		return UserInfo{}, err
+	}
+	if !s.config.Clock.Now().Before(source.ExpiresAt) || !source.AuthorityExpiresAt.IsZero() && !s.config.Clock.Now().Before(source.AuthorityExpiresAt) {
+		return UserInfo{}, oauth.ErrAccessDenied
+	}
+	return info, nil
 }

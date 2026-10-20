@@ -39,6 +39,35 @@ authority read without positive caching, then the child compares the persisted
 grant/client subject. Browser logout keeps the existing approved-grant policy;
 credential/owner withdrawal and grant/access revocation deny UserInfo.
 
+## Optional consented email UserInfo
+
+Select `oidc.Config.EmailUserInfo=true` and configure the root extension catalog
+and allowed human client scopes with both `openid` and `email`. The original
+native consent/code/S256/token flow must approve email; an openid-only grant
+still returns only `sub`. Discovery advertises email scope/claims only when
+selected. ID tokens are unchanged, including their original public or pairwise
+subject. No new migration is needed; retain installed identity identifier and
+OIDC signing/pairwise histories and use matching core/child/native versions.
+
+[OIDC Core1.0 errata2 sections5.1 and5.4](https://openid.net/specs/openid-connect-core-1_0.html#ScopeClaims)
+define email as preferred addr-spec, actual possession verification, and voluntary
+UserInfo claims in code flows. The child selects verified primary email first,
+then verified non-primary by lowest IdentifierID, then pending by lowest ID.
+An actual pending verification maps to false; revoked records are excluded.
+No eligible email omits both claims. Inconsistent or malformed owner custody
+denies; the child never fabricates verification or normalizes owner bytes.
+Email is not a stable identity key: RPs must use the unchanged verified `sub`.
+
+The native adapter reads its existing identity primary repository, not a caller
+callback or user-supplied email. It repeats identifier and original authority
+reads and token/client/grant/consent/subject/key fences after projection work.
+The earliest original OAuth, session, credential and primary-read-start+20s
+deadline survives every read and child projection. There is no positive cache
+or deadline renewal. An identifier-authority change denies the old grant;
+revoke/remove/replace never silently changes its contact. Cancellation or owner
+failure returns no partial subject or email. Approved-grant browser logout
+policy remains unchanged.
+
 ## Original authorization and fresh login
 
 [OIDC Core 1.0 errata2 section3.1.2.1](https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest)

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Opt into consented email/email_verified UserInfo from current native
+  identifier and verification authority. Prefer verified primary, then verified
+  and pending contacts in stable ID order; omit absent/revoked email and deny
+  invalid or stale custody. Default UserInfo and all ID tokens remain minimized.
+
 - Evaluate selected login/maximum-authentication-age policy against genuine
   session custody, including explicit zero and an exclusive positive-age
   deadline. New password authentication completes the original native flow;

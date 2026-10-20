@@ -15,11 +15,30 @@ ordinary OAuth parser still rejects nonce and other unselected fields.
 
 The child implements exactly the frozen four-method OIDCExtension. Claims
 consumes trusted native grant results, never token forms/client credentials.
-Only openid is selected. UserInfo contains only sub; ID tokens contain issuer,
+By default only openid is selected and UserInfo contains only sub. ID tokens contain issuer,
 selected subject, actual client audience/authorized party, issued/expiry time,
 original password auth_time/amr and the original nonce when supplied. Resource
 scopes add no identity attributes. Signature/issuer/audience/time/nonce and the
 UserInfo subject must be validated by the relying party.
+
+## Optional consented email UserInfo
+
+Set child `Config.EmailUserInfo=true`, declare root `Config.OIDCScopes` with
+`NewOIDCScopeCatalog([]string{"openid", "email"})`, and allow both scopes for
+the selected human client. Explicit native consent must include email. This
+adds only `email` and `email_verified` to UserInfo and discovery, never ID tokens.
+The native adapter supplies its actual primary identifier/verification partition;
+applications do not supply email strings or a claim callback.
+
+Selection prefers the verified primary email, then the verified email with the
+lowest IdentifierID, then the pending email with the lowest IdentifierID. Pending
+means `email_verified:false`, not a claimed possession proof. Revoked contacts
+are never selected; no eligible contact omits both claims. Canonical addr-spec
+bytes remain unchanged. Identifier changes invalidate original identifier
+authority, so existing grants deny instead of silently adopting a new contact.
+All errors/cancellation return zero claims; the original earliest native
+20-second/credential/session/token deadline is never renewed by projection.
+See [OIDC Core sections5.1 and5.4](https://openid.net/specs/openid-connect-core-1_0.html#ScopeClaims).
 
 Signing requires core SigningService with the native durable SigningLifecycle,
 not an isolated in-memory SigningAuthority. Private custody stays in core.
@@ -68,6 +87,6 @@ refreshed old session is not proof; the native owner fences both sources and
 the child evaluates freshness. See the [selected profile](../docs/selected-oidc-profile.md#original-authorization-and-fresh-login).
 
 Other prompt variants,
-profile/email/address/phone/offline scopes, logout, private session JWT exchange,
+profile/address/phone/offline scopes, logout, private session JWT exchange,
 shared-issuer access-JWT/delegation, HTTP/reference integration and complete
 conformance/release qualification remain open, unadvertised and unstubbed.

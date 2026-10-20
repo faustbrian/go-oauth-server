@@ -11,14 +11,15 @@ import (
 	"github.com/faustbrian/go-identity/session"
 )
 
-// ConsentOperation is a closed own-consent query or withdrawal. Zero is invalid;
-// neither a user override nor broad consent modification is selected.
+// ConsentOperation is a closed own-consent query, withdrawal or strict scope
+// narrowing. Zero is invalid; subject overrides and expansion remain unavailable.
 type ConsentOperation uint8
 
 const (
 	ConsentRead ConsentOperation = iota + 1
 	ConsentEnumerate
 	ConsentRemove
+	ConsentNarrow
 )
 
 // Cursor is bounded, opaque pagination custody. Empty means the first/final
@@ -42,7 +43,9 @@ func (c Cursor) String() string { return c.value }
 // CSRF remain borrowed until the bounded call returns; do not destroy them
 // concurrently. Read/remove require ID; enumerate requires Limit in 1..64 and
 // accepts only Cursor. Remove additionally requires exact positive Version,
-// issuer Origin, CSRF and trusted Network. Other variant fields must be zero.
+// issuer Origin, CSRF and trusted Network. Narrow has those same requirements;
+// its separate update request binds client/resource/scopes/key. Other variant
+// fields must be zero.
 type ConsentCommandSpec struct {
 	Operation ConsentOperation
 	TenantID  identity.TenantID
@@ -81,7 +84,7 @@ func NewConsentCommand(s ConsentCommandSpec) (ConsentCommand, error) {
 		return ConsentCommand{}, ErrInvalidRequest
 	}
 	switch s.Operation {
-	case ConsentRead, ConsentRemove:
+	case ConsentRead, ConsentRemove, ConsentNarrow:
 		if _, err := identity.ParseSubjectID(s.ID); err != nil || s.Limit != 0 || s.Cursor.value != "" {
 			return ConsentCommand{}, ErrInvalidRequest
 		}
@@ -92,7 +95,7 @@ func NewConsentCommand(s ConsentCommandSpec) (ConsentCommand, error) {
 	default:
 		return ConsentCommand{}, ErrInvalidRequest
 	}
-	if s.Operation == ConsentRemove {
+	if s.Operation == ConsentRemove || s.Operation == ConsentNarrow {
 		if s.Version == 0 || s.Version == ^uint64(0) || !validOrigin(s.Origin) || s.CSRF == (session.CSRFToken{}) || !visible(s.Network, 128) {
 			return ConsentCommand{}, ErrInvalidRequest
 		}
@@ -213,7 +216,7 @@ type ConsentDeleteResult struct {
 
 // ConsentExecution carries genuine sealed session observation plus borrowed
 // original browser/CSRF custody. Native owners must authenticate it again and
-// enforce current subject/session/credential/policy and fresh-delete fences.
+// enforce current subject/session/credential/policy and fresh-mutation fences.
 type ConsentExecution struct {
 	Command ConsentCommand
 	Session session.GetResult
@@ -238,7 +241,7 @@ func (e ConsentExecution) ValidateAt(now time.Time) error {
 	if err != nil || a.Organization.Present || a.Factor.Present || a.Passkey.Present {
 		return ErrAccessDenied
 	}
-	if input.Operation == ConsentRemove {
+	if input.Operation == ConsentRemove || input.Operation == ConsentNarrow {
 		lifetime, err := e.Session.Session.Lifetime(now)
 		// REFERENCE_CONFIGURATION session.fresh_for fixes sensitive operations
 		// at 15min even when general session FreshFor permits 24h. Selected
@@ -270,7 +273,7 @@ func (s *Service) consentSource(ctx context.Context, c ConsentCommand, operation
 	if !ok || nilDependency(owner) || s.deps.Sessions == nil {
 		return nil, session.GetResult{}, ErrAccessDenied
 	}
-	if operation == ConsentRemove && input.Origin != s.config.Issuer.String() {
+	if (operation == ConsentRemove || operation == ConsentNarrow) && input.Origin != s.config.Issuer.String() {
 		return nil, session.GetResult{}, ErrAccessDenied
 	}
 	observed, err := s.source(ctx, input.TenantID, input.Session)

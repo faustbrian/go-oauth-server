@@ -49,6 +49,13 @@ replacement authentication engine.
   Deletion additionally requires recent original authentication, issuer origin
   and same-browser CSRF; native consent-root withdrawal denies associated
   code/access/refresh authority without unbounded grant fanout.
+- `Service.ConsentUpdate` separately selects optional `ConsentUpdater` support
+  for a nonempty strict scope subset of the same own consent. Exact consent and
+  client versions, resource, original fresh password session, issuer origin,
+  same-browser CSRF and a native request key are required. Success invalidates
+  every old-generation descendant; newly approved narrowed authorization is
+  needed to obtain new tokens. Existing `ConsentManager` implementations do not
+  acquire a new mandatory method.
 - `Service.DiscoveryOauth` returns OAuth-only RFC8414 metadata when explicitly
   selected by `Config.Discovery`. Trusted issuer-origin endpoint configuration
   and actual configured clients determine grants, authentication methods, S256,
@@ -98,6 +105,11 @@ Own-consent management similarly requires a matching native version implementing
 `ConsentManager`, its forward `ConsentMigrationSource`, and explicit
 `ConsentManagement` selection. Retire old/unselected accepting instances before
 activation; a new core alone cannot add these fences to an older adapter.
+Narrowing additionally requires native `ConsentNarrowing`, its configured kernel
+request-key owner/history and an explicit application permission for
+`identity.oauth-server.consent-update`. A request key is retry correlation,
+never authentication. See the native adoption and recovery requirements before
+enabling this separate profile.
 Client administration, OIDC,
 device flow, organization delegation, API-key exchange and
 resource-server verification/cache composition remain

@@ -62,6 +62,7 @@ There is no HTTP registration in this root module.
 | `identity.oauth-server.consent-get` | `Service.ConsentGet(context.Context, ConsentGetRequest) (ConsentGetResult, error)` | Current genuine password-session owner reads only its approved independent consent ID/version/client/scopes/time. Foreign, revoked or unavailable targets disclose no metadata. |
 | `identity.oauth-server.consent-list` | `Service.ConsentList(context.Context, ConsentListRequest) (ConsentListResult, error)` | Current genuine session reads 1..64 own approved consents per page with a tenant/user/limit-bound opaque cursor. Pages use stable ID keyset order, not cross-request snapshot isolation. |
 | `identity.oauth-server.consent-delete` | `Service.ConsentDelete(context.Context, ConsentDeleteRequest) (ConsentDeleteResult, error)` | Exact own consent/version, fresh current password session, issuer Origin and same-browser CSRF. Atomic consent-root withdrawal returns Deleted plus original Completion metadata, not unbounded grant IDs or bearer material. |
+| `identity.oauth-server.consent-update` | `Service.ConsentUpdate(context.Context, ConsentUpdateRequest) (ConsentUpdateResult, error)` with optional `ConsentUpdater` | Exact own consent/version/client/version/resource, original fresh password session, issuer Origin, same-browser CSRF and native request key. Only a nonempty strict approved-scope subset may advance the same root's version/generation. Updated plus Completion contains no credential. |
 | `identity.oauth-server.discovery-oauth` | `Service.DiscoveryOauth(context.Context, DiscoveryOauthRequest) (DiscoveryOauthResult, error)` | Public read-only OAuth metadata when explicitly selected; no request-supplied issuer, host, client, tenant or capability override. |
 
 ### Optional authorization-server discovery
@@ -157,6 +158,26 @@ browser, authenticates retained preparation, and reconciles only original
 durability metadata. It cannot withdraw again or redeliver credentials. Delete
 repetition of the exact revoked version returns that same historical metadata;
 a stale version cannot withdraw later reconfirmed consent.
+
+Separately selected native `ConsentNarrowing` adds the optional `ConsentUpdater`
+without changing `ConsentManager`. Update requires the same sensitive original
+proof/CSRF fences as delete plus an actual kernel prepared request key. Client
+ID/version and resource are exact preconditions, not editable fields. Empty,
+unchanged, expanded or foreign scope sets deny. A strict subset advances the
+same root's version and generation; all old-generation code/access/refresh and
+UserInfo authority denies, even if a particular token already had fewer scopes.
+Only a new explicit authorization can issue narrowed descendants.
+
+The existing kernel request-preparation owner freezes the original random
+command, session-bound intent and encrypted input. Same-key changed intent
+conflicts; same-key retry or original update recovery never increments again or
+returns a token. Key possession alone authenticates nothing. Recovery supplies
+the original update operation/command/consent/client/tenant and current original
+browser and reconciles only metadata. Install the consent and kernel
+request-preparation histories and configure actual request-key/risk owners before
+opting in; retain the original configuration/keys for uncertain completion.
+This finite scope-narrowing profile does not add arbitrary claims/audience
+editing, client administration or transport routes.
 
 `AuthorizationRequest` and `TokenRequest` are parsed before credential work.
 Every parameter is unique and grant-discriminated; missing required fields,

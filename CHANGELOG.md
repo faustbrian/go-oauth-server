@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add optional authenticated own-consent strict scope narrowing with exact
+  consent/client versions, immutable resource, original sensitive-session
+  freshness, same-browser CSRF and native request-key custody. Existing
+  `ConsentManager` implementations remain source-compatible; use a matching
+  explicitly selected native adapter for durable generation invalidation and
+  metadata-only retry/recovery. Empty, unchanged and expanding sets deny.
+
 - Carry optional native identifier custody and its original validity deadline
   for explicitly selected consented email UserInfo, without adding claim
   semantics to OAuth core or changing default openid-only composition.

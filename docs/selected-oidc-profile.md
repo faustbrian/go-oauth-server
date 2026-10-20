@@ -1,4 +1,4 @@
-# Selected public and single-host pairwise OIDC code profile
+# Selected public and registered pairwise OIDC code profile
 
 This finite M31 RP consumer is not full M31 or unit verification. Existing
 OAuth-only configuration remains available without the child.
@@ -44,12 +44,55 @@ credential/owner withdrawal and grant/access revocation deny UserInfo.
 The selected pairwise profile implements OIDC Core 1.0 errata 2 section 8.1's
 registered redirect-host sector. `NewOIDCSubjectRegistration("pairwise", host,
 policyID, policyVersion)` freezes one exact lowercase ASCII DNS host matching
-every registered redirect. No sector URI is fetched or accepted. Multi-host
-`sector_identifier_uri` registration remains required broader work, not silently
-approximated. Registration is independent of public/confidential client
+every registered redirect. Alternatively, the HTTPS sector URI profile below
+supports multiple registered redirect hosts. Registration is independent of public/confidential client
 authentication. Nil registration preserves the original public subject and
 client/grant/preparation framing; explicit registration includes all four policy
 dimensions in validated JSON and client fingerprints.
+
+### HTTPS sector identifier URI registration
+
+[OIDC Core 1.0 errata2 section8.1](https://openid.net/specs/openid-connect-core-1_0.html#PairwiseAlg)
+uses the sector URI's host, not its path or the redirect hosts, as the sector.
+[Registration 1.0 errata2 section5](https://openid.net/specs/openid-connect-registration-1_0.html#SectorIdentifierValidation)
+requires an actual HTTPS fetch at registration and inclusion of every registered
+redirect in the JSON array. A document may include other clients' redirects.
+
+Construct root `NewSectorValidator` with the exact issuer/environment,
+1..64 trusted `SectorEndpoint` URIs and a 1ms..5s total fetch budget. Call
+`Validate(ctx, SectorRegistrationRequest{Client: client, URI: exactURI,
+PolicyID: policyID, PolicyVersion: policyVersion})` before store/core admission.
+Assign the result's `SubjectRegistration()` to that client and the opaque result
+to core `Config.SectorRegistrations`. Every URI-backed client needs exactly one
+matching proof; zero, foreign, stale client version, changed URI/policy/redirect
+set and unused/duplicate proofs deny configuration. No caller-writable verified
+flag or caller HTTP callback supplies this authority.
+
+Default DNS egress admits only public, nonspecial addresses; all answers must
+pass, and dialing uses checked literal addresses to prevent rebinding. Optional
+trusted `Addresses` pins replace DNS entirely and allow only those exact
+destinations, including explicitly trusted private deployment endpoints. Never
+derive pins or the endpoint allowlist from a protocol request. TLS authenticates
+the original URI host even with pins. `RootCAs` selects the whole trust pool
+(nil uses system roots), not an insecure certificate bypass. Configuration is
+copied. HTTP proxies, redirects, cookies, credentials and compression are not
+used. Responses require HTTP200/application-json, <=8KiB headers and <=64KiB
+body, a flat array of 1..64 unique valid HTTPS callbacks of <=2048 bytes each.
+Nested, duplicate, missing, malformed, oversized or downgrade data denies.
+Caller cancellation is preserved; other remote/TLS/budget failures are redacted
+`ErrAccessDenied` and produce no registration authority.
+
+The comparable stored policy adds URI and a commitment to the exact sorted
+registered redirect set. Legacy four-field JSON remains byte-compatible.
+Stored URI JSON is structural identity, not retrieval evidence: reconstruct
+opaque evidence with another real fetch when loading configuration. Unchanged
+revalidation keeps the same client fingerprint and durable subject namespace.
+Do not bump policy identity merely to re-fetch. Changed registration requires
+revalidation and the existing client-version deployment/retirement discipline.
+The spec requires registration-time validation, not periodic network renewal.
+There is no transient proof TTL, background fetch, runtime availability
+dependency or grant-stranding document-expiry state machine. Account/grant/
+consent/revocation checks remain the existing uncached current-authority owners.
 
 Append `PairwiseMigrationSource` at a fresh allocated version over the exact
 existing migration history before enabling pairwise clients. Preserve the
@@ -117,7 +160,7 @@ References: OpenID Connect Core 1.0 and Discovery 1.0, errata set 2. Only actual
 code/query/S256/ES256, public subjects, selected pairwise policy and configured
 client methods are advertised.
 Core 3.1.3.6 does not require at_hash/c_hash for this token-endpoint-only ID token.
-Multi-host sector URI registration, prompt/max_age, other identity scopes,
+Prompt/max_age, other identity scopes,
 implicit/hybrid, request objects,
 logout, private session exchange, shared-issuer access-JWT/delegation and
 HTTP/reference integration remain open/unadvertised.
@@ -131,7 +174,7 @@ contract. Acceptance covers real password-session/consent, authority withdrawal,
 rotation/restart overlap, revocation, native COMMIT faults and one-use contention.
 This is not official conformance-suite or complete provider qualification.
 
-These pairwise additions need new actual published-source pins before
+These sector-URI additions need new actual published-source pins before
 clean-consumer/release qualification. Workspace evidence does not prove their
-later public dependency adoption; the earlier public-subject consumer remains
-a separately qualified outcome.
+later public dependency adoption; the earlier public and single-host pairwise
+consumers remain separately qualified outcomes.

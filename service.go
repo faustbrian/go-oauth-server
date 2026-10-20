@@ -41,6 +41,10 @@ type Config struct {
 	// persistence. It grants no semantics until WithOIDC composes the child.
 	OIDCScopes ScopeCatalog
 	Clients    []Client
+	// SectorRegistrations supplies opaque registration-time HTTPS provenance
+	// for URI-backed pairwise clients. Zero preserves public/single-host policy.
+	// Stored client JSON alone cannot establish multi-host registration authority.
+	SectorRegistrations []ValidatedSectorRegistration
 	// ClientSecrets contains exactly one verifier per confidential client ID and
 	// version, none for public clients. See NewClientSecretVerifier's startup policy.
 	ClientSecrets []ClientSecretVerifier
@@ -97,6 +101,10 @@ func (c Config) Validated() (Config, error) {
 		}
 		c.Clients[i] = owned
 	}
+	if err := validateSectorRegistrations(c); err != nil {
+		return Config{}, err
+	}
+	c.SectorRegistrations = slices.Clone(c.SectorRegistrations)
 	if err := validateClientSecrets(c.Clients, c.ClientSecrets); err != nil {
 		return Config{}, err
 	}

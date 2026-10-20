@@ -2,6 +2,7 @@ package oauthserver
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -37,12 +38,14 @@ func (OIDCSubjectKeyRegistration) MarshalText() ([]byte, error) { return nil, Er
 type OIDCSubjectRegistration struct {
 	kind, sector, policy string
 	version              uint64
+	uri                  string
+	redirects            [32]byte
 }
 
 // NewOIDCSubjectRegistration selects public or the registered-single-host
 // pairwise profile. Policy IDs use the core identifier grammar. Pairwise sector
 // hosts are exact lowercase ASCII DNS names (no port, URI or normalization).
-// Multi-host sector_identifier_uri registration is not selected. This pure
+// Multi-host registration is obtained from SectorValidator instead. This pure
 // constructor checks syntax, not the existence of issuer policy/key custody.
 func NewOIDCSubjectRegistration(kind, sector, policy string, version uint64) (OIDCSubjectRegistration, error) {
 	if !identifier(policy) || version == 0 || kind != "public" && kind != "pairwise" || kind == "public" && sector != "" || kind == "pairwise" && !sectorHost(sector) {
@@ -57,6 +60,11 @@ func (p OIDCSubjectRegistration) SubjectType() string { return p.kind }
 // SectorHost returns the exact registered host, empty for public and zero.
 func (p OIDCSubjectRegistration) SectorHost() string { return p.sector }
 
+// SectorIdentifierURI returns the exact HTTPS registration URI, empty for the
+// original public/single-host profiles. The policy is not retrieval authority;
+// Config additionally requires its opaque ValidatedSectorRegistration.
+func (p OIDCSubjectRegistration) SectorIdentifierURI() string { return p.uri }
+
 // PolicyID returns the immutable subject-policy selector, empty for zero.
 func (p OIDCSubjectRegistration) PolicyID() string { return p.policy }
 
@@ -65,20 +73,26 @@ func (p OIDCSubjectRegistration) PolicyVersion() uint64 { return p.version }
 
 // MarshalJSON preserves the complete nonsecret policy identity. Zero is invalid.
 func (p OIDCSubjectRegistration) MarshalJSON() ([]byte, error) {
-	if _, err := NewOIDCSubjectRegistration(p.kind, p.sector, p.policy, p.version); err != nil {
-		return nil, err
+	if !p.valid() {
+		return nil, ErrInvalidRequest
+	}
+	digest := ""
+	if p.uri != "" {
+		digest = hex.EncodeToString(p.redirects[:])
 	}
 	return json.Marshal(struct {
 		Type, SectorHost, PolicyID string
 		PolicyVersion              uint64
-	}{p.kind, p.sector, p.policy, p.version})
+		SectorIdentifierURI        string `json:",omitempty"`
+		RedirectSet                string `json:",omitempty"`
+	}{p.kind, p.sector, p.policy, p.version, p.uri, digest})
 }
 
 // UnmarshalJSON restores only a complete validated closed object; duplicate,
 // unknown or missing fields deny without changing the receiver. Callers own the
 // receiver and must not mutate it concurrently with use by another goroutine.
 func (p *OIDCSubjectRegistration) UnmarshalJSON(wire []byte) error {
-	if p == nil || len(wire) > 1024 {
+	if p == nil || len(wire) > 4096 {
 		return ErrInvalidRequest
 	}
 	d := json.NewDecoder(bytes.NewReader(wire))
@@ -86,13 +100,13 @@ func (p *OIDCSubjectRegistration) UnmarshalJSON(wire []byte) error {
 	if err != nil || start != json.Delim('{') {
 		return ErrInvalidRequest
 	}
-	var kind, sector, policy string
+	var kind, sector, policy, uri, digest string
 	var version uint64
 	seen := make(map[string]bool, 4)
 	for d.More() {
 		token, err := d.Token()
 		name, ok := token.(string)
-		if err != nil || !ok || seen[name] || len(seen) == 4 {
+		if err != nil || !ok || seen[name] || len(seen) == 6 {
 			return ErrInvalidRequest
 		}
 		seen[name] = true
@@ -105,6 +119,10 @@ func (p *OIDCSubjectRegistration) UnmarshalJSON(wire []byte) error {
 			err = d.Decode(&policy)
 		case "PolicyVersion":
 			err = d.Decode(&version)
+		case "SectorIdentifierURI":
+			err = d.Decode(&uri)
+		case "RedirectSet":
+			err = d.Decode(&digest)
 		default:
 			return ErrInvalidRequest
 		}
@@ -113,7 +131,7 @@ func (p *OIDCSubjectRegistration) UnmarshalJSON(wire []byte) error {
 		}
 	}
 	end, err := d.Token()
-	if err != nil || end != json.Delim('}') || len(seen) != 4 {
+	if err != nil || end != json.Delim('}') || !seen["Type"] || !seen["SectorHost"] || !seen["PolicyID"] || !seen["PolicyVersion"] || len(seen) != 4 && len(seen) != 6 {
 		return ErrInvalidRequest
 	}
 	if _, err := d.Token(); err != io.EOF {
@@ -123,8 +141,33 @@ func (p *OIDCSubjectRegistration) UnmarshalJSON(wire []byte) error {
 	if err != nil {
 		return err
 	}
+	if len(seen) == 6 {
+		decoded, err := hex.DecodeString(digest)
+		if err != nil || len(decoded) != 32 || digest != strings.ToLower(digest) || uri == "" {
+			return ErrInvalidRequest
+		}
+		owned.uri = uri
+		copy(owned.redirects[:], decoded)
+		if !owned.valid() {
+			return ErrInvalidRequest
+		}
+	}
+	if owned.uri == "" && len(wire) > 1024 {
+		return ErrInvalidRequest
+	}
 	*p = owned
 	return nil
+}
+
+func (p OIDCSubjectRegistration) valid() bool {
+	if _, err := NewOIDCSubjectRegistration(p.kind, p.sector, p.policy, p.version); err != nil {
+		return false
+	}
+	if p.uri == "" {
+		return p.redirects == ([32]byte{})
+	}
+	u, err := sectorURI(p.uri)
+	return err == nil && p.kind == "pairwise" && u.Hostname() == p.sector && p.redirects != ([32]byte{})
 }
 
 func sectorHost(host string) bool {
@@ -150,10 +193,13 @@ func validSubjectRegistration(c Client) bool {
 		return true
 	}
 	p := *c.SubjectRegistration
-	if _, err := NewOIDCSubjectRegistration(p.kind, p.sector, p.policy, p.version); err != nil || c.Workload != nil {
+	if !p.valid() || c.Workload != nil {
 		return false
 	}
 	if p.kind == "pairwise" {
+		if p.uri != "" {
+			return p.redirects == sectorRedirectDigest(c.Redirects)
+		}
 		// OIDC Core 1.0 errata 2 section 8.1: without a separately validated
 		// sector_identifier_uri, every registered redirect must share its host.
 		for _, redirect := range c.Redirects {

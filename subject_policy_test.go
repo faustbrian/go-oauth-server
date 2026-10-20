@@ -79,6 +79,7 @@ func TestOIDCSubjectRegistrationIsIndependentAndOwned(t *testing.T) {
 
 func FuzzOIDCSubjectRegistrationClosedRestore(f *testing.F) {
 	f.Add([]byte(`{"Type":"pairwise","SectorHost":"client.example","PolicyID":"subjects","PolicyVersion":1}`))
+	f.Add([]byte(`{"Type":"pairwise","SectorHost":"sector.example","PolicyID":"subjects","PolicyVersion":1,"SectorIdentifierURI":"https://sector.example/sector.json","RedirectSet":"1111111111111111111111111111111111111111111111111111111111111111"}`))
 	f.Add([]byte(`{"Type":"public","Type":"pairwise"}`))
 	f.Add([]byte(`null`))
 	f.Fuzz(func(t *testing.T, wire []byte) {
@@ -92,8 +93,13 @@ func FuzzOIDCSubjectRegistrationClosedRestore(f *testing.F) {
 			return
 		}
 		validated, err := oauth.NewOIDCSubjectRegistration(restored.SubjectType(), restored.SectorHost(), restored.PolicyID(), restored.PolicyVersion())
-		if err != nil || validated != restored || len(wire) > 1024 {
+		if restored.SectorIdentifierURI() == "" && (err != nil || validated != restored || len(wire) > 1024) {
 			t.Fatal("closed restore admitted invalid/unbounded policy")
+		}
+		encoded, err := json.Marshal(restored)
+		var again oauth.OIDCSubjectRegistration
+		if err != nil || json.Unmarshal(encoded, &again) != nil || again != restored || len(wire) > 4096 {
+			t.Fatal("stored URI policy lost closed identity or exceeded its bound")
 		}
 	})
 }

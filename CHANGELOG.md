@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Validate explicitly allowed HTTPS sector identifier URIs against actual
+  registered redirect sets, enabling multi-host pairwise clients only with
+  opaque issuer/environment/client/version-bound fetch provenance. Keep legacy
+  public/single-host JSON and fingerprints unchanged; reconstruct URI evidence
+  by fetching before admitting configuration, without runtime network renewal.
+
 - Add optional immutable OIDC subject registration independently of client
   authentication type, with exact single-sector-host validation and trusted
   first-binding/native-claim projections. Nil policy preserves legacy client

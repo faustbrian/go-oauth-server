@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Adopt core-validated HTTPS multi-host sector policy through existing client
+  admission, fingerprints and durable bindings. Missing or changed registration
+  provenance denies before execution. No new migration or document-expiry
+  lifecycle is required; existing public/single-host grants remain unchanged.
+
 - Add forward pairwise subject/key-custody history and atomic stable bindings
   in existing authenticated Authorize Work. Exact registered sector, policy and
   original grant association fence ID preparation and UserInfo. Stage/activate,

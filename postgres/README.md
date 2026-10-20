@@ -18,6 +18,14 @@ key-version tombstones. These are trusted deployment operations, not client CRUD
 No migration or IO runs in constructors. See the linked profile for activation,
 overlap, fail-closed stale-instance behavior and wrapping-key removal boundaries.
 
+Multi-host clients select root `SectorValidator`'s actual HTTPS-validated
+registration and its opaque `Config.Protocol.SectorRegistrations` evidence
+before native construction. The URI host is the sector. Missing/foreign/stale
+client version or changed URI/redirect set denies admission; loading stored
+policy requires another actual validation fetch. Existing bindings and migration
+bytes are reused, with no runtime document TTL or network renewal. See the
+selected OIDC profile for explicit egress pins, TLS trust and document limits.
+
 `NewService(pool, Config, keys)` composes the native primary session reader,
 OAuth participant and root protocol. `NewStore` exposes that same participant
 for explicit composition and metadata-only `Recover`; applications do not

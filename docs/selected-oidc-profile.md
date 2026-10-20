@@ -68,8 +68,9 @@ matching proof; zero, foreign, stale client version, changed URI/policy/redirect
 set and unused/duplicate proofs deny configuration. No caller-writable verified
 flag or caller HTTP callback supplies this authority.
 
-Default DNS egress admits only public, nonspecial addresses; all answers must
-pass, and dialing uses checked literal addresses to prevent rebinding. Optional
+Default DNS egress admits only public addresses outside special-purpose ranges;
+all answers must pass, and dialing uses checked literal addresses to prevent
+rebinding. Optional
 trusted `Addresses` pins replace DNS entirely and allow only those exact
 destinations, including explicitly trusted private deployment endpoints. Never
 derive pins or the endpoint allowlist from a protocol request. TLS authenticates

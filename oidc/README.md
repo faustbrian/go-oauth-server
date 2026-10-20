@@ -1,6 +1,6 @@
 # Selected OIDC provider extension
 
-This experimental module implements public and registered-single-host pairwise
+This experimental module implements public and registered pairwise
 subjects for the finite ES256 authorization-code/S256 profile. It is not complete
 OIDC qualification.
 
@@ -31,9 +31,12 @@ responses and no positive JWKS cache across activation.
 ## Optional pairwise policy
 
 Register `Client.SubjectRegistration` with `NewOIDCSubjectRegistration` and an
-immutable policy ID/version. Its sector host must match **every** registered
-redirect host; `Client.Public` still means client authentication, not subject type.
-URI-based/multi-host sector registration is unavailable and fails closed.
+immutable policy ID/version. Without a sector URI its host must match **every**
+registered redirect host. For multi-host redirects, root `SectorValidator`
+fetches the exact registered HTTPS URI and checks the actual redirect set;
+select its policy and opaque evidence in root configuration before constructing
+the native store/core. URI host becomes the sector, not individual redirect
+hosts. `Client.Public` still means authentication, not subject type.
 
 Supply dedicated 32-byte HMAC material encrypted with the existing envelope
 owner. `NewSubjectPolicy` authenticates/copies up to eight retained envelopes;
@@ -57,7 +60,7 @@ Constructed services/policies retain plaintext HMAC material only behind opaque
 closures. Exported `Config.SubjectKey` is still explicit sensitive caller input:
 do not log or nest-format caller-owned configuration or plaintext buffers.
 
-See [selected profile](../docs/selected-oidc-profile.md). Sector-URI registration, prompt/max_age,
+See [selected profile](../docs/selected-oidc-profile.md). Prompt/max_age,
 profile/email/address/phone/offline scopes, logout, private session JWT exchange,
 shared-issuer access-JWT/delegation, HTTP/reference integration and complete
 conformance/release qualification remain open, unadvertised and unstubbed.

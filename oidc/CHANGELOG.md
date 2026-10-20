@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Accept the core's HTTPS-validated multi-host sector registration through the
+  existing subject-policy and original native binding, without a new child
+  fetcher, policy namespace or derivation algorithm. Configure fetched core
+  provenance before composition; URI host, not redirect host, selects sector.
+
 - Add opt-in registered-single-host pairwise subjects using authenticated,
   versioned dedicated HMAC envelopes and native stable grant bindings. Key
   rotation/rewrap preserves existing RP identity and same-sub UserInfo; absent

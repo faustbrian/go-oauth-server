@@ -39,6 +39,9 @@ func (p *phase) mutate(ctx context.Context, w kernel.Work) error {
 		if n != 1 {
 			return identity.ConflictError{}
 		}
+		if err := p.bindSubject(ctx, w); err != nil {
+			return err
+		}
 	} else if i.Transition == createWorkload {
 		workload, err := json.Marshal(g.Workload)
 		if err != nil {

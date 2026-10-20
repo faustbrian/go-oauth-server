@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add forward pairwise subject/key-custody history and atomic stable bindings
+  in existing authenticated Authorize Work. Exact registered sector, policy and
+  original grant association fence ID preparation and UserInfo. Stage/activate,
+  encrypted readback, same-material rewrap and inactive retirement survive
+  restart without changing existing subjects; install before opting in. Nil
+  subject policy leaves original public/OAuth framing unchanged.
+
 - Add selected OIDC preparation to the existing consent/code/S256 transaction
   and subject-bound current-authority UserInfo. Install forward signing history
   before selection: publication, active kid, greatest reserved expiry and

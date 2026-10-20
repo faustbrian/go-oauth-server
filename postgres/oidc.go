@@ -75,5 +75,9 @@ func (s *Store) UserInfo(ctx context.Context, c oauth.UserInfoCommand) (out oaut
 	if err != nil {
 		return out, oauth.ErrAccessDenied
 	}
-	return oauth.OIDCClaimsInput{Issuer: s.config.Protocol.Issuer, TenantID: a.Grant.Tenant, UserID: a.Grant.User, ClientID: client.ID, Nonce: a.Payload.Request.Nonce, ExpectedSubject: a.Payload.Subject, Scopes: slices.Clone(a.Payload.Scopes), IssuedAt: a.CreatedAt, ExpiresAt: a.ExpiresAt, AuthenticatedAt: bindings.Authentication.Proof.IssuedAt, UserInfo: true}, nil
+	registration, boundSubject, err := subjectClaims(client, a.Grant)
+	if err != nil || boundSubject != "" && boundSubject != a.Payload.Subject {
+		return out, oauth.ErrAccessDenied
+	}
+	return oauth.OIDCClaimsInput{Issuer: s.config.Protocol.Issuer, Environment: s.config.Protocol.Environment, TenantID: a.Grant.Tenant, UserID: a.Grant.User, ClientID: client.ID, Nonce: a.Payload.Request.Nonce, ExpectedSubject: a.Payload.Subject, Scopes: slices.Clone(a.Payload.Scopes), IssuedAt: a.CreatedAt, ExpiresAt: a.ExpiresAt, AuthenticatedAt: bindings.Authentication.Proof.IssuedAt, UserInfo: true, SubjectRegistration: registration, BoundSubject: boundSubject}, nil
 }

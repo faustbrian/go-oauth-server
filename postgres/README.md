@@ -7,6 +7,17 @@ The optional [selected OIDC profile](../docs/selected-oidc-profile.md) adds nati
 encrypted ID-token preparation, subject-bound UserInfo and public signing-key
 lifecycle. Install SigningMigrationSource before enabling it; existing OAuth
 history and current identity/session/grant owners are retained.
+Registered pairwise clients additionally require `PairwiseMigrationSource`
+appended at a fresh version. Native `InstallSubjectKey` authenticates/stages
+encrypted HMAC custody; `ActivateSubjectKey` selects new writers. Authenticated
+Authorize Work atomically resolves the stable sector binding before any ID-token
+preparation. Original grants keep that binding through code/refresh/UserInfo.
+`SubjectKeyRegistrations` reconstructs retained encrypted custody/current writer;
+same-material rewrap and `RetireSubjectKey` preserve all subjects and immutable
+key-version tombstones. These are trusted deployment operations, not client CRUD.
+No migration or IO runs in constructors. See the linked profile for activation,
+overlap, fail-closed stale-instance behavior and wrapping-key removal boundaries.
+
 `NewService(pool, Config, keys)` composes the native primary session reader,
 OAuth participant and root protocol. `NewStore` exposes that same participant
 for explicit composition and metadata-only `Recover`; applications do not

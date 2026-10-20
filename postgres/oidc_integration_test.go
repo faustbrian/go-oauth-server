@@ -324,11 +324,21 @@ func TestNativeOIDCIndependentRelyingPartyAndCurrentAuthority(t *testing.T) {
 }
 
 func TestNativeOIDCUnknownRollbackAndContentionNeverRedeliver(t *testing.T) {
+	nativeOIDCTokenCommitModes(t, oidcFixture)
+}
+
+func TestNativeOIDCPairwiseTokenUnknownRollbackAndContentionNeverRedeliver(t *testing.T) {
+	nativeOIDCTokenCommitModes(t, pairwiseFixture)
+}
+
+type oidcFixtureBuilder func(*testing.T, *authenticatedPasswordFixture) (*oauth.Service, *op.Service, *oauth.SigningService, *oauthpostgres.Store, *ecdsa.PrivateKey)
+
+func nativeOIDCTokenCommitModes(t *testing.T, fixture oidcFixtureBuilder) {
 	for _, mode := range []string{"unknown", "rollback", "contention"} {
 		t.Run(mode, func(t *testing.T) {
 			fault := &oauthCommitFault{before: mode == "rollback"}
 			f := passwordFixture(t, fault)
-			service, _, _, store, _ := oidcFixture(t, &f)
+			service, _, _, store, _ := fixture(t, &f)
 			code, verifier := oidcCode(t, f, service, "transaction-nonce")
 			request := oauth.TokenRequest{GrantType: oauth.AuthorizationCodeGrant, ClientID: "public-web", Code: code, CodeVerifier: verifier, RedirectURI: "https://client.example/callback", Network: "192.0.2.1"}
 			if mode == "contention" {
@@ -384,18 +394,32 @@ func TestNativeOIDCUnknownRollbackAndContentionNeverRedeliver(t *testing.T) {
 			if mode != "rollback" && err == nil {
 				t.Fatal("spent code replay accepted")
 			}
+			if f.oauth.Protocol.Clients[0].SubjectRegistration != nil {
+				var bindings int
+				if err := f.pool.Raw().QueryRow(f.ctx, `SELECT count(*) FROM oauth_store.subject_bindings`).Scan(&bindings); err != nil || bindings != 1 {
+					t.Fatal("token retry/fault changed the original durable subject binding", err)
+				}
+			}
 		})
 	}
 }
 
 func TestNativeOIDCUserInfoDeniesCurrentCredentialAndSubjectMismatch(t *testing.T) {
-	for _, mode := range []string{"credential", "subject", "consent"} {
+	nativeOIDCCurrentAuthority(t, oidcFixture, []string{"credential", "subject", "consent"})
+}
+
+func TestNativeOIDCPairwiseUserInfoDeniesCurrentAuthority(t *testing.T) {
+	nativeOIDCCurrentAuthority(t, pairwiseFixture, []string{"credential", "subject", "consent", "grant"})
+}
+
+func nativeOIDCCurrentAuthority(t *testing.T, fixture oidcFixtureBuilder, modes []string) {
+	for _, mode := range modes {
 		t.Run(mode, func(t *testing.T) {
 			f := passwordFixtureWithChange(t, mode == "credential")
 			if mode == "consent" {
 				enableConsentManagement(t, &f)
 			}
-			service, child, _, _, _ := oidcFixture(t, &f)
+			service, child, _, _, _ := fixture(t, &f)
 			code, proof := oidcCode(t, f, service, "authority-nonce")
 			issued, err := service.Token(f.ctx, oauth.TokenRequest{GrantType: oauth.AuthorizationCodeGrant, ClientID: "public-web", Code: code, CodeVerifier: proof, RedirectURI: "https://client.example/callback", Network: "192.0.2.1"})
 			if err != nil {
@@ -420,6 +444,14 @@ func TestNativeOIDCUserInfoDeniesCurrentCredentialAndSubjectMismatch(t *testing.
 				removed, err := service.ConsentDelete(f.ctx, oauth.ConsentDeleteRequest{Consent: ownConsentCommand(t, f, oauth.ConsentRemove, consent.ID(), consent.Version())})
 				if err != nil || !removed.Deleted {
 					t.Fatal("native OIDC consent withdrawal failed", err)
+				}
+			} else if mode == "grant" {
+				refresh, err := issued.RefreshToken.Reveal()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := service.Revoke(f.ctx, oauth.RevokeRequest{ClientID: "public-web", Token: refresh, Hint: oauth.TokenRefresh, Network: "192.0.2.1"}); err != nil {
+					t.Fatal("native pairwise grant revocation failed", err)
 				}
 			} else {
 				if _, err := f.pool.Raw().Exec(f.ctx, `UPDATE oauth_store.artifacts SET payload=jsonb_set(payload,'{Subject}','"foreign"'::jsonb) WHERE kind=3`); err != nil {

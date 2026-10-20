@@ -56,6 +56,7 @@ type grantRecord struct {
 	Workload             *workloadSource `json:",omitempty"`
 	ConsentID            string          `json:",omitempty"`
 	ConsentGeneration    uint64          `json:",omitempty"`
+	Subject              *subjectBinding `json:",omitempty"`
 }
 type artifactPayload struct {
 	Schema       uint32
@@ -92,7 +93,8 @@ type phaseInput struct {
 	Intent                      [32]byte
 	Network                     string
 	Consent                     consentMutation
-	Deletion                    *consentDeletion `json:",omitempty"`
+	Deletion                    *consentDeletion            `json:",omitempty"`
+	SubjectCandidate            *oauth.OIDCSubjectCandidate `json:",omitempty"`
 }
 
 type consentMutation struct {
@@ -247,6 +249,16 @@ func (s *Store) Authorize(ctx context.Context, c oauth.AuthorizationCommand) (oa
 	if err != nil || request.ClientID != client.ID || !slices.Contains(client.Redirects, request.RedirectURI) || request.Resource != client.Resource || !scopeSubset(request.Scopes, client.Scopes) || c.Session.ValidateAt(s.now()) != nil {
 		return oauth.AuthorizeResult{}, oauth.ErrAccessDenied
 	}
+	var subjectCandidate *oauth.OIDCSubjectCandidate
+	if pairwiseClient(client) && slices.Contains(request.Scopes, "openid") {
+		if !validSubjectProposal(client, c.SubjectCandidate) {
+			return oauth.AuthorizeResult{}, oauth.ErrAccessDenied
+		}
+		owned := *c.SubjectCandidate
+		subjectCandidate = &owned
+	} else if c.SubjectCandidate != nil {
+		return oauth.AuthorizeResult{}, oauth.ErrAccessDenied
+	}
 	bindings, err := c.Session.Session.Bindings()
 	if err != nil {
 		return oauth.AuthorizeResult{}, oauth.ErrAccessDenied
@@ -265,7 +277,7 @@ func (s *Store) Authorize(ctx context.Context, c oauth.AuthorizationCommand) (oa
 	// bearer authority; existing native recovery still authenticates its scope.
 	grant := grantRecord{ID: string(command), Tenant: bindings.TenantID, User: bindings.UserID, ClientID: client.ID, ClientVersion: client.Version, ClientFingerprint: clientFingerprint(client), Source: source, Scopes: slices.Clone(request.Scopes), Resource: request.Resource, CreatedAt: now, ExpiresAt: now.Add(s.config.Protocol.RefreshTTL)}
 	p := &phase{store: s, client: client, browser: c.Browser, observation: c.Session}
-	p.input = phaseInput{Schema: 1, Configuration: s.identity, Transition: createInteraction, Grant: grant, Request: request, Scopes: slices.Clone(request.Scopes), CreatedAt: now, ObservationUntil: c.Session.ValidUntil(), Intent: s.intent("authorize", string(command)), Network: c.Network}
+	p.input = phaseInput{Schema: 1, Configuration: s.identity, Transition: createInteraction, Grant: grant, Request: request, Scopes: slices.Clone(request.Scopes), CreatedAt: now, ObservationUntil: c.Session.ValidUntil(), Intent: s.intent("authorize", string(command)), Network: c.Network, SubjectCandidate: subjectCandidate}
 	p.bind(command, "identity.oauth-server.authorize", string(command))
 	result, err := p.execute(ctx)
 	if err != nil {
@@ -609,6 +621,14 @@ func (s *Store) lookup(ctx context.Context, wire string, client oauth.Client, ki
 			}
 			if _, err := fmt.Sscan(clientVersion, &artifact.Grant.ClientVersion); err != nil || artifact.Grant.ClientID != client.ID || artifact.Grant.ClientVersion != client.Version || artifact.Grant.ClientFingerprint != clientFingerprint(client) || artifact.Grant.Resource != client.Resource || artifact.Payload.Schema != 1 || !scopeSubset(artifact.Payload.Scopes, ceiling) {
 				return artifactRecord{}, oauth.ErrInvalidGrant
+			}
+			if pairwiseClient(client) && slices.Contains(artifact.Payload.Request.Scopes, "openid") {
+				if err := s.loadSubjectBinding(ctx, &artifact.Grant); err != nil {
+					return artifactRecord{}, err
+				}
+				if !bindingMatchesClient(artifact.Grant.Subject, client) {
+					return artifactRecord{}, oauth.ErrAccessDenied
+				}
 			}
 			if found != nil {
 				return artifactRecord{}, oauth.ErrUnavailable

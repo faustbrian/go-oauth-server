@@ -455,6 +455,9 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 			}
 		}
 	}
+	if err := p.checkSubjectBinding(ctx, w, final); err != nil {
+		return err
+	}
 	now, err := w.DatabaseTime(ctx)
 	if err != nil {
 		return err
@@ -770,11 +773,15 @@ func (p *phase) GenerateFeaturePreparation(ctx context.Context, c identity.Comma
 			if err != nil {
 				return nil, oauth.ErrAccessDenied
 			}
-			claims, err := p.oidc(ctx, oauth.OIDCClaimsInput{Issuer: p.store.config.Protocol.Issuer, TenantID: i.Grant.Tenant, UserID: i.Grant.User, ClientID: p.client.ID, Nonce: i.Request.Nonce, Scopes: slices.Clone(i.Scopes), IssuedAt: i.CreatedAt, ExpiresAt: out.Artifacts[0].ExpiresAt, AuthenticatedAt: bindings.Authentication.Proof.IssuedAt})
+			registration, boundSubject, err := subjectClaims(p.client, i.Grant)
 			if err != nil {
 				return nil, err
 			}
-			if !boundedText(claims.Subject, 128) || !boundedText(claims.SigningKeyID, 128) {
+			claims, err := p.oidc(ctx, oauth.OIDCClaimsInput{Issuer: p.store.config.Protocol.Issuer, Environment: p.store.config.Protocol.Environment, TenantID: i.Grant.Tenant, UserID: i.Grant.User, ClientID: p.client.ID, Nonce: i.Request.Nonce, Scopes: slices.Clone(i.Scopes), IssuedAt: i.CreatedAt, ExpiresAt: out.Artifacts[0].ExpiresAt, AuthenticatedAt: bindings.Authentication.Proof.IssuedAt, SubjectRegistration: registration, BoundSubject: boundSubject})
+			if err != nil {
+				return nil, err
+			}
+			if !boundedText(claims.Subject, 128) || !boundedText(claims.SigningKeyID, 128) || boundSubject != "" && claims.Subject != boundSubject {
 				return nil, oauth.ErrUnavailable
 			}
 			out.IDToken, err = claims.IDToken.Reveal()

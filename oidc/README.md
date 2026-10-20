@@ -60,7 +60,14 @@ Constructed services/policies retain plaintext HMAC material only behind opaque
 closures. Exported `Config.SubjectKey` is still explicit sensitive caller input:
 do not log or nest-format caller-owned configuration or plaintext buffers.
 
-See [selected profile](../docs/selected-oidc-profile.md). Prompt/max_age,
+Selected `prompt=login` and optional `max_age` use the original native
+authorization continuation. `nil` age is absent; explicit zero requires a new
+password authentication. Retain the opaque continuation while signing in, then
+submit it with the new current session and its synchronizer. A timestamp or
+refreshed old session is not proof; the native owner fences both sources and
+the child evaluates freshness. See the [selected profile](../docs/selected-oidc-profile.md#original-authorization-and-fresh-login).
+
+Other prompt variants,
 profile/email/address/phone/offline scopes, logout, private session JWT exchange,
 shared-issuer access-JWT/delegation, HTTP/reference integration and complete
 conformance/release qualification remain open, unadvertised and unstubbed.

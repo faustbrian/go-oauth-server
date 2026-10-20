@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Evaluate selected login/maximum-authentication-age policy against genuine
+  session custody, including explicit zero and an exclusive positive-age
+  deadline. New password authentication completes the original native flow;
+  signed `auth_time` comes from its actual adopted session-owner proof.
+
 - Accept the core's HTTPS-validated multi-host sector registration through the
   existing subject-policy and original native binding, without a new child
   fetcher, policy namespace or derivation algorithm. Configure fetched core

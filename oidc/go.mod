@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/faustbrian/go-identity v0.0.0-20261016003032-9785b1c5a551
-	github.com/faustbrian/go-oauth-server v0.0.0-20261020082207-960e14308e19
+	github.com/faustbrian/go-oauth-server v0.0.0-20261020110515-17b853623f00
 	github.com/faustbrian/go-secret-envelope/v2 v2.0.1
 )
 

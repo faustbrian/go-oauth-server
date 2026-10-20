@@ -1,4 +1,4 @@
-// Package oidc supplies selected public and registered-single-host pairwise
+// Package oidc supplies selected public and registered pairwise
 // subjects for the ES256 authorization-code extension. Native OAuth, consent,
 // session and transaction authority remain in their existing owners. This is not
 // a complete OIDC provider profile.
@@ -128,8 +128,9 @@ func selected(scopes []string) bool {
 }
 
 // ValidateAuthorization admits only the code/S256 request already selected by
-// core and genuine session custody. It never creates a login or consent and
-// does not reinterpret supplied unsupported prompt/max_age/claims parameters.
+// core and genuine session custody. It projects selected login/max_age policy,
+// but never creates authentication, consent or a native continuation. Other
+// prompt variants and identity-claim scopes are unavailable.
 func (s *Service) ValidateAuthorization(ctx context.Context, in oauth.OIDCAuthorizationInput) (oauth.OIDCAuthorizationProjection, error) {
 	ctx, stop, err := s.bounded(ctx)
 	if err != nil {
@@ -143,6 +144,36 @@ func (s *Service) ValidateAuthorization(ctx context.Context, in oauth.OIDCAuthor
 		return oauth.OIDCAuthorizationProjection{}, err
 	}
 	out := oauth.OIDCAuthorizationProjection{Accepted: true}
+	if in.Request.Prompt != "" || in.Request.MaxAge != nil {
+		if in.Request.Prompt != "" && in.Request.Prompt != "login" {
+			return oauth.OIDCAuthorizationProjection{}, oauth.ErrInvalidRequest
+		}
+		bindings, err := in.Session.Session.Bindings()
+		if err != nil || bindings.Authentication.Proof.IssuedAt.After(s.config.Clock.Now()) {
+			return oauth.OIDCAuthorizationProjection{}, oauth.ErrAccessDenied
+		}
+		out.Authentication = oauth.OIDCAuthenticationCurrent
+		// Core3.1.2.1: max_age=0 is equivalent to prompt=login. A new
+		// issuance/refresh of the same authentication is not reauthentication.
+		if in.Request.Prompt == "login" || in.Request.MaxAge != nil && *in.Request.MaxAge == 0 {
+			fresh := false
+			if original := in.Reauthentication; original != nil {
+				before, err := original.OriginalSession.Bindings()
+				fresh = err == nil && before.UserID == bindings.UserID && before.TenantID == bindings.TenantID && before.SessionID != bindings.SessionID && before.Authentication.Proof.ID != bindings.Authentication.Proof.ID && !original.RequestedAt.IsZero() && bindings.Authentication.Proof.IssuedAt.After(original.RequestedAt)
+			}
+			if !fresh {
+				out.Authentication = oauth.OIDCAuthenticationFresh
+			}
+		}
+		if in.Request.MaxAge != nil && *in.Request.MaxAge > 0 {
+			until := bindings.Authentication.Proof.IssuedAt.Add(time.Duration(*in.Request.MaxAge) * time.Second)
+			if !s.config.Clock.Now().Before(until) {
+				out.Authentication = oauth.OIDCAuthenticationFresh
+			} else if out.Authentication == oauth.OIDCAuthenticationCurrent {
+				out.AuthenticationUntil = until
+			}
+		}
+	}
 	if in.Client.SubjectRegistration != nil {
 		client, err := oauth.ValidateClient(in.Client)
 		registration := in.Client.SubjectRegistration

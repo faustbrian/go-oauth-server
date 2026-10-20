@@ -46,27 +46,60 @@ func hasExtensionScope(scopes []string) bool {
 }
 
 type OIDCAuthorizationInput struct {
-	Request AuthorizationRequest
-	Session session.GetResult
+	Issuer      Issuer
+	Environment string
+	Client      Client
+	Request     AuthorizationRequest
+	Session     session.GetResult
 }
 
 func (OIDCAuthorizationInput) Format(f fmt.State, _ rune) {
 	_, _ = f.Write([]byte("oauthserver.OIDCAuthorizationInput(redacted)"))
 }
 
-type OIDCAuthorizationProjection struct{ Accepted bool }
+// OIDCSubjectCandidate is a trusted extension's first-binding proposal, not an
+// established subject or bearer authority. Native authenticated Authorize Work
+// resolves the durable binding atomically; an existing binding always wins.
+// KeyVersion identifies writer custody and is not part of subject namespace.
+type OIDCSubjectCandidate struct {
+	Registration  OIDCSubjectRegistration
+	Subject       string
+	KeyVersion    uint32
+	KeyCommitment [32]byte
+}
+
+func (OIDCSubjectCandidate) Format(f fmt.State, _ rune) {
+	_, _ = f.Write([]byte("oauthserver.OIDCSubjectCandidate(redacted)"))
+}
+
+type OIDCAuthorizationProjection struct {
+	Accepted         bool
+	SubjectCandidate *OIDCSubjectCandidate
+}
+
+func validSubjectCandidate(c Client, candidate *OIDCSubjectCandidate) bool {
+	if c.SubjectRegistration == nil || c.SubjectRegistration.SubjectType() != "pairwise" {
+		return candidate == nil
+	}
+	return candidate != nil && candidate.Registration == *c.SubjectRegistration && opaque32(candidate.Subject) && candidate.KeyVersion != 0 && candidate.KeyCommitment != ([32]byte{})
+}
 
 // OIDCClaimsInput is supplied only after native grant/primary-authority admission
 // by the adapter. It is not a caller-selected subject or a renewable proof.
 // ExpectedSubject is an immutable previous artifact projection for UserInfo.
 type OIDCClaimsInput struct {
 	Issuer                               Issuer
+	Environment                          string
 	TenantID                             identity.TenantID
 	UserID                               identity.UserID
 	ClientID, Nonce, ExpectedSubject     string
 	Scopes                               []string
 	IssuedAt, ExpiresAt, AuthenticatedAt time.Time
 	UserInfo                             bool
+	// SubjectRegistration and BoundSubject are the current registered policy
+	// and the original grant's durable native binding, never caller selectors.
+	SubjectRegistration *OIDCSubjectRegistration
+	BoundSubject        string
 }
 
 func (OIDCClaimsInput) Format(f fmt.State, _ rune) {
@@ -166,6 +199,9 @@ func (s *Service) UserInfoSource(ctx context.Context, r UserInfoRequest) (out OI
 		return OIDCClaimsInput{}, operationError(ctx, err)
 	}
 	if out.Issuer != s.config.Issuer || out.ClientID != c.ID || out.TenantID == "" || out.UserID == "" || out.ExpectedSubject == "" || !scopeSubset(out.Scopes, c.Scopes) || !out.UserInfo || !s.config.Clock.Now().Before(out.ExpiresAt) {
+		return OIDCClaimsInput{}, ErrAccessDenied
+	}
+	if c.SubjectRegistration != nil && (out.SubjectRegistration == nil || *out.SubjectRegistration != *c.SubjectRegistration || out.Environment != s.config.Environment) || c.SubjectRegistration == nil && out.SubjectRegistration != nil {
 		return OIDCClaimsInput{}, ErrAccessDenied
 	}
 	return out, nil

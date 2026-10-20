@@ -1,4 +1,4 @@
-# Selected public-subject OIDC code profile
+# Selected public and single-host pairwise OIDC code profile
 
 This finite M31 RP consumer is not full M31 or unit verification. Existing
 OAuth-only configuration remains available without the child.
@@ -39,6 +39,60 @@ authority read without positive caching, then the child compares the persisted
 grant/client subject. Browser logout keeps the existing approved-grant policy;
 credential/owner withdrawal and grant/access revocation deny UserInfo.
 
+## Optional registered pairwise subjects
+
+The selected pairwise profile implements OIDC Core 1.0 errata 2 section 8.1's
+registered redirect-host sector. `NewOIDCSubjectRegistration("pairwise", host,
+policyID, policyVersion)` freezes one exact lowercase ASCII DNS host matching
+every registered redirect. No sector URI is fetched or accepted. Multi-host
+`sector_identifier_uri` registration remains required broader work, not silently
+approximated. Registration is independent of public/confidential client
+authentication. Nil registration preserves the original public subject and
+client/grant/preparation framing; explicit registration includes all four policy
+dimensions in validated JSON and client fingerprints.
+
+Append `PairwiseMigrationSource` at a fresh allocated version over the exact
+existing migration history before enabling pairwise clients. Preserve the
+dedicated public-subject key. For pairwise custody use distinct 32-byte HMAC key
+material and secret-envelope/v2 binary envelopes. Associated data is exactly:
+`profile=golib.oidc.pairwise-key.v1`, configured `issuer`, `environment`,
+`policy_id`, decimal `policy_version` and decimal `key_version`.
+`oidc.NewSubjectPolicy` opens/copies 1..8 retained envelopes (each at most16KiB)
+under a five-second ceiling; construction activates no native capability.
+Select the immutable result in child `Config.SubjectPolicy`, authenticate/stage
+each `KeyRegistration` with native `InstallSubjectKey`, then explicitly
+`ActivateSubjectKey`. Missing/foreign/unselected/retired custody denies.
+
+Authenticated native Authorize Work atomically inserts a binding keyed by exact
+issuer/environment/tenant/sector/internal-user context and associates the grant
+before a consent code or ID token exists. Existing bindings win under contention;
+client ID, policy key version and current writer are not identity namespaces.
+HMAC-SHA256 uses `golib.oidc.pairwise-subject.v1` plus a NUL and four-byte
+big-endian length-framed issuer/environment/tenant/sector/user values. Subjects
+are base64url without padding. Neither raw internal IDs nor unrequested claims
+are exposed. Code, refresh and UserInfo require the original native association;
+missing associations never cause fresh derivation. Revocation retains bindings
+so a later genuine grant does not reassign RP identity.
+
+For rotation, stage a new key version, explicitly activate it, and reconstruct
+child policy with that active version. Stale instances cannot create new bindings
+under the old selection. Existing bound subjects remain unchanged, including
+across same-sector clients. `SubjectKeyRegistrations` returns retained encrypted
+custody and the actual selected writer for reconstruction. A same-version,
+same-material `InstallSubjectKey` may explicitly replace its authenticated
+envelope for rewrap; a different material commitment denies. Retire only an
+inactive version. Shared policy selection fencing prevents pending Work crossing
+activation/retirement; retired ciphertext is logically removed while the version
+tombstone and subjects remain. Already bound grants need no old HMAC material.
+This does **not** retire wrapping-provider keys: their removal still requires
+the envelope owner's proof that every retained ciphertext has been rewrapped.
+Changing subject-policy ID/version is not key rotation and does not authorize
+reassignment or automatic policy migration.
+
+Constructed child services/policies keep plaintext only in opaque HMAC closures;
+nested diagnostics cannot traverse the key bytes. Exported raw Config inputs
+remain explicitly sensitive caller-owned projections and must not be logged.
+
 ## Signing and failures
 
 The durable registry has 64 lifetime kid slots including terminal tombstones.
@@ -60,9 +114,11 @@ operations remain broader unverified-goal work.
 ## Protocol and evidence scope
 
 References: OpenID Connect Core 1.0 and Discovery 1.0, errata set 2. Only actual
-code/query/S256/public/ES256 and configured client methods are advertised.
+code/query/S256/ES256, public subjects, selected pairwise policy and configured
+client methods are advertised.
 Core 3.1.3.6 does not require at_hash/c_hash for this token-endpoint-only ID token.
-Pairwise, prompt/max_age, other identity scopes, implicit/hybrid, request objects,
+Multi-host sector URI registration, prompt/max_age, other identity scopes,
+implicit/hybrid, request objects,
 logout, private session exchange, shared-issuer access-JWT/delegation and
 HTTP/reference integration remain open/unadvertised.
 
@@ -75,6 +131,7 @@ contract. Acceptance covers real password-session/consent, authority withdrawal,
 rotation/restart overlap, revocation, native COMMIT faults and one-use contention.
 This is not official conformance-suite or complete provider qualification.
 
-The new child and consumer modules need actual published-source pins before
-clean-consumer/release qualification. Workspace evidence does not prove that
-later public dependency adoption.
+These pairwise additions need new actual published-source pins before
+clean-consumer/release qualification. Workspace evidence does not prove their
+later public dependency adoption; the earlier public-subject consumer remains
+a separately qualified outcome.

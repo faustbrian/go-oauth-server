@@ -97,6 +97,9 @@ type Client struct {
 	// Workload explicitly selects access-only client credentials instead of
 	// browser code/consent/refresh. Nil retains the existing web profile.
 	Workload *Workload `json:",omitempty"`
+	// SubjectRegistration selects immutable OIDC subject policy independently
+	// of client authentication. Nil retains legacy public-subject behavior.
+	SubjectRegistration *OIDCSubjectRegistration `json:",omitempty"`
 }
 
 // ValidateClient checks/copies complete immutable registration policy. It
@@ -119,6 +122,9 @@ func ValidateClient(input Client) (Client, error) {
 			return Client{}, err
 		}
 	}
+	if !validSubjectRegistration(input) {
+		return Client{}, ErrInvalidRequest
+	}
 	scopes, err := newScopeCatalog(input.Scopes, true)
 	if err != nil {
 		return Client{}, err
@@ -137,6 +143,10 @@ func (c Client) snapshot() Client {
 	if c.Workload != nil {
 		owned := *c.Workload
 		c.Workload = &owned
+	}
+	if c.SubjectRegistration != nil {
+		owned := *c.SubjectRegistration
+		c.SubjectRegistration = &owned
 	}
 	return c
 }

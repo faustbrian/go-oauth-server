@@ -326,7 +326,7 @@
           "build_tags": []
         }
       ],
-      "purpose": "Experimental optional public-subject ES256 code-flow OIDC extension; full provider qualification remains pending.",
+      "purpose": "Experimental optional public and single-host pairwise-subject ES256 code-flow OIDC extension; full provider qualification remains pending.",
       "lifecycle": "experimental",
       "kind": "optional companion",
       "releasable": true,
@@ -365,14 +365,14 @@
         "responsibility": "Selected code-flow ID-token claims, UserInfo subject projection, OIDC discovery and public JWKS, borrowing core durable signing and native grant authority.",
         "non_goals": [
           "Own OAuth parsing, grants, sessions, transactions, private signing custody or a relying-party runtime.",
-          "Claim full OIDC qualification, pairwise subjects, logout, private session exchange or resource-JWT verification."
+          "Claim full OIDC qualification, multi-host sector-URI support, logout, private session exchange or resource-JWT verification."
         ],
         "public_package_identifier": "oidc",
         "primary_entry_packages": [
           "github.com/faustbrian/go-oauth-server/oidc"
         ],
         "package_selection": {
-          "github.com/faustbrian/go-oauth-server/oidc": "Experimental opt-in public-subject ES256 code-flow child; native durable signing and current grant/subject authority are mandatory."
+          "github.com/faustbrian/go-oauth-server/oidc": "Experimental opt-in public or registered-single-host pairwise ES256 code-flow child; native durable signing, pairwise bindings/key custody and current grant/subject authority are mandatory."
         },
         "lifecycle_status": "active",
         "maturity": "experimental",

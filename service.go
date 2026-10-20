@@ -253,6 +253,9 @@ type AuthorizationCommand struct {
 	Session session.GetResult
 	Browser auth.BearerCredential
 	Network string
+	// SubjectCandidate is never a resolved identity. The native owner must
+	// resolve it in the existing authenticated transaction before signing.
+	SubjectCandidate *OIDCSubjectCandidate
 }
 
 // ContinuationCommand preserves the current original-browser observation for
@@ -430,16 +433,21 @@ func (s *Service) Authorize(ctx context.Context, request AuthorizeRequest) (out 
 	if !source.Authenticated {
 		return AuthorizeResult{Outcome: LoginRequired}, nil
 	}
+	var subjectCandidate *OIDCSubjectCandidate
 	if hasExtensionScope(input.Scopes) || input.Nonce != "" {
-		projection, e := s.deps.OIDC.ValidateAuthorization(ctx, OIDCAuthorizationInput{Request: input, Session: source})
-		if e != nil || !projection.Accepted {
+		projection, e := s.deps.OIDC.ValidateAuthorization(ctx, OIDCAuthorizationInput{Issuer: s.config.Issuer, Environment: s.config.Environment, Client: client.snapshot(), Request: input, Session: source})
+		if e != nil || !projection.Accepted || !validSubjectCandidate(client, projection.SubjectCandidate) {
 			if e != nil {
 				return out, e
 			}
 			return out, ErrAccessDenied
 		}
+		if projection.SubjectCandidate != nil {
+			owned := *projection.SubjectCandidate
+			subjectCandidate = &owned
+		}
 	}
-	out, err = s.deps.Store.Authorize(ctx, AuthorizationCommand{Request: input, Client: client.snapshot(), Session: source, Browser: request.Session, Network: request.Network})
+	out, err = s.deps.Store.Authorize(ctx, AuthorizationCommand{Request: input, Client: client.snapshot(), Session: source, Browser: request.Session, Network: request.Network, SubjectCandidate: subjectCandidate})
 	if err != nil || ctx.Err() != nil {
 		return AuthorizeResult{Outcome: out.Outcome, CommandID: out.CommandID}, operationError(ctx, err)
 	}

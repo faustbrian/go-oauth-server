@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add optional immutable OIDC subject registration independently of client
+  authentication type, with exact single-sector-host validation and trusted
+  first-binding/native-claim projections. Nil policy preserves legacy client
+  and grant framing; the four-method extension and concrete Service remain.
+
 - Add the optional four-method OIDC seam without replacing the Service struct,
   bounded nonce custody, explicit reserved-scope composition and core-owned
   ES256/durable signing. ID tokens are reveal-once existing native grant output.

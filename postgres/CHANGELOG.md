@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Project selected email UserInfo custody through the existing identity
+  primary repository with repeated identifier/token/consent/subject/key fences.
+  Preserve the earliest original session, credential, OAuth and 20-second read
+  deadline without storing email in OAuth grants or introducing a migration.
+
 - Complete original OIDC login/maximum-age continuations with genuine newly
   authenticated same-user password sessions. Fence both original and new
   authority, preserve original deadlines/subject/request, and atomically adopt

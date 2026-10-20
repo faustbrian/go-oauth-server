@@ -7,6 +7,11 @@ The optional [selected OIDC profile](../docs/selected-oidc-profile.md) adds nati
 encrypted ID-token preparation, subject-bound UserInfo and public signing-key
 lifecycle. Install SigningMigrationSource before enabling it; existing OAuth
 history and current identity/session/grant owners are retained.
+Explicit child `EmailUserInfo` with a matching openid/email extension catalog
+adds consented email UserInfo from the existing native identity repository.
+Repeated owner/token/consent/key checks retain the original earliest validity
+deadline; changed identifier authority denies old grants. No claim callback,
+email copy in OAuth persistence, or new migration is required.
 Registered pairwise clients additionally require `PairwiseMigrationSource`
 appended at a fresh version. Native `InstallSubjectKey` authenticates/stages
 encrypted HMAC custody; `ActivateSubjectKey` selects new writers. Authenticated

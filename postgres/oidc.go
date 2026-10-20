@@ -79,5 +79,15 @@ func (s *Store) UserInfo(ctx context.Context, c oauth.UserInfoCommand) (out oaut
 	if err != nil || boundSubject != "" && boundSubject != a.Payload.Subject {
 		return out, oauth.ErrAccessDenied
 	}
-	return oauth.OIDCClaimsInput{Issuer: s.config.Protocol.Issuer, Environment: s.config.Protocol.Environment, TenantID: a.Grant.Tenant, UserID: a.Grant.User, ClientID: client.ID, Nonce: a.Payload.Request.Nonce, ExpectedSubject: a.Payload.Subject, Scopes: slices.Clone(a.Payload.Scopes), IssuedAt: a.CreatedAt, ExpiresAt: a.ExpiresAt, AuthenticatedAt: bindings.Authentication.Proof.IssuedAt, UserInfo: true, SubjectRegistration: registration, BoundSubject: boundSubject}, nil
+	out = oauth.OIDCClaimsInput{Issuer: s.config.Protocol.Issuer, Environment: s.config.Protocol.Environment, TenantID: a.Grant.Tenant, UserID: a.Grant.User, ClientID: client.ID, Nonce: a.Payload.Request.Nonce, ExpectedSubject: a.Payload.Subject, Scopes: slices.Clone(a.Payload.Scopes), IssuedAt: a.CreatedAt, ExpiresAt: a.ExpiresAt, AuthenticatedAt: bindings.Authentication.Proof.IssuedAt, UserInfo: true, SubjectRegistration: registration, BoundSubject: boundSubject,
+		AuthorityExpiresAt: earliestUserInfoExpiry(start.Add(20*time.Second), a.ExpiresAt, a.Grant.ExpiresAt, credentialExpiry)}
+	if slices.Contains(a.Payload.Scopes, "email") {
+		lifetime, err := original.Lifetime(now)
+		if err != nil {
+			return oauth.OIDCClaimsInput{}, oauth.ErrAccessDenied
+		}
+		out.AuthorityExpiresAt = earliestUserInfoExpiry(out.AuthorityExpiresAt, lifetime.ExpiresAt)
+		return s.userInfoIdentifiers(ctx, c.Request.AccessToken, client, a, out, start)
+	}
+	return out, nil
 }

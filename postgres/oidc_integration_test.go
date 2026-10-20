@@ -12,6 +12,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -62,9 +63,14 @@ func oidcFixtureWithLifecycle(t *testing.T, f *authenticatedPasswordFixture, chi
 	if _, err := runner.Up(f.ctx); err != nil {
 		t.Fatal("signing migration failed", err)
 	}
-	f.oauth.Protocol.OIDCScopes, _ = oauth.NewOIDCScopeCatalog([]string{"openid"})
+	email := slices.Contains(f.oauth.Protocol.OIDCScopes.Scopes(), "email")
+	selectedScopes := []string{"openid"}
+	if email {
+		selectedScopes = append(selectedScopes, "email")
+	}
+	f.oauth.Protocol.OIDCScopes, _ = oauth.NewOIDCScopeCatalog(selectedScopes)
 	for i := range f.oauth.Protocol.Clients {
-		f.oauth.Protocol.Clients[i].Scopes = append(f.oauth.Protocol.Clients[i].Scopes, "openid")
+		f.oauth.Protocol.Clients[i].Scopes = append(f.oauth.Protocol.Clients[i].Scopes, selectedScopes...)
 	}
 	issuer := f.oauth.Protocol.Issuer.String()
 	f.oauth.Protocol.Discovery = oauth.DiscoveryConfig{Enabled: true, AuthorizationEndpoint: issuer + "/oauth2/authorize", TokenEndpoint: issuer + "/oauth2/token", RevocationEndpoint: issuer + "/oauth2/revoke"}
@@ -102,7 +108,7 @@ func oidcFixtureWithLifecycle(t *testing.T, f *authenticatedPasswordFixture, chi
 	if _, err := rand.Read(subjectKey[:]); err != nil {
 		t.Fatal(err)
 	}
-	child, err := op.NewService(op.Config{Issuer: f.oauth.Protocol.Issuer, JWKSURI: issuer + "/oauth2/jwks", UserInfoEndpoint: issuer + "/oauth2/userinfo", Signing: signer, SubjectKey: subjectKey, Clock: childClock, MaximumDuration: 4 * time.Second}, core)
+	child, err := op.NewService(op.Config{Issuer: f.oauth.Protocol.Issuer, JWKSURI: issuer + "/oauth2/jwks", UserInfoEndpoint: issuer + "/oauth2/userinfo", Signing: signer, SubjectKey: subjectKey, Clock: childClock, MaximumDuration: 4 * time.Second, EmailUserInfo: email}, core)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +129,8 @@ func oidcCode(t *testing.T, f authenticatedPasswordFixture, service *oauth.Servi
 	t.Helper()
 	verifier := oauth2.GenerateVerifier()
 	challenge := oauth2.S256ChallengeFromVerifier(verifier)
-	begin, err := service.Authorize(f.ctx, oauth.AuthorizeRequest{TenantID: f.tenant, Session: f.browser, Network: "192.0.2.1", Request: oauth.AuthorizationRequest{ClientID: "public-web", RedirectURI: "https://client.example/callback", Resource: "https://resource.example", Scopes: []string{"identity:read", "openid"}, Nonce: nonce, CodeChallenge: challenge}})
+	scopes := append([]string{"identity:read"}, f.oauth.Protocol.OIDCScopes.Scopes()...)
+	begin, err := service.Authorize(f.ctx, oauth.AuthorizeRequest{TenantID: f.tenant, Session: f.browser, Network: "192.0.2.1", Request: oauth.AuthorizationRequest{ClientID: "public-web", RedirectURI: "https://client.example/callback", Resource: "https://resource.example", Scopes: scopes, Nonce: nonce, CodeChallenge: challenge}})
 	if err != nil || begin.Outcome != oauth.ConsentRequired {
 		t.Fatal("OIDC did not reach native consent", err)
 	}

@@ -135,10 +135,14 @@ github.com/faustbrian/go-oauth-server v0.0.0-20261020082207-960e14308e19 h1:kJdV
 github.com/faustbrian/go-oauth-server v0.0.0-20261020082207-960e14308e19/go.mod h1:lrXvMsoOYfeRBDLXNbsZy5+YTUhybwAcKILe4tSRKIU=
 github.com/faustbrian/go-oauth-server v0.0.0-20261020110515-17b853623f00 h1:r/38hCD9uFTftvnh2IqoWPV/g7aVE8ucNeYKirCmDVw=
 github.com/faustbrian/go-oauth-server v0.0.0-20261020110515-17b853623f00/go.mod h1:lrXvMsoOYfeRBDLXNbsZy5+YTUhybwAcKILe4tSRKIU=
+github.com/faustbrian/go-oauth-server v0.0.0-20261020230859-d80acf5f6eee h1:NTHiqHrKhhWkf1/FtmLJdGFn784PRC9DVjSPOBHnTNg=
+github.com/faustbrian/go-oauth-server v0.0.0-20261020230859-d80acf5f6eee/go.mod h1:lrXvMsoOYfeRBDLXNbsZy5+YTUhybwAcKILe4tSRKIU=
 github.com/faustbrian/go-oauth-server/oidc v0.0.0-20261020070346-33943e590191 h1:XF6CpN5Ge7pcwzKN5/4JASwz7qVyKJ2HJmGzROt88gU=
 github.com/faustbrian/go-oauth-server/oidc v0.0.0-20261020070346-33943e590191/go.mod h1:U/pxT78IcnlDFw3KWwX6zdl7lmN24yX8egljbTzAvY8=
 github.com/faustbrian/go-oauth-server/oidc v0.0.0-20261020110959-71a07e781726 h1:vZQbfFBC0r2PyGF7vDxghGWUcF8YcbI8/gemqKZ0JEI=
 github.com/faustbrian/go-oauth-server/oidc v0.0.0-20261020110959-71a07e781726/go.mod h1:BMoqnNxYkNieWExYdzxb11m7UAc9iOnI8rK+0qh+Kvc=
+github.com/faustbrian/go-oauth-server/oidc v0.0.0-20261020231204-9d8cd3676b19 h1:Iv51sAlnSo3fWPBdg6u+kVzQn4BrlOJdjMGRYJtTADs=
+github.com/faustbrian/go-oauth-server/oidc v0.0.0-20261020231204-9d8cd3676b19/go.mod h1:0iYRuC205dWcM8BrdJu4guA0DWMs1W4ET25h6+G92XM=
 github.com/faustbrian/go-openapi/v2 v2.0.3-0.20261015044355-77bfaaffc820 h1:/5nveXXAZ0rYYsxG8uJbQDxkC9rse6kIEOeq2yGr2C8=
 github.com/faustbrian/go-openapi/v2 v2.0.3-0.20261015044355-77bfaaffc820/go.mod h1:BpEy2DPz/YR5C9gcBcKAxkG4fO+jo6WLwjNDy075MYY=
 github.com/faustbrian/go-password/v2 v2.0.2-0.20261015050515-4eb0fefa60ff h1:8BIB469appqyn79T6j/sJQAS3dN6+budadfpPLwtqIg=

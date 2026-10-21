@@ -188,6 +188,48 @@ with Token/client-authentication empty. It authenticates the retained original
 preparation before metadata reconciliation. Do not retry a new withdrawal to
 resolve uncertain commitment. Keep original configuration and keys for recovery.
 
+### Optional strict own-consent narrowing
+
+After the consent profile is installed and selected everywhere,
+`Config.ConsentNarrowing=true` adds `Service.ConsentUpdate` and the optional
+`ConsentUpdater` capability; it does not change `ConsentManager`. Configure the
+existing kernel `Config.RequestKeys` owner and install its
+`RequestKeyPreparationMigrationSource` before selection. No further OAuth
+migration is needed. Application authorization must explicitly permit
+`identity.oauth-server.consent-update` (Privileged risk) and its recovery action;
+the same real session, CSRF, admission, audit and outbox owners remain in use.
+
+The request fixes the own consent ID/version, configured client ID/version and
+resource. Only a nonempty strict subset of the persisted approved scopes is
+accepted; empty, unchanged, expanded and foreign sets deny. Subject, actor,
+tenant, client and resource cannot be edited. Original password completion must
+remain younger than 15 minutes and generally fresh, including after lock waits;
+repeated reads or retries do not renew the original admission deadline.
+
+The kernel binds the request key to its original random command and
+authenticated encrypted input before execution. Retry with the same original
+browser, exact CSRF and intent; a changed intent returns `ErrConsentConflict`,
+not another command. Neither the key nor historical mapping possession proves
+authentication. Keep the original key, command, configuration and encryption
+keys while outcome reconciliation may be needed. Selecting this new capability
+does not change the configuration identity of existing grants or delete recovery.
+
+One sole-coordinator Work advances the same consent's version and generation,
+narrows its scopes and emits `consent.scope_changed.v1` with the actual consent
+identity/version and `identity.oauth_server.revoke_consent` audit action. Every
+old-generation code, access, refresh and UserInfo authority denies, even when
+its scopes happen to fit the new set. An explicit new narrowed authorization is
+required; no old descendant is rebound and no new token is returned by update.
+Required outbox failure rolls back the scope/version/generation and receipt.
+
+Unknown update recovery supplies
+`OperationID=identity.oauth-server.consent-update`, the original
+CommandID/ConsentID/ClientID/TenantID and current original Session, with
+Token/client-authentication empty. A new Store authenticates both the original
+kernel request preparation and feature preparation before reconciling metadata.
+It neither executes narrowing again nor redelivers credentials. A same-key
+retry returns only the original completion, never another generation advance.
+
 ## Unknown outcomes
 
 Cancellation, connection failure and lost COMMIT acknowledgement do not prove

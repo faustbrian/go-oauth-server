@@ -40,6 +40,7 @@ const (
 	revokeFamily
 	createWorkload
 	deleteConsent
+	narrowConsent
 )
 
 type grantRecord struct {
@@ -95,6 +96,7 @@ type phaseInput struct {
 	Network                     string
 	Consent                     consentMutation
 	Deletion                    *consentDeletion            `json:",omitempty"`
+	Narrowing                   *consentDeletion            `json:",omitempty"`
 	SubjectCandidate            *oauth.OIDCSubjectCandidate `json:",omitempty"`
 	Authentication              *authenticationSelection    `json:",omitempty"`
 	PreviousSource              []identity.FeatureField     `json:",omitempty"`

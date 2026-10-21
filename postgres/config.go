@@ -57,6 +57,10 @@ type Config struct {
 	// ConsentMigrationSource and retire all old/unselected serving instances
 	// before enabling. Workload-only composition must leave this false.
 	ConsentManagement bool
+	// ConsentNarrowing selects keyed strict-subset updates. ConsentManagement
+	// and the kernel's request-key preparation history must already be installed.
+	// Existing read/delete-only compositions leave this false.
+	ConsentNarrowing bool
 }
 
 // Format redacts keys, correlated deployment scopes and policy dependencies.
@@ -110,12 +114,18 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	if c.ConsentManagement && !webSelected(protocol.Clients) {
 		return nil, oauth.ErrInvalidRequest
 	}
+	if c.ConsentNarrowing && !c.ConsentManagement {
+		return nil, oauth.ErrInvalidRequest
+	}
 	// Privileged's native counters supply exactly velocity. The upstream
 	// protected-provider admission API is CredentialMutation-only; accepting
 	// another mandatory signal here would silently omit its owning provider.
 	operations := (&phase{}).FeatureOperations()
 	if c.ConsentManagement {
 		operations = append(operations, operation("identity.oauth-server.consent-delete"))
+	}
+	if c.ConsentNarrowing {
+		operations = append(operations, operation("identity.oauth-server.consent-update"))
 	}
 	for _, operation := range operations {
 		admitted, err := c.Counters.CommandCounters.Policy.Admit(risk.Action(operation.OperationID))
@@ -204,6 +214,14 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	}
 	s.identity = sha256.Sum256(frame)
 	clear(frame)
+	// Narrowing enables a new operation, not a new policy for existing grants.
+	// Preserve their prepared configuration identity; its separate input profile
+	// and operation gate bind selection without stranding older recovery.
+	if c.ConsentNarrowing {
+		if err := s.coordinator(&phase{store: s}); err != nil {
+			return nil, oauth.ErrInvalidRequest
+		}
+	}
 	return s, nil
 }
 

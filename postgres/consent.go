@@ -84,7 +84,7 @@ func (s *Store) consentObservation(ctx context.Context, c oauth.ConsentExecution
 	if err != nil || b.TenantID != input.TenantID {
 		return session.GetResult{}, authorization.DecisionContext{}, oauth.ErrAccessDenied
 	}
-	if op == oauth.ConsentRemove {
+	if op == oauth.ConsentRemove || op == oauth.ConsentNarrow {
 		if input.Origin != s.config.Protocol.Issuer.String() {
 			return session.GetResult{}, authorization.DecisionContext{}, oauth.ErrAccessDenied
 		}
@@ -112,6 +112,7 @@ func (s *Store) consentObservation(ctx context.Context, c oauth.ConsentExecution
 	if op == oauth.ConsentRemove {
 		action = "identity.oauth-server.consent-delete"
 	}
+	if op==oauth.ConsentNarrow { action="identity.oauth-server.consent-update" }
 	policy := s.config.Coordinator.AdmissionPolicy
 	caller := authorization.DecisionContext{PolicyRevision: authorization.Revision(policy.PolicyVersion), Request: authorization.Request{Tenant: authorization.TenantID(b.TenantID), Subject: authorization.Subject{Kind: authorization.SubjectUser, ID: authorization.SubjectID(b.UserID)}, Action: authorization.Action(action), Resource: authorization.Resource{Type: "identity.user", ID: authorization.ResourceID(b.UserID)}}}
 	if err := s.consentDecision(ctx, caller); err != nil {

@@ -16,6 +16,9 @@ func (p *phase) mutate(ctx context.Context, w kernel.Work) error {
 	if p.input.Transition == deleteConsent {
 		return p.mutateConsentDeletion(ctx, w)
 	}
+	if p.input.Transition == narrowConsent {
+		return p.mutateConsentNarrowing(ctx, w)
+	}
 	i := p.input
 	g := i.Grant
 	s := p.store.schema
@@ -195,7 +198,7 @@ func (p *phase) RecoverParticipant(ctx context.Context, w kernel.RecoveryWork) (
 		return kernel.RecoveryUnknown, identity.ForbiddenError{}
 	}
 	ownerColumn := "grant_id"
-	if b.OperationID == "identity.oauth-server.consent-delete" {
+	if b.OperationID == "identity.oauth-server.consent-delete" || b.OperationID == "identity.oauth-server.consent-update" {
 		ownerColumn = "consent_id"
 	}
 	rows, err := w.Query(ctx, `SELECT `+ownerColumn+`,before_version::text,after_version::text,binding_digest FROM `+p.store.schema+`.effects WHERE tenant_id=$1 AND command_id=$2 AND operation_id=$3 AND record_id=$4`, string(b.TenantID), string(b.CommandID), b.OperationID, b.RecordID)
@@ -218,7 +221,7 @@ func (p *phase) RecoverParticipant(ctx context.Context, w kernel.RecoveryWork) (
 	if before != strconv.FormatUint(life.BeforeVersion, 10) || after != strconv.FormatUint(life.AfterVersion, 10) || subtle.ConstantTimeCompare(digest, want[:]) != 1 || grant == "" {
 		return kernel.RecoveryUnknown, identity.UnavailableError{}
 	}
-	if b.OperationID == "identity.oauth-server.consent-delete" && grant != b.RecordID {
+	if (b.OperationID == "identity.oauth-server.consent-delete" || b.OperationID == "identity.oauth-server.consent-update") && grant != b.RecordID {
 		return kernel.RecoveryUnknown, identity.UnavailableError{}
 	}
 	return kernel.RecoveryCommitted, nil
@@ -226,7 +229,7 @@ func (p *phase) RecoverParticipant(ctx context.Context, w kernel.RecoveryWork) (
 
 func oauthLifecycle(event string) bool {
 	switch event {
-	case "grant.created.v1", "grant.authorized.v1", "grant.scope_changed.v1", "grant.code_exchanged.v1", "grant.refresh_rotated.v1", "grant.revoked.v1", "oauth_access.revoked.v1", "consent.revoked.v1":
+	case "grant.created.v1", "grant.authorized.v1", "grant.scope_changed.v1", "grant.code_exchanged.v1", "grant.refresh_rotated.v1", "grant.revoked.v1", "oauth_access.revoked.v1", "consent.revoked.v1", "consent.scope_changed.v1":
 		return true
 	default:
 		return false

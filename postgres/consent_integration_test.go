@@ -460,7 +460,7 @@ func ownConsentCommand(t *testing.T, f authenticatedPasswordFixture, operation o
 	if operation == oauth.ConsentEnumerate {
 		spec.Limit = 1
 	}
-	if operation == oauth.ConsentRemove {
+	if operation == oauth.ConsentRemove || operation == oauth.ConsentNarrow {
 		spec.Version = version
 		spec.Origin = f.oauth.Protocol.Issuer.String()
 		spec.CSRF = f.csrf

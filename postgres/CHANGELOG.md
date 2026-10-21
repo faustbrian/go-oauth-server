@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add separately selected strict own-consent narrowing through the existing
+  kernel prepared request-key owner and sole coordinator. Preserve original
+  fresh-session/CSRF authority and immutable tenant/subject/client/resource;
+  advance the consent version/generation atomically to deny every older
+  descendant. Required outbox failures roll back all effects; uncertain commits
+  and same-key retries reconcile only original metadata across instances.
+  Select `ConsentNarrowing` only after consent and kernel request-preparation
+  histories are installed and the actual request-key/risk policies configured.
+  Existing consent management and encrypted preparation identities are retained.
+
 - Project selected email UserInfo custody through the existing identity
   primary repository with repeated identifier/token/consent/subject/key fences.
   Preserve the earliest original session, credential, OAuth and 20-second read

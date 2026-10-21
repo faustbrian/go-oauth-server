@@ -13,7 +13,7 @@ import (
 )
 
 // RecoveryRequest identifies one original command, never a new execution.
-// OperationID is one of the four selected canonical OAuth operation IDs.
+// OperationID is a selected canonical OAuth or own-consent mutation operation.
 // Authorize requires the original current browser and tenant, with Token empty;
 // continue additionally requires its original continuation. Token/revoke require
 // the original client-bound protocol bearer and configured client authentication,
@@ -32,7 +32,7 @@ type RecoveryRequest struct {
 	Session              auth.BearerCredential
 	Token                string
 	ClientAuthentication oauth.ClientAuthentication
-	// ConsentID selects only the original consent-delete record. It must be
+	// ConsentID selects only the original consent-delete/update record. It must be
 	// empty for other variants and conveys no authority without exact original
 	// current browser, tenant/client and authenticated retained preparation.
 	ConsentID string
@@ -103,10 +103,26 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 	var p *phase
 	var observed session.GetResult
 	authenticationContinuation := false
-	if request.OperationID != "identity.oauth-server.consent-delete" && request.ConsentID != "" {
+	if request.OperationID != "identity.oauth-server.consent-delete" && request.OperationID != "identity.oauth-server.consent-update" && request.ConsentID != "" {
 		return out, oauth.ErrInvalidRequest
 	}
 	switch request.OperationID {
+	case "identity.oauth-server.consent-update":
+		if !s.config.ConsentNarrowing || client.Workload != nil || request.Token != "" || request.ClientAuthentication.Method() != "none" {
+			return out, oauth.ErrAccessDenied
+		}
+		if _, err := identity.ParseSubjectID(request.ConsentID); err != nil {
+			return out, oauth.ErrInvalidRequest
+		}
+		observed, err = s.recoverySession(ctx, request)
+		if err != nil {
+			return out, err
+		}
+		source, err := sessionpg.OriginalSessionFields(observed.Session)
+		if err != nil {
+			return out, oauth.ErrAccessDenied
+		}
+		p = s.consentNarrowPhase(client, observed, request.ConsentID, request.CommandID, source)
 	case "identity.oauth-server.consent-delete":
 		if !s.config.ConsentManagement || client.Workload != nil || request.Token != "" || request.ClientAuthentication.Method() != "none" {
 			return out, oauth.ErrAccessDenied
@@ -213,7 +229,17 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 	if err := s.coordinator(p); err != nil {
 		return out, err
 	}
-	if request.OperationID == "identity.oauth-server.authorize" || p.input.Transition == createWorkload || p.input.Transition == deleteConsent || authenticationContinuation {
+	if p.input.Transition == narrowConsent {
+		binding, wire, err := p.coordinator.QueryRequestPreparation(ctx, p.query(), p.caller(), p.registration(), p)
+		if err != nil {
+			return out, publicError(ctx, err, oauth.ErrAccessDenied)
+		}
+		defer clear(wire)
+		if err := p.restoreNarrowingRequest(ctx, binding, wire); err != nil {
+			return out, publicError(ctx, err, oauth.ErrAccessDenied)
+		}
+	}
+	if request.OperationID == "identity.oauth-server.authorize" || p.input.Transition == createWorkload || p.input.Transition == deleteConsent || p.input.Transition == narrowConsent || authenticationContinuation {
 		wire, generation, err := p.coordinator.QueryFeaturePreparation(ctx, p.query(), p.caller(), p.registration(), p)
 		if err != nil {
 			return out, publicError(ctx, err, oauth.ErrAccessDenied)
@@ -223,6 +249,9 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 			return out, publicError(ctx, err, oauth.ErrAccessDenied)
 		}
 		if p.input.Transition == deleteConsent && (p.input.Deletion == nil || p.input.Deletion.ID != request.ConsentID || p.input.Binding.RecordID != request.ConsentID) {
+			return out, oauth.ErrAccessDenied
+		}
+		if p.input.Transition == narrowConsent && (p.input.Narrowing == nil || p.input.Narrowing.ID != request.ConsentID || p.input.Binding.RecordID != request.ConsentID) {
 			return out, oauth.ErrAccessDenied
 		}
 		// Authentication of retained context is not a credential delivery path.

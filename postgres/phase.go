@@ -61,6 +61,7 @@ type phase struct {
 	csrf              session.CSRFToken
 	observation       session.GetResult
 	consentCommand    oauth.ConsentCommand
+	consentUpdate     *oauth.ConsentUpdateExecution
 	command           identity.Command
 	declaration, plan kernel.CommandPlan
 	counters          kernel.CommandCounterPlan
@@ -96,6 +97,9 @@ func (p *phase) FeatureOperations() []identity.FeatureOperation {
 	if p.store != nil && p.store.config.ConsentManagement {
 		operations = append(operations, operation("identity.oauth-server.consent-delete"))
 	}
+	if p.store != nil && p.store.config.ConsentNarrowing {
+		operations = append(operations, operation("identity.oauth-server.consent-update"))
+	}
 	return operations
 }
 func (p *phase) registration() kernel.FeatureRegistration {
@@ -107,7 +111,7 @@ func (p *phase) registration() kernel.FeatureRegistration {
 // and replay revocation each declare their distinct composed actions once.
 func (p *phase) auditActions() []string {
 	switch p.input.Transition {
-	case deleteConsent:
+	case deleteConsent, narrowConsent:
 		return []string{"identity.oauth_server.revoke_consent"}
 	case createInteraction, createWorkload:
 		return []string{"identity.oauth_server.authorize"}
@@ -141,6 +145,9 @@ func (p *phase) lifecycle() kernel.LifecyclePlan {
 	case deleteConsent:
 		before = p.input.Deletion.Version
 		event = "consent.revoked.v1"
+	case narrowConsent:
+		before = p.input.Narrowing.Version
+		event = "consent.scope_changed.v1"
 	case createInteraction, createWorkload:
 		event = "grant.created.v1"
 	case approveInteraction:
@@ -160,7 +167,7 @@ func (p *phase) lifecycle() kernel.LifecyclePlan {
 }
 
 func (p *phase) subjectType() string {
-	if p.input.Transition == deleteConsent {
+	if p.input.Transition == deleteConsent || p.input.Transition == narrowConsent {
 		return "oauth_consent"
 	}
 	if p.input.Transition == revokeAccess {
@@ -259,6 +266,13 @@ func (p *phase) buildCommand() error {
 	} else if i.Deletion != nil {
 		return oauth.ErrInvalidRequest
 	}
+	if i.Transition == narrowConsent {
+		if !p.store.config.ConsentNarrowing || i.Narrowing == nil || i.Narrowing.ID != b.RecordID || i.Narrowing.Version == 0 || i.Narrowing.Version == math.MaxUint64 || i.Narrowing.Generation == 0 || i.Narrowing.Generation == math.MaxUint64 || i.Grant.ID != "" || len(i.Scopes) >= len(i.Grant.Scopes) {
+			return oauth.ErrInvalidRequest
+		}
+	} else if i.Narrowing != nil {
+		return oauth.ErrInvalidRequest
+	}
 	// This fixed native codec commits every nonsecret typed input, including
 	// original owner fields, with a scalar commitment. It never places JSON or
 	// credential wire bytes in FeatureFields. The original encrypted preparation
@@ -275,6 +289,10 @@ func (p *phase) buildCommand() error {
 	if i.Transition == deleteConsent {
 		recordField = identity.FeatureField{Name: "oauth.consent-root", Value: identity.FeatureValue{Kind: identity.FeatureText, Text: i.Deletion.ID}}
 		versionField = identity.FeatureField{Name: "oauth.consent-version", Value: identity.FeatureValue{Kind: identity.FeatureUint64, Uint64: i.Deletion.Version}}
+	}
+	if i.Transition == narrowConsent {
+		recordField = identity.FeatureField{Name: "oauth.consent-root", Value: identity.FeatureValue{Kind: identity.FeatureText, Text: i.Narrowing.ID}}
+		versionField = identity.FeatureField{Name: "oauth.consent-version", Value: identity.FeatureValue{Kind: identity.FeatureUint64, Uint64: i.Narrowing.Version}}
 	}
 	fields = append(fields,
 		identity.FeatureField{Name: "oauth.input-commitment", Value: identity.FeatureValue{Kind: identity.FeatureBytes, Bytes: commitment[:]}},
@@ -411,7 +429,7 @@ func (p *phase) AdmitFeaturePreparation(ctx context.Context, w kernel.Work, c id
 	return p.checkArtifactExpiry(ctx, w)
 }
 func (p *phase) browserRequired() bool {
-	return p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == denyInteraction || p.input.Transition == deleteConsent
+	return p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == denyInteraction || p.input.Transition == deleteConsent || p.input.Transition == narrowConsent
 }
 func (p *phase) issuing() bool {
 	return p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == exchangeCode || p.input.Transition == rotateRefresh || p.input.Transition == createWorkload
@@ -505,6 +523,12 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 			return identity.ForbiddenError{}
 		}
 		return p.checkConsentDeletion(ctx, w, final)
+	}
+	if i.Transition == narrowConsent {
+		if (oauth.ConsentExecution{Command: p.consentCommand, Session: p.observation}).ValidateAt(now) != nil {
+			return identity.ForbiddenError{}
+		}
+		return p.checkConsentNarrowing(ctx, w, final)
 	}
 	if p.issuing() && (!now.Before(g.ExpiresAt) || !i.TargetExpires.IsZero() && !now.Before(i.TargetExpires)) {
 		return identity.ForbiddenError{}
@@ -1030,6 +1054,11 @@ func (p *phase) checkArtifactExpiry(ctx context.Context, w kernel.Work) error {
 	now, err := w.DatabaseTime(ctx)
 	if err != nil {
 		return err
+	}
+	// The consent-root lock may wait after the original source check. Neither
+	// that wait nor a second primary read can renew sensitive proof or admission.
+	if p.input.Transition == narrowConsent && ((oauth.ConsentExecution{Command: p.consentCommand, Session: p.observation}).ValidateAt(now) != nil || !now.Before(p.input.ObservationUntil)) {
+		return identity.ForbiddenError{}
 	}
 	if p.input.Authentication != nil && !p.input.Authentication.Until.IsZero() && !now.Before(p.input.Authentication.Until) {
 		return kernel.OAuthReauthenticationRequiredError{}

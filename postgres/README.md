@@ -154,6 +154,10 @@ of human/session authority; its subject is the configured service account.
 
 ## Optional own-consent profile installation
 
+The separately selected [direct resource verification profile](../docs/selected-resource-profile.md)
+uses this installed consent-generation barrier; it cannot select a legacy
+adapter without `ConsentManagement`.
+
 Append `ConsentMigrationSource{Base: prior, Schema: dedicatedSchema,
 Version: nextAllocatedVersion}` to the same OAuth history namespace. Base may
 include the workload extension but need not require it. The migration retains

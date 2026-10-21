@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Compose direct opaque human-access verification over actual stored digest
+  namespace, token/consent generation and current directory/user/identifier/
+  credential/authorization owners. Fixed trusted policy rejects refresh and
+  foreign custody; repeated late fences conserve original expiry and return no
+  principal on cancellation or unavailable authority. The profile is uncached,
+  read-only and requires installed/selected consent management; no new migration
+  or change to existing grant/recovery configuration identities is introduced.
+
 - Add separately selected strict own-consent narrowing through the existing
   kernel prepared request-key owner and sole coordinator. Preserve original
   fresh-session/CSRF authority and immutable tenant/subject/client/resource;

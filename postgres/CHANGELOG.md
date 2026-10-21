@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add private managed-client metadata reads over genuine current session and
+  exact platform policy, preserving original <=20s deadlines and late current
+  owner/client fences. Scoped limit1..100 keyset pages select no secret material
+  and create no commands, audit or lifecycle effects. No new migration is needed;
+  existing rotation/deletion still independently require their mutation authority.
+
 - Verify native adapters using patched Go 1.27.3 for GO-2026-6809 in
   `crypto/x509`. Consumers must also use a patched Go build toolchain.
 

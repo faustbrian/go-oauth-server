@@ -49,6 +49,34 @@ keys and history while recovery remains supported. This profile is not dynamic
 registration transport, user/org ownership, workload or OIDC
 client management, nor complete M30 support.
 
+### Authenticated safe metadata discovery
+
+The same selected managed-client profile supplies optional `ClientReader` via
+`Service.ClientGet/List`. No new migration or endpoint is installed. A fresh
+service can list active managed IDs/versions, get one safe registration, then
+submit the discovered current version to the existing rotation/deletion APIs.
+Those mutations still require their original fresh password proof, CSRF and
+request-key authority; a read result grants none of them.
+
+Each private read independently authenticates the borrowed native session and
+exact `identity.oauth-server.client-get` or `client-list` platform permission.
+It compares the original sealed session/actor/tenant, repeats current policy,
+owner and client-version/status checks, and preserves the original exclusive
+<=20s app/primary-read deadline without renewal. Reads require a current verified
+password session, but not the mutation-only 15-minute freshness or CSRF fields.
+Policy callbacks run without SQL locks. Permission withdrawal must still advance
+the existing actor epoch, as for management above.
+
+List requires limit1..100 and returns stable ID-ordered keyset pages. A cursor
+binds tenant, immutable owner, authenticated actor, limit and configured policy;
+it is neither authorization nor an enduring multi-page snapshot. Deleted/static
+clients are excluded. Only safe registration metadata is selected: no current or
+predecessor secret digest, encrypted preparation or bearer custody. Projections
+own their collections. Late rotation/deletion/permission changes, cancellation
+and unavailable authority return no partial page or cursor; retries recheck
+current authority. Reads do not create commands, audit, outbox or lifecycle
+effects and do not use a positive cache.
+
 ### Optional bounded secret rotation
 
 Append `ClientRotationMigrationSource{Base: installedClientHistory, Schema: ...,

@@ -267,7 +267,9 @@ func (ClientSecretDigest) Format(f fmt.State, _ rune) {
 func (ClientSecretDigest) MarshalJSON() ([]byte, error) { return nil, ErrInvalidRequest }
 func (ClientSecretDigest) MarshalText() ([]byte, error) { return nil, ErrInvalidRequest }
 
-// DigestClientSecret binds canonical high-entropy custody to client/version.
+// DigestClientSecret binds canonical high-entropy custody to client/secret
+// generation. This is not Client.Version after metadata replacement; native
+// digest-slot custody owns the generation independently of registration authority.
 // Native generation uses independent crypto/rand; no user password is accepted.
 func DigestClientSecret(id string, version uint64, wire string) (ClientSecretDigest, error) {
 	if !identifier(id) || version == 0 || !opaque32(wire) {
@@ -287,7 +289,7 @@ func DigestClientSecret(id string, version uint64, wire string) (ClientSecretDig
 	return d, nil
 }
 
-// VerifySecretDigest authenticates only the exact Basic client/version digest.
+// VerifySecretDigest authenticates only the exact Basic client/secret-generation digest.
 // Digest possession grants no actor, tenant or management authority.
 func (a ClientAuthentication) VerifySecretDigest(id string, version uint64, digest ClientSecretDigest) error {
 	if a.credential == nil || a.ClientID() != id || digest == (ClientSecretDigest{}) {

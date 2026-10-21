@@ -87,6 +87,14 @@ replacement authentication engine.
   actor/tenant/owner/limit/configuration-bound cursors; no
   static/deleted client, secret, digest or encrypted preparation is returned.
   Pages are snapshots, not permission or mutation-version leases.
+- `Service.ClientUpdate` optionally replaces the complete redirect/scope sets of
+  one exact discovered managed confidential-human client/version within fixed
+  configured ceilings. Existing fresh manager, origin/CSRF and request-key
+  authority remain required. Every commit advances registration authority and
+  invalidates old consent/grants, including a replacement with identical sets.
+  ID/owner/resource/method and both secret generations/overlap expiry are
+  unchanged; unchanged Basic requires NEW explicit consent/code/S256 afterward.
+  Matching native forward history and compatible-fleet activation are required.
 - `Service.DiscoveryOauth` returns OAuth-only RFC8414 metadata when explicitly
   selected by `Config.Discovery`. Trusted issuer-origin endpoint configuration
   and actual configured clients determine grants, authentication methods, S256,

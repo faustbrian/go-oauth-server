@@ -124,7 +124,8 @@ UTF-8/ASCII response bytes, recheck before changing these profile decisions):
 
 The separately selected native [client-management profile](../postgres/README.md#optional-platform-owned-confidential-client-management)
 adds finite authenticated platform-owned confidential creation, terminal
-deletion and separately selected bounded secret rotation.
+deletion, private discovery and separately selected bounded secret rotation or
+complete redirect/scope replacement.
 `Config.ManagedClients` fixes tenant/owner/redirect/scope ceilings;
 actual fresh human custody, exact platform policy, origin/CSRF and prepared
 request keys authorize each change. Ordinary running services use current native
@@ -138,7 +139,12 @@ expiry. Second rotation retires older predecessors; deletion denies both.
 Successor reveal is limited to fresh known commit, never retry/recovery/unknown.
 Current matched slot and original <=20s/predecessor deadline survive waits and
 final delivery checks, without positive cache or fallback.
-This does not broaden configured clients into mutable metadata,
+Optional `ClientMetadataUpdates` requires its additional forward migration and
+compatible-fleet activation. Complete redirect/scope replacement stays within
+fixed ceilings, advances registration authority and denies old consent/grants;
+unchanged Basic requires new explicit consent/code/S256. Secret generations and
+original overlap expiry are preserved independently of registration version.
+This does not broaden static configured clients into mutable metadata,
 user/org ownership, dynamic registration HTTP, workload or OIDC
 management. Its forward migration and policy-epoch adoption requirements are
 separate from this unchanged static profile.

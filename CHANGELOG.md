@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add optional complete managed-client redirect/scope replacement under existing
+  fresh manager/CSRF/keyed authority and immutable configured ceilings. Every
+  commit invalidates old consent/grants but preserves Basic secret generations
+  and original overlap expiry; new explicit authorization is required. Matching
+  native forward history/fleet activation is necessary; Store remains compatible.
+
 - Add optional authenticated managed-client get/list safe metadata, enabling a
   fresh manager service to discover current versions for existing mutations.
   Bounded scoped pagination excludes static/deleted clients and all secret

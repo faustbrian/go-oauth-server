@@ -94,7 +94,7 @@ func (s *Service) ConsentUpdate(ctx context.Context, r ConsentUpdateRequest) (ou
 	if !ok || nilDependency(owner) {
 		return out, ErrAccessDenied
 	}
-	client, err := s.client(r.ClientID)
+	client, err := s.currentClient(ctx, r.ClientID)
 	if err != nil || client.Workload != nil || client.Version != r.ClientVersion || client.Resource != r.Resource || !scopeSubset(r.Scopes, client.Scopes) {
 		return out, ErrAccessDenied
 	}

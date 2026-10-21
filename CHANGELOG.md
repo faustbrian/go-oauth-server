@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add optional authenticated platform-owned confidential-client creation and
+  terminal deletion, leaving existing Store implementations and static clients
+  unchanged. Managed IDs occupy an exclusive server-owned namespace; selected
+  ordinary protocol/read paths use current native version/status rather than a
+  cached registration. Secrets reveal once only after fresh known commitment.
+  Selected discovery reflects managed Basic/web and owning-client introspection
+  capability; registry projections cannot mutate retained static policy.
+
 - Add separately composed access-only resource verification with immutable
   trusted tenant/client/version/issuer/environment/resource/scope policy and an
   opaque scope-bound result. Preserve the earliest original read, token and

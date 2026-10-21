@@ -17,6 +17,60 @@ func discoveryEndpoints() oauth.DiscoveryConfig {
 	return oauth.DiscoveryConfig{Enabled: true, AuthorizationEndpoint: "https://issuer.example/oauth2/authorize", TokenEndpoint: "https://issuer.example/oauth2/token", RevocationEndpoint: "https://issuer.example/oauth2/revoke"}
 }
 
+type managedDiscoveryStore struct{ managedStore }
+
+func (managedDiscoveryStore) Introspect(context.Context, oauth.IntrospectionCommand) (oauth.IntrospectResult, error) {
+	return oauth.IntrospectResult{}, oauth.ErrAccessDenied
+}
+
+func TestDiscoveryIncludesManagedHumanBasicCapability(t *testing.T) {
+	for _, introspection := range []bool{false, true} {
+		t.Run(map[bool]string{false: "managed-basic", true: "managed-introspection"}[introspection], func(t *testing.T) {
+			sessions, _, now, _ := coreSessionFixture(t)
+			config := coreConfig(t, now)
+			owner, _ := oauth.NewPlatformOwner("platform")
+			config.ManagedClients = &oauth.ManagedClientPolicy{Owner: owner, TenantID: "tenant", Redirects: []string{"https://client.example/cb"}, Scopes: config.Scopes}
+			config.Discovery = discoveryEndpoints()
+			config.OwningClientIntrospection = introspection
+			if introspection {
+				config.Discovery.IntrospectionEndpoint = "https://issuer.example/oauth2/introspect"
+			}
+			store := managedDiscoveryStore{}
+			service, err := oauth.NewService(config, oauth.Dependencies{Sessions: sessions, Store: store, Clients: store})
+			if err != nil {
+				t.Fatal("selected managed Basic composition rejected", err)
+			}
+			out, err := service.DiscoveryOauth(context.Background(), oauth.DiscoveryOauthRequest{})
+			if err != nil || !slices.Equal(out.Metadata.TokenEndpointAuthMethodsSupported, []string{"client_secret_basic", "none"}) || !slices.Equal(out.Metadata.RevocationEndpointAuthMethodsSupported, []string{"client_secret_basic", "none"}) || !slices.Equal(out.Metadata.GrantTypesSupported, []string{"authorization_code", "refresh_token"}) {
+				t.Fatal("metadata omitted actual managed Basic/web capability", err)
+			}
+			if introspection && !slices.Equal(out.Metadata.IntrospectionEndpointAuthMethodsSupported, []string{"client_secret_basic"}) {
+				t.Fatal("managed owning-client introspection omitted")
+			}
+			if !introspection && out.Metadata.IntrospectionEndpoint != "" {
+				t.Fatal("unselected introspection advertised")
+			}
+		})
+	}
+}
+
+func TestDiscoveryManagedHumanWebComposesWithExistingStaticWorkload(t *testing.T) {
+	sessions, _, _, _ := coreSessionFixture(t)
+	config, _ := workloadCoreConfig(t)
+	owner, _ := oauth.NewPlatformOwner("platform")
+	config.ManagedClients = &oauth.ManagedClientPolicy{Owner: owner, TenantID: "tenant", Redirects: []string{"https://client.example/cb"}, Scopes: config.Scopes}
+	config.Discovery = discoveryEndpoints()
+	store := managedDiscoveryStore{}
+	service, err := oauth.NewService(config, oauth.Dependencies{Sessions: sessions, Store: store, Clients: store})
+	if err != nil {
+		t.Fatal("selected human web rejected because static registrations are machine-only", err)
+	}
+	out, err := service.DiscoveryOauth(context.Background(), oauth.DiscoveryOauthRequest{})
+	if err != nil || !slices.Equal(out.Metadata.GrantTypesSupported, []string{"authorization_code", "client_credentials", "refresh_token"}) || !slices.Equal(out.Metadata.TokenEndpointAuthMethodsSupported, []string{"client_secret_basic"}) || !slices.Equal(out.Metadata.ResponseTypesSupported, []string{"code"}) || !slices.Equal(out.Metadata.CodeChallengeMethodsSupported, []string{"S256"}) {
+		t.Fatal("metadata does not describe coherent selected managed human/static machine composition", err)
+	}
+}
+
 func TestDiscoveryWorkloadAndIntrospectionAdvertiseOnlyImplementedProfiles(t *testing.T) {
 	config, _ := workloadCoreConfig(t)
 	config.Discovery = discoveryEndpoints()

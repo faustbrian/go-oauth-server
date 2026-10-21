@@ -60,7 +60,7 @@ func validateDiscovery(c Config) error {
 		}
 		return nil
 	}
-	web, _, basic, _ := discoveryProfiles(c.Clients)
+	web, _, basic, _ := discoveryProfiles(c)
 	if d.TokenEndpoint == "" || d.RevocationEndpoint == "" || web != (d.AuthorizationEndpoint != "") || c.OwningClientIntrospection != (d.IntrospectionEndpoint != "") || c.OwningClientIntrospection && !basic {
 		return ErrInvalidRequest
 	}
@@ -89,12 +89,18 @@ func validDiscoveryEndpoint(issuer Issuer, endpoint string) bool {
 	return err == nil && u.Scheme == "https" && u.User == nil && u.Opaque == "" && u.Scheme+"://"+u.Host == issuer.String() && u.Path != "" && u.Path != "/" && strings.HasPrefix(u.Path, "/") && path.Clean(u.Path) == u.Path && u.RawPath == "" && u.RawQuery == "" && !u.ForceQuery && u.Fragment == "" && u.String() == endpoint
 }
 
-func discoveryProfiles(clients []Client) (web, workload, basic, public bool) {
-	for _, client := range clients {
+func discoveryProfiles(c Config) (web, workload, basic, public bool) {
+	for _, client := range c.Clients {
 		web = web || client.Workload == nil
 		workload = workload || client.Workload != nil
 		basic = basic || !client.Public
 		public = public || client.Public
+	}
+	// Selected managed registrations supply human code/refresh and Basic even
+	// before any row exists. Metadata describes this configured capability, not
+	// today's registration count or a stale snapshot of only static clients.
+	if c.ManagedClients != nil {
+		web, basic = true, true
 	}
 	return
 }
@@ -116,7 +122,7 @@ func (s *Service) DiscoveryOauth(ctx context.Context, _ DiscoveryOauthRequest) (
 	}
 	c := s.config
 	d := c.Discovery
-	web, workload, basic, public := discoveryProfiles(c.Clients)
+	web, workload, basic, public := discoveryProfiles(c)
 	m := DiscoveryOauthMetadata{Issuer: c.Issuer.String(), AuthorizationEndpoint: d.AuthorizationEndpoint, TokenEndpoint: d.TokenEndpoint, RevocationEndpoint: d.RevocationEndpoint, IntrospectionEndpoint: d.IntrospectionEndpoint, ScopesSupported: c.Scopes.Scopes(), ResponseTypesSupported: []string{}, ProtectedResources: []string{c.Resource}}
 	if !nilDependency(s.deps.OIDC) {
 		m.ScopesSupported = append(m.ScopesSupported, s.deps.OIDC.Scopes().Scopes()...)

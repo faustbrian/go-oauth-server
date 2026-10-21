@@ -35,7 +35,7 @@ during construction; the application destroys its startup secret. The reviewed
 verification. No human-password hashing scheme or OAuth-owned crypto is added.
 Unsupported methods/grants are rejected and never advertised.
 
-This is **startup-only configured secret authority**, not durable client
+This static profile is **startup-only configured secret authority**, not durable client
 administration, overlapping secrets, hot rotation or fleet-wide client/secret
 revocation. Changing a secret or client configuration requires advancing that
 client's version, replacing the service configuration and retiring all old
@@ -119,6 +119,18 @@ UTF-8/ASCII response bytes, recheck before changing these profile decisions):
 | [RFC8414](https://www.rfc-editor.org/rfc/rfc8414.txt) | 2,3.2,3.3: metadata fields, JSON, exact issuer | `16c816e4e0fdbffb7e910ff3017867bf39debe9cb7f52f5cbc508a052ed660e8` |
 | [RFC9207](https://www.rfc-editor.org/rfc/rfc9207.txt) | 2.3,2.4,3: issuer response and metadata flag | `c9c17b9824315aca9bda5c0b5e3627cb24aa28d54324292f3761006209b705fd` |
 | [RFC9728](https://www.rfc-editor.org/rfc/rfc9728.txt) | 4: authorization-server protected_resources | `b65bcd0d9daf90fd7006a42cf48e0ac3ba24b7f5637d5197f2de41c6b91c8a89` |
+
+### Optional managed confidential clients
+
+The separately selected native [client-management profile](../postgres/README.md#optional-platform-owned-confidential-client-management)
+adds finite authenticated platform-owned confidential creation and terminal
+deletion. `Config.ManagedClients` fixes tenant/owner/redirect/scope ceilings;
+actual fresh human custody, exact platform policy, origin/CSRF and prepared
+request keys authorize each change. Ordinary running services use current native
+registry state. This does not broaden configured clients into mutable metadata,
+overlap rotation, user/org ownership, dynamic registration HTTP, workload or OIDC
+management. Its forward migration and policy-epoch adoption requirements are
+separate from this unchanged static profile.
 
 ### Optional own-consent management
 

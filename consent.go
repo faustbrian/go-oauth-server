@@ -311,7 +311,7 @@ func (s *Service) ConsentGet(ctx context.Context, r ConsentGetRequest) (out Cons
 		return ConsentGetResult{}, operationError(ctx, err)
 	}
 	c := out.Consent
-	client, e := s.client(c.ClientID())
+	client, e := s.currentClient(ctx, c.ClientID())
 	if e != nil || client.Workload != nil || c.ID() != r.Consent.input.ID || !scopeSubset(c.Scopes(), client.Scopes) || observed.ValidateAt(s.config.Clock.Now()) != nil {
 		return ConsentGetResult{}, ErrUnavailable
 	}
@@ -346,7 +346,7 @@ func (s *Service) ConsentList(ctx context.Context, r ConsentListRequest) (out Co
 		return ConsentListResult{}, ErrUnavailable
 	}
 	for _, c := range out.Page.items {
-		client, e := s.client(c.ClientID())
+		client, e := s.currentClient(ctx, c.ClientID())
 		if e != nil || client.Workload != nil || !scopeSubset(c.Scopes(), client.Scopes) {
 			return ConsentListResult{}, ErrUnavailable
 		}

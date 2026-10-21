@@ -217,7 +217,7 @@ func (s *Service) UserInfoSource(ctx context.Context, r UserInfoRequest) (out OI
 		return OIDCClaimsInput{}, err
 	}
 	defer stop()
-	c, err := s.client(r.ClientID)
+	c, err := s.currentClient(ctx, r.ClientID)
 	if err != nil || c.Workload != nil || !opaque32(r.AccessToken) {
 		return OIDCClaimsInput{}, ErrAccessDenied
 	}

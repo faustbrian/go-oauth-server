@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"reflect"
 	"slices"
+	"strings"
 	"time"
 
 	auth "github.com/faustbrian/go-authentication/v2"
@@ -53,6 +54,9 @@ type Config struct {
 	// ClientSecrets contains exactly one verifier per confidential client ID and
 	// version, none for public clients. See NewClientSecretVerifier's startup policy.
 	ClientSecrets []ClientSecretVerifier
+	// ManagedClients optionally reserves the server-owned dynamic namespace.
+	// Current registry composition is required; zero preserves static-only use.
+	ManagedClients *ManagedClientPolicy
 	// OwningClientIntrospection explicitly enables RFC7662 for authenticated
 	// confidential clients inspecting only their own issued opaque tokens.
 	// Merely configuring a confidential client never enables this capability.
@@ -113,6 +117,13 @@ func (c Config) Validated() (Config, error) {
 	if err := validateClientSecrets(c.Clients, c.ClientSecrets); err != nil {
 		return Config{}, err
 	}
+	if c.ManagedClients != nil {
+		p, err := c.ManagedClients.validated(c)
+		if err != nil {
+			return Config{}, err
+		}
+		c.ManagedClients = &p
+	}
 	c.ClientSecrets = slices.Clone(c.ClientSecrets)
 	c.Scopes.values = slices.Clone(c.Scopes.values)
 	c.OIDCScopes.values = slices.Clone(c.OIDCScopes.values)
@@ -131,6 +142,7 @@ type Dependencies struct {
 	Sessions *session.SessionService
 	Store    Store
 	OIDC     OIDCExtension
+	Clients  CurrentClientRegistry
 }
 
 // Store is the consumer-owned storage-neutral OAuth execution seam. Commands
@@ -171,6 +183,9 @@ func NewService(config Config, dependencies Dependencies) (*Service, error) {
 		if reader, ok := dependencies.Store.(Introspector); !ok || nilDependency(reader) {
 			return nil, ErrInvalidRequest
 		}
+	}
+	if c.ManagedClients != nil && (dependencies.Sessions == nil || !dependencies.Sessions.Configured() || nilDependency(dependencies.Clients)) {
+		return nil, ErrInvalidRequest
 	}
 	if !nilDependency(dependencies.OIDC) && !slices.Equal(dependencies.OIDC.Scopes().Scopes(), c.OIDCScopes.Scopes()) {
 		return nil, ErrInvalidRequest
@@ -388,9 +403,9 @@ func (s *Service) client(id string) (Client, error) {
 	return Client{}, ErrInvalidRequest
 }
 
-func (s *Service) validateAuthorization(r AuthorizationRequest) (AuthorizationRequest, Client, error) {
+func (s *Service) validateAuthorization(ctx context.Context, r AuthorizationRequest) (AuthorizationRequest, Client, error) {
 	r = r.snapshot()
-	c, err := s.client(r.ClientID)
+	c, err := s.currentClient(ctx, r.ClientID)
 	if err != nil || !slices.Contains(c.Redirects, r.RedirectURI) || !opaque32(r.CodeChallenge) || r.Resource != c.Resource || !optionalVisible(r.State, 1024) || !optionalVisible(r.Nonce, 256) || r.Prompt != "" && r.Prompt != "login" {
 		return AuthorizationRequest{}, Client{}, ErrInvalidRequest
 	}
@@ -456,9 +471,12 @@ func (s *Service) Authorize(ctx context.Context, request AuthorizeRequest) (out 
 		return out, err
 	}
 	defer stop()
-	input, client, err := s.validateAuthorization(request.Request)
+	input, client, err := s.validateAuthorization(ctx, request.Request)
 	if err != nil || !visible(request.Network, 128) {
 		return out, ErrInvalidRequest
+	}
+	if s.config.ManagedClients != nil && strings.HasPrefix(client.ID, ManagedClientPrefix) && request.TenantID != s.config.ManagedClients.TenantID {
+		return out, ErrAccessDenied
 	}
 	source, err := s.source(ctx, request.TenantID, request.Session)
 	if err != nil {
@@ -505,9 +523,12 @@ func (s *Service) Continue(ctx context.Context, request ContinueRequest) (out Au
 		return out, err
 	}
 	defer stop()
-	client, err := s.client(request.ClientID)
+	client, err := s.currentClient(ctx, request.ClientID)
 	if err != nil || client.Workload != nil || !opaque32(request.Continuation) || request.Origin != s.config.Issuer.value || request.CSRF == (session.CSRFToken{}) || !visible(request.Network, 128) {
 		return out, ErrInvalidRequest
+	}
+	if s.config.ManagedClients != nil && strings.HasPrefix(client.ID, ManagedClientPrefix) && request.TenantID != s.config.ManagedClients.TenantID {
+		return out, ErrAccessDenied
 	}
 	if request.Scopes != nil {
 		request.Scopes, err = validatedScopes(request.Scopes)
@@ -534,7 +555,7 @@ func (s *Service) Continue(ctx context.Context, request ContinueRequest) (out Au
 	if out.Outcome == AuthorizationUnknown || out.Outcome == AuthorizationHistorical {
 		return s.authorizeResult(out, AuthorizationRequest{}, client, &authentication, false)
 	}
-	input, current, err := s.validateAuthorization(out.Request)
+	input, current, err := s.validateAuthorization(ctx, out.Request)
 	if err != nil || current.ID != client.ID {
 		return AuthorizeResult{}, ErrUnavailable
 	}
@@ -602,7 +623,7 @@ func (s *Service) Token(ctx context.Context, request TokenRequest) (out TokenRes
 		return out, err
 	}
 	defer stop()
-	client, err := s.client(request.ClientID)
+	client, err := s.currentClient(ctx, request.ClientID)
 	if err != nil && request.ClientAuthentication.Method() != "none" {
 		return out, ErrInvalidClient
 	}
@@ -652,7 +673,7 @@ func (s *Service) Token(ctx context.Context, request TokenRequest) (out TokenRes
 	default:
 		return out, ErrUnsupportedGrant
 	}
-	if err := s.config.AuthenticateClient(ctx, client.ID, request.ClientAuthentication); err != nil {
+	if err := s.authenticateClient(ctx, client, request.ClientAuthentication); err != nil {
 		return out, err
 	}
 	var issuer func(context.Context, OIDCClaimsInput) (OIDCClaimsProjection, error)
@@ -704,14 +725,14 @@ func (s *Service) Revoke(ctx context.Context, request RevokeRequest) (out Revoke
 		return out, err
 	}
 	defer stop()
-	client, err := s.client(request.ClientID)
+	client, err := s.currentClient(ctx, request.ClientID)
 	if err != nil && request.ClientAuthentication.Method() != "none" {
 		return out, ErrInvalidClient
 	}
 	if err != nil || !opaque32(request.Token) || request.Hint != 0 && request.Hint != TokenAccess && request.Hint != TokenRefresh || !visible(request.Network, 128) {
 		return out, ErrInvalidRequest
 	}
-	if err := s.config.AuthenticateClient(ctx, client.ID, request.ClientAuthentication); err != nil {
+	if err := s.authenticateClient(ctx, client, request.ClientAuthentication); err != nil {
 		return out, err
 	}
 	out, err = s.deps.Store.Revoke(ctx, RevocationCommand{Request: request, Client: client.snapshot()})
@@ -737,11 +758,11 @@ func (s *Service) Introspect(ctx context.Context, request IntrospectRequest) (ou
 	if !s.config.OwningClientIntrospection {
 		return out, ErrAccessDenied
 	}
-	client, err := s.client(request.ClientID)
+	client, err := s.currentClient(ctx, request.ClientID)
 	if err != nil || client.Public || request.ClientAuthentication.Method() != "client_secret_basic" {
 		return out, ErrInvalidClient
 	}
-	if err := s.config.AuthenticateClient(ctx, client.ID, request.ClientAuthentication); err != nil {
+	if err := s.authenticateClient(ctx, client, request.ClientAuthentication); err != nil {
 		return out, err
 	}
 	if !visible(request.Token, 2048) || request.Hint != 0 && request.Hint != TokenAccess && request.Hint != TokenRefresh {

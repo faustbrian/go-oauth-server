@@ -61,6 +61,16 @@ replacement authentication engine.
   every old-generation descendant; newly approved narrowed authorization is
   needed to obtain new tokens. Existing `ConsentManager` implementations do not
   acquire a new mandatory method.
+- `Service.ClientCreate/Delete` optionally manage one immutable platform-owned
+  confidential class through `Config.ManagedClients` and matching native
+  `CurrentClientRegistry`. Genuine fresh password-session custody, exact current
+  platform-management policy, origin/CSRF and native request keys are required;
+  configuring the owner does not authorize a manager. Creation allocates a
+  reserved `managed.` ID and reveals a random secret only once after known
+  commitment. Existing warm services resolve actual registry status on every
+  call; terminal deletion denies all descendants without token fanout.
+  Selected OAuth discovery includes the managed human-web/Basic capability,
+  including when no static confidential registration exists.
 - `Service.DiscoveryOauth` returns OAuth-only RFC8414 metadata when explicitly
   selected by `Config.Discovery`. Trusted issuer-origin endpoint configuration
   and actual configured clients determine grants, authentication methods, S256,
@@ -97,7 +107,7 @@ background work and own no pool or process shutdown.
 Public clients with method `none` and configured confidential clients with
 `client_secret_basic`, exact HTTPS callbacks, OAuth-only scopes,
 opaque access tokens of at most five minutes and rotating opaque refresh tokens
-are selected. Each confidential client uses one fixed random 32-byte startup
+are selected. Each statically configured confidential client uses one fixed random 32-byte startup
 secret; changes require a new client version and retiring old service instances.
 This is not hot rotation or fleet-wide client/secret revocation. Optional workload
 issuance requires the native forward migration and actual directory/workload

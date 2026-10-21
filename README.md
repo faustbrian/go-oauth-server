@@ -30,7 +30,9 @@ replacement authentication engine.
   each confidential client's startup-only `ClientSecretVerifier` from a borrowed
   `password.Secret`, then destroy that startup secret.
 - `Service.Authorize` admits a genuine current browser and returns an opaque
-  consent interaction, never a code before consent.
+  consent interaction, never a code before consent. Explicitly selected OIDC
+  `prompt=none` can reuse an original unexpired approval for a fresh code without
+  an interaction; it cannot create or renew consent.
 - `Service.Continue` checks the exact original browser, synchronizer, issuer
   origin and non-expanding scopes before a one-use code response or denial.
 - `Service.Token` exchanges an exact client/redirect/S256 code or rotates a

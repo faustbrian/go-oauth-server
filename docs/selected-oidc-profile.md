@@ -73,8 +73,9 @@ policy remains unchanged.
 [OIDC Core 1.0 errata2 section3.1.2.1](https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest)
 defines `prompt=login` and elapsed authentication age: `max_age=0` is equivalent
 to requesting login, and `auth_time` is required with maximum age. This profile
-selects only `login`; `none`, `consent`, `select_account` and combinations deny
-rather than being ignored. `AuthorizationRequest.MaxAge` is optional uint32
+selects exact `login` and the optional silent `none` profile below; `consent`,
+`select_account`, empty/duplicate values and combinations deny rather than being
+ignored. `AuthorizationRequest.MaxAge` is optional uint32
 seconds: nil preserves absence, a non-nil zero explicitly requires fresh login.
 Request snapshots and encrypted preparation preserve that distinction.
 
@@ -248,6 +249,39 @@ offline RP keys need explicit invalidation; ID tokens are not current resource
 authorization. Key management is trusted deployment composition, not a new
 tenant-facing management API/journal; full management authorization/audit/public
 operations remain broader unverified-goal work.
+
+## Optional silent authorization
+
+[OIDC Core1.0 errata2 sections3.1.2.1 and3.1.2.6](https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest)
+require `prompt=none` to avoid authentication/consent UI, forbid combinations,
+and define `login_required`/`consent_required`. Select the matching native
+`ConsentExpiryMigrationSource` and explicitly configure `ConsentReuseTTL`
+(1s..24h) after replacing old accepting writers. Zero selects preactivation legacy
+writers only: after activation every accepting writer must retain positive TTL;
+mixed/zero-writer rollback is unsupported and migration history is not reversible.
+Revoke consent to withdraw reuse. OIDC specifies
+existing consent, not its lifetime; this conservative owner policy requires
+bounded original explicit approval rather than inventing expiry for legacy
+history. Legacy NULL expiry always requires a new explicit approval.
+
+After genuine explicit consent, exact `none` creates a fresh one-use root code
+without a continuation or approval mutation. Ordinary S256 exchange and the
+independent RP verify the ID token and same-subject UserInfo. Current exact
+session/maximum age, client/tenant/subject/resource/scope subset and consent
+version/generation/expiry are repeatedly fenced, including after protected
+waits and late work. Silent reuse, narrowing and a larger configured TTL never
+renew original approval. Original read/session/credential/code/approval
+deadlines remain exclusive; final reads cannot restart the <=20s observation.
+
+Missing/withdrawn authentication or unmet maximum age returns `login_required`;
+missing/expired/revoked/insufficient/stale-client approval returns
+`consent_required`. Only a non-started condition becomes a standard validated
+redirect with original state/issuer. Invalid redirects remain local; unknown or
+late commands preserve their durability metadata without code/continuation or
+redirect. Required-effect failure rolls back; original pre/post-COMMIT recovery
+never redelivers code or renews consent. Other prompts and combinations remain
+unselected. Managed client mutations are not OIDC registration support; their
+ordinary-grant controls do not prove an OIDC-management variant.
 
 ## Protocol and evidence scope
 

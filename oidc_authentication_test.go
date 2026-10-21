@@ -19,6 +19,7 @@ func TestOIDCAuthenticationWirePresenceAndSelectedGrammar(t *testing.T) {
 	}{
 		{"", "", nil},
 		{"&prompt=login", "login", nil},
+		{"&prompt=none", "none", nil},
 		{"&max_age=0", "", uint32Pointer(0)},
 		{"&max_age=60", "", uint32Pointer(60)},
 		{"&prompt=login&max_age=60", "login", uint32Pointer(60)},
@@ -28,7 +29,7 @@ func TestOIDCAuthenticationWirePresenceAndSelectedGrammar(t *testing.T) {
 			t.Fatal("OIDC authentication presence/value was lost", err)
 		}
 	}
-	for _, suffix := range []string{"&prompt=", "&prompt=none", "&prompt=consent", "&prompt=select_account", "&prompt=login+none", "&prompt=login+login", "&prompt=LOGIN", "&prompt=login&prompt=login", "&max_age=", "&max_age=-1", "&max_age=1.5", "&max_age=%2B1", "&max_age=4294967296", "&max_age=0&max_age=1"} {
+	for _, suffix := range []string{"&prompt=", "&prompt=consent", "&prompt=select_account", "&prompt=login+none", "&prompt=none+none", "&prompt=login+login", "&prompt=LOGIN", "&prompt=login&prompt=login", "&max_age=", "&max_age=-1", "&max_age=1.5", "&max_age=%2B1", "&max_age=4294967296", "&max_age=0&max_age=1"} {
 		if _, err := oauth.ParseAuthorizationQueryWithOIDC(base + suffix); !errors.Is(err, oauth.ErrInvalidRequest) {
 			t.Fatal("unselected/malformed authentication request admitted", err)
 		}
@@ -50,7 +51,7 @@ func FuzzOIDCAuthenticationQuery(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, query string) {
 		request, err := oauth.ParseAuthorizationQueryWithOIDC(query)
-		if err == nil && request.Prompt != "" && request.Prompt != "login" {
+		if err == nil && request.Prompt != "" && request.Prompt != "login" && request.Prompt != "none" {
 			t.Fatal("unselected prompt admitted")
 		}
 	})

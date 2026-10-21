@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Select OIDC `prompt=none` with typed login/consent-required redirects and no
+  interactive fallback. Matching native bounded explicit approval is required;
+  silent issuance preserves original authority deadlines and metadata-only
+  unknown/history recovery. Other prompt variants remain unselected.
+
 - Add optional complete managed-client redirect/scope replacement under existing
   fresh manager/CSRF/keyed authority and immutable configured ceilings. Every
   commit invalidates old consent/grants but preserves Basic secret generations

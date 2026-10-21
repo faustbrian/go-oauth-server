@@ -29,6 +29,9 @@ var (
 	// metadata-only AuthorizationHistorical and CommandID for recovery. It never
 	// permits replay or supplies another credential.
 	ErrLoginRequired = errors.New("oauthserver: login_required")
+	// ErrConsentRequired is OIDC consent_required. It never grants approval or
+	// permits an interactive continuation in a no-interaction authorization.
+	ErrConsentRequired = errors.New("oauthserver: consent_required")
 )
 
 // Clock is trusted, fast, local and concurrent-safe. Callers cannot supply time
@@ -231,6 +234,18 @@ const (
 	// continuation while requesting genuine newly authenticated password
 	// session custody. It is not a completed login or consent authorization.
 	FreshAuthenticationRequired
+	// AuthorizationProtocolError carries only a closed standard condition and
+	// an exact previously validated redirect; no interaction or fresh material.
+	AuthorizationProtocolError
+)
+
+// AuthorizationError is the selected closed no-interaction OIDC error set.
+// It does not establish redirect authority without a validated Service result.
+type AuthorizationError string
+
+const (
+	AuthorizationLoginRequiredError   AuthorizationError = "login_required"
+	AuthorizationConsentRequiredError AuthorizationError = "consent_required"
 )
 
 // AuthorizeResult is a closed interaction/redirect/durability result. Core fills
@@ -249,14 +264,18 @@ type AuthorizeResult struct {
 	// Request is the original retained request, not a newly proposed redirect
 	// or policy. Adapters selecting prompt/max_age must echo it on known initial
 	// interaction/success results and protected continuation success.
-	Request AuthorizationRequest
+	Request       AuthorizationRequest
+	ProtocolError AuthorizationError
 }
 
 // Location explicitly encodes a known committed success/denial for transport.
 // Success consumes Code's sole reveal permission. This representation helper is
 // not proof of issuance or redirect authority; use only a Service result.
 func (r AuthorizeResult) Location() (string, error) {
-	if (r.Outcome != AuthorizationRedirect && r.Outcome != AuthorizationDenied) || !validRedirect(r.RedirectURI) || !validOrigin(r.Issuer.value) || !optionalVisible(r.State, 1024) {
+	if (r.Outcome != AuthorizationRedirect && r.Outcome != AuthorizationDenied && r.Outcome != AuthorizationProtocolError) || !validRedirect(r.RedirectURI) || !validOrigin(r.Issuer.value) || !optionalVisible(r.State, 1024) {
+		return "", ErrInvalidRequest
+	}
+	if r.Outcome == AuthorizationProtocolError && (r.ProtocolError != AuthorizationLoginRequiredError && r.ProtocolError != AuthorizationConsentRequiredError || r.Code.state != nil || r.Continuation.state != nil || !r.ExpiresAt.IsZero()) || r.Outcome != AuthorizationProtocolError && r.ProtocolError != "" {
 		return "", ErrInvalidRequest
 	}
 	u, err := url.Parse(r.RedirectURI)
@@ -274,6 +293,8 @@ func (r AuthorizeResult) Location() (string, error) {
 			return "", err
 		}
 		q.Set("code", code)
+	} else if r.Outcome == AuthorizationProtocolError {
+		q.Set("error", string(r.ProtocolError))
 	} else {
 		q.Set("error", "access_denied")
 	}
@@ -406,7 +427,7 @@ func (s *Service) client(id string) (Client, error) {
 func (s *Service) validateAuthorization(ctx context.Context, r AuthorizationRequest) (AuthorizationRequest, Client, error) {
 	r = r.snapshot()
 	c, err := s.currentClient(ctx, r.ClientID)
-	if err != nil || !slices.Contains(c.Redirects, r.RedirectURI) || !opaque32(r.CodeChallenge) || r.Resource != c.Resource || !optionalVisible(r.State, 1024) || !optionalVisible(r.Nonce, 256) || r.Prompt != "" && r.Prompt != "login" {
+	if err != nil || !slices.Contains(c.Redirects, r.RedirectURI) || !opaque32(r.CodeChallenge) || r.Resource != c.Resource || !optionalVisible(r.State, 1024) || !optionalVisible(r.Nonce, 256) || r.Prompt != "" && r.Prompt != "login" && r.Prompt != "none" {
 		return AuthorizationRequest{}, Client{}, ErrInvalidRequest
 	}
 	scopes, err := validatedScopes(r.Scopes)
@@ -483,6 +504,9 @@ func (s *Service) Authorize(ctx context.Context, request AuthorizeRequest) (out 
 		return out, err
 	}
 	if !source.Authenticated {
+		if input.Prompt == "none" {
+			return s.silentError(input, ErrLoginRequired)
+		}
 		return AuthorizeResult{Outcome: LoginRequired}, nil
 	}
 	var subjectCandidate *OIDCSubjectCandidate
@@ -493,6 +517,9 @@ func (s *Service) Authorize(ctx context.Context, request AuthorizeRequest) (out 
 		projection, e := oidcAuthorization(ctx, OIDCAuthorizationInput{Issuer: s.config.Issuer, Environment: s.config.Environment, Client: client.snapshot(), Request: input.snapshot(), Session: source})
 		if e != nil || !projection.Accepted || !validSubjectCandidate(client, projection.SubjectCandidate) {
 			if e != nil {
+				if input.Prompt == "none" && errors.Is(e, ErrLoginRequired) {
+					return s.silentError(input, e)
+				}
 				return out, e
 			}
 			return out, ErrAccessDenied
@@ -504,7 +531,13 @@ func (s *Service) Authorize(ctx context.Context, request AuthorizeRequest) (out 
 	}
 	out, err = s.deps.Store.Authorize(ctx, AuthorizationCommand{Request: input.snapshot(), Client: client.snapshot(), Session: source, Browser: request.Session, Network: request.Network, SubjectCandidate: subjectCandidate, OIDC: oidcAuthorization})
 	if err != nil || ctx.Err() != nil {
+		if ctx.Err() == nil && input.Prompt == "none" && out.Outcome == 0 && out.CommandID == "" && (errors.Is(err, ErrLoginRequired) || errors.Is(err, ErrConsentRequired)) {
+			return s.silentError(input, err)
+		}
 		return AuthorizeResult{Outcome: out.Outcome, CommandID: out.CommandID}, operationError(ctx, err)
+	}
+	if input.Prompt == "none" && source.ValidateAt(s.config.Clock.Now()) != nil {
+		return AuthorizeResult{Outcome: AuthorizationHistorical, CommandID: out.CommandID}, ErrAccessDenied
 	}
 	return s.authorizeResult(out, input, client, &authentication, true)
 }
@@ -805,7 +838,7 @@ func operationError(ctx context.Context, err error) error {
 	if err == nil {
 		return nil
 	}
-	for _, known := range []error{ErrInvalidRequest, ErrInvalidClient, ErrInvalidGrant, ErrAccessDenied, ErrInvalidScope, ErrUnsupportedGrant, ErrLoginRequired} {
+	for _, known := range []error{ErrInvalidRequest, ErrInvalidClient, ErrInvalidGrant, ErrAccessDenied, ErrInvalidScope, ErrUnsupportedGrant, ErrLoginRequired, ErrConsentRequired} {
 		if errors.Is(err, known) {
 			return known
 		}

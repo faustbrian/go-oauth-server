@@ -71,6 +71,10 @@ type OIDCAuthenticationRequirement uint8
 const (
 	OIDCAuthenticationCurrent OIDCAuthenticationRequirement = iota + 1
 	OIDCAuthenticationFresh
+	// OIDCAuthenticationSilent requires current authentication without any user
+	// interaction. It is extension policy, never proof of reusable consent; the
+	// durable owner must independently admit exact unexpired approval.
+	OIDCAuthenticationSilent
 )
 
 func (OIDCAuthorizationInput) Format(f fmt.State, _ rune) {

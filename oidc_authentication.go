@@ -42,7 +42,7 @@ func (call *oidcAuthorizationCall) wrap(policy func(context.Context, OIDCAuthori
 			call.seen = true
 		}
 		if authenticationRequested(request) {
-			if err != nil || !projection.Accepted || projection.Authentication != OIDCAuthenticationCurrent && projection.Authentication != OIDCAuthenticationFresh || projection.Authentication == OIDCAuthenticationFresh && !projection.AuthenticationUntil.IsZero() || projection.Authentication == OIDCAuthenticationCurrent && request.MaxAge != nil && *request.MaxAge > 0 && projection.AuthenticationUntil.IsZero() {
+			if err != nil || !projection.Accepted || projection.Authentication != OIDCAuthenticationCurrent && projection.Authentication != OIDCAuthenticationFresh && projection.Authentication != OIDCAuthenticationSilent || projection.Authentication == OIDCAuthenticationFresh && !projection.AuthenticationUntil.IsZero() || (request.Prompt == "none") != (projection.Authentication == OIDCAuthenticationSilent) || projection.Authentication != OIDCAuthenticationFresh && request.MaxAge != nil && *request.MaxAge > 0 && projection.AuthenticationUntil.IsZero() {
 				call.invalid = true
 			}
 			if projection.Authentication == OIDCAuthenticationFresh || call.mode == 0 {
@@ -76,6 +76,9 @@ func (call *oidcAuthorizationCall) check(out AuthorizeResult, request Authorizat
 			return ErrUnavailable
 		}
 		return ErrLoginRequired
+	}
+	if call.mode == OIDCAuthenticationSilent && out.Outcome != AuthorizationRedirect {
+		return ErrUnavailable // No interaction can be substituted for silent policy.
 	}
 	if out.Outcome != FreshAuthenticationRequired && !call.until.IsZero() && !now.Before(call.until) {
 		return ErrLoginRequired

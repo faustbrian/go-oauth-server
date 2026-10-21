@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Select patched Go 1.27.3 for verification of GO-2026-6809 in `crypto/x509`.
+  Consumers must also build with a patched toolchain; the API minimum is unchanged.
+
 - Opt into consented email/email_verified UserInfo from current native
   identifier and verification authority. Prefer verified primary, then verified
   and pending contacts in stable ID order; omit absent/revoked email and deny

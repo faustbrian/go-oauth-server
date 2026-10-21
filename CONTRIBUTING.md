@@ -7,7 +7,7 @@ composition and full provider/release qualification remain separate. Read
 
 ## Verification
 
-Use Go 1.27.2; the module minimum remains Go 1.27.0. An isolated checkout
+Use Go 1.27.3; the module minimum remains Go 1.27.0. An isolated checkout
 needs no sibling repositories or coordination goal files for these checks.
 Install the public v2.5.1 binary archive for your platform from
 [go-library-tools releases](https://github.com/faustbrian/go-library-tools/releases/tag/v2.5.1).

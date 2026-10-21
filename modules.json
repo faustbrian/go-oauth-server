@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "repository": "github.com/faustbrian/go-oauth-server",
-  "go_version": "1.27.2",
+  "go_version": "1.27.3",
   "modules": [
     {
       "directory": ".",
@@ -94,7 +94,7 @@
         "supported_go": {
           "minimum": "1.27.0",
           "tested": [
-            "1.27.2"
+            "1.27.3"
           ]
         },
         "supported_platforms": [
@@ -263,7 +263,7 @@
         "supported_go": {
           "minimum": "1.27.0",
           "tested": [
-            "1.27.2"
+            "1.27.3"
           ]
         },
         "supported_platforms": [
@@ -397,7 +397,7 @@
         "supported_go": {
           "minimum": "1.27.0",
           "tested": [
-            "1.27.2"
+            "1.27.3"
           ]
         },
         "supported_platforms": [

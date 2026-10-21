@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Use the patched Go 1.27.3 verification toolchain for the GO-2026-6809
+  `crypto/x509` fix. Consumers must also build with a patched Go toolchain;
+  the module/API minimum remains Go 1.27.0.
+
 - Add optional managed confidential-client secret rotation with explicit 0..24h
   overlap and reveal-once successor. Rotation advances client authority: old
   code/access/refresh/grants/consent are denied and require new explicit approval.

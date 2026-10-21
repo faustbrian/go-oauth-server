@@ -121,7 +121,7 @@ func (s *Store) authenticationPolicy(ctx context.Context, policy func(context.Co
 	if err != nil {
 		return nil, err
 	}
-	if !projection.Accepted || projection.Authentication != oauth.OIDCAuthenticationCurrent && projection.Authentication != oauth.OIDCAuthenticationFresh || projection.Authentication == oauth.OIDCAuthenticationFresh && !projection.AuthenticationUntil.IsZero() {
+	if !projection.Accepted || projection.Authentication != oauth.OIDCAuthenticationCurrent && projection.Authentication != oauth.OIDCAuthenticationFresh && projection.Authentication != oauth.OIDCAuthenticationSilent || projection.Authentication == oauth.OIDCAuthenticationFresh && !projection.AuthenticationUntil.IsZero() || (request.Prompt == "none") != (projection.Authentication == oauth.OIDCAuthenticationSilent) {
 		return nil, oauth.ErrAccessDenied
 	}
 	return &authenticationSelection{Requirement: projection.Authentication, Until: projection.AuthenticationUntil}, nil

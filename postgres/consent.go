@@ -562,7 +562,12 @@ func (p *phase) checkGrantConsent(ctx context.Context, w kernel.Work, final bool
 
 func (p *phase) checkManagedConsent(ctx context.Context, w kernel.Work, final bool) error {
 	c, g := p.input.Consent, p.input.Grant
-	rows, err := w.Query(ctx, `SELECT consent_id,version::text,generation::text,state,client_version::text,client_fingerprint,scopes,granted_at FROM `+p.store.schema+`.consents WHERE tenant_id=$1 AND user_id=$2 AND client_id=$3 FOR UPDATE`, string(g.Tenant), string(g.User), g.ClientID)
+	columns := ""
+	var expiresAt *time.Time
+	if p.store.config.ConsentReuseTTL != 0 || c.ExpiresAt != nil {
+		columns = ",expires_at"
+	}
+	rows, err := w.Query(ctx, `SELECT consent_id,version::text,generation::text,state,client_version::text,client_fingerprint,scopes,granted_at`+columns+` FROM `+p.store.schema+`.consents WHERE tenant_id=$1 AND user_id=$2 AND client_id=$3 FOR UPDATE`, string(g.Tenant), string(g.User), g.ClientID)
 	if err != nil {
 		return err
 	}
@@ -579,12 +584,19 @@ func (p *phase) checkManagedConsent(ctx context.Context, w kernel.Work, final bo
 	var id, version, generation, state, clientVersion string
 	var fingerprint, scopes []byte
 	var grantedAt time.Time
-	if rows.Scan(&id, &version, &generation, &state, &clientVersion, &fingerprint, &scopes, &grantedAt) != nil || rows.Next() || rows.Err() != nil {
+	targets := []any{&id, &version, &generation, &state, &clientVersion, &fingerprint, &scopes, &grantedAt}
+	if columns != "" {
+		targets = append(targets, &expiresAt)
+	}
+	if rows.Scan(targets...) != nil || rows.Next() || rows.Err() != nil {
 		return identity.UnavailableError{}
 	}
 	want := c.BeforeVersion
 	wantState := c.State
 	if final && p.applied {
+		if columns != "" && ((expiresAt == nil) != (c.ExpiresAt == nil) || expiresAt != nil && !expiresAt.Equal(*c.ExpiresAt)) {
+			return identity.ForbiddenError{}
+		}
 		want = c.AfterVersion
 		wantState = "active"
 	} else if c.Created {

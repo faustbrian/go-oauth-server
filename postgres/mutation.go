@@ -38,7 +38,13 @@ func (p *phase) mutate(ctx context.Context, w kernel.Work) error {
 	if i.Transition == createInteraction {
 		// Work deliberately fixes bytes to bytea, not a driver-selected JSON
 		// codec. Bounded nonsecret projections use text with explicit jsonb casts.
-		n, err := w.Exec(ctx, `INSERT INTO `+s+`.grants(grant_id,tenant_id,user_id,client_id,client_version,client_fingerprint,source_session,scopes,resource,state,created_at,expires_at,version) VALUES($1,$2,$3,$4,$5::numeric,$6,$7::jsonb,$8::jsonb,$9,'active',$10,$11,1)`, g.ID, string(g.Tenant), string(g.User), g.ClientID, strconv.FormatUint(g.ClientVersion, 10), g.ClientFingerprint[:], string(source), string(scopes), g.Resource, g.CreatedAt, g.ExpiresAt)
+		columns, values := "", ""
+		args := []any{g.ID, string(g.Tenant), string(g.User), g.ClientID, strconv.FormatUint(g.ClientVersion, 10), g.ClientFingerprint[:], string(source), string(scopes), g.Resource, g.CreatedAt, g.ExpiresAt}
+		if i.SilentConsent != nil {
+			columns, values = ",consent_id,consent_generation", ",$12,$13::numeric"
+			args = append(args, g.ConsentID, strconv.FormatUint(g.ConsentGeneration, 10))
+		}
+		n, err := w.Exec(ctx, `INSERT INTO `+s+`.grants(grant_id,tenant_id,user_id,client_id,client_version,client_fingerprint,source_session,scopes,resource,state,created_at,expires_at,version`+columns+`) VALUES($1,$2,$3,$4,$5::numeric,$6,$7::jsonb,$8::jsonb,$9,'active',$10,$11,1`+values+`)`, args...)
 		if err != nil {
 			return err
 		}
@@ -119,10 +125,30 @@ func (p *phase) mutate(ctx context.Context, w kernel.Work) error {
 		var err error
 		if p.store.config.ConsentManagement {
 			fp := clientFingerprint(p.client)
+			columns, insert, update := "", "", ""
+			var expiry any
+			if p.store.config.ConsentReuseTTL != 0 || i.Consent.ExpiresAt != nil {
+				// Approval time and its captured exclusive expiry change in ONE
+				// statement: an expired row must not fail the invariant between
+				// setting granted_at and a later expiry write. Legacy restored
+				// preparation has nil expiry and cannot invent reuse authority.
+				columns, insert, update = ",expires_at", ",$9", ",expires_at=$11"
+				if i.Consent.ExpiresAt != nil {
+					expiry = *i.Consent.ExpiresAt
+				}
+			}
 			if i.Consent.Created {
-				n, err = w.Exec(ctx, `INSERT INTO `+s+`.consents(consent_id,tenant_id,user_id,client_id,client_version,scopes,granted_at,version,client_fingerprint) VALUES($7,$1,$2,$3,$4::numeric,$5::jsonb,$6,1,$8)`, string(g.Tenant), string(g.User), g.ClientID, strconv.FormatUint(g.ClientVersion, 10), string(scopes), i.CreatedAt, i.Consent.ID, fp[:])
+				args := []any{string(g.Tenant), string(g.User), g.ClientID, strconv.FormatUint(g.ClientVersion, 10), string(scopes), i.CreatedAt, i.Consent.ID, fp[:]}
+				if columns != "" {
+					args = append(args, expiry)
+				}
+				n, err = w.Exec(ctx, `INSERT INTO `+s+`.consents(consent_id,tenant_id,user_id,client_id,client_version,scopes,granted_at,version,client_fingerprint`+columns+`) VALUES($7,$1,$2,$3,$4::numeric,$5::jsonb,$6,1,$8`+insert+`)`, args...)
 			} else {
-				n, err = w.Exec(ctx, `UPDATE `+s+`.consents SET client_version=$4::numeric,scopes=$5::jsonb,granted_at=$6,version=$9::numeric,client_fingerprint=$10 WHERE tenant_id=$1 AND user_id=$2 AND client_id=$3 AND consent_id=$7 AND version=$8::numeric`, string(g.Tenant), string(g.User), g.ClientID, strconv.FormatUint(g.ClientVersion, 10), string(scopes), i.CreatedAt, i.Consent.ID, strconv.FormatUint(i.Consent.BeforeVersion, 10), strconv.FormatUint(i.Consent.AfterVersion, 10), fp[:])
+				args := []any{string(g.Tenant), string(g.User), g.ClientID, strconv.FormatUint(g.ClientVersion, 10), string(scopes), i.CreatedAt, i.Consent.ID, strconv.FormatUint(i.Consent.BeforeVersion, 10), strconv.FormatUint(i.Consent.AfterVersion, 10), fp[:]}
+				if columns != "" {
+					args = append(args, expiry)
+				}
+				n, err = w.Exec(ctx, `UPDATE `+s+`.consents SET client_version=$4::numeric,scopes=$5::jsonb,granted_at=$6,version=$9::numeric,client_fingerprint=$10`+update+` WHERE tenant_id=$1 AND user_id=$2 AND client_id=$3 AND consent_id=$7 AND version=$8::numeric`, args...)
 			}
 		} else if i.Consent.Created {
 			n, err = w.Exec(ctx, `INSERT INTO `+s+`.consents(consent_id,tenant_id,user_id,client_id,client_version,scopes,granted_at,version) VALUES($7,$1,$2,$3,$4::numeric,$5::jsonb,$6,1)`, string(g.Tenant), string(g.User), g.ClientID, strconv.FormatUint(g.ClientVersion, 10), string(scopes), i.CreatedAt, i.Consent.ID)
@@ -160,6 +186,14 @@ func (p *phase) mutate(ctx context.Context, w kernel.Work) error {
 			columns = ",workload_only"
 			values = ",$14"
 			args = append(args, g.Workload != nil)
+		}
+		if i.SilentConsent != nil {
+			// A silent code is a genuine grant root, not a fabricated consumed
+			// interaction. Forward history permits exactly this marked code kind;
+			// ordinary access/refresh and workload parent rules remain unchanged.
+			columns += ",silent_code"
+			values += ",$" + strconv.Itoa(len(args)+1)
+			args = append(args, true)
 		}
 		n, err := w.Exec(ctx, `INSERT INTO `+s+`.artifacts(artifact_id,digest_version,digest,kind,client_id,grant_id,created_at,expires_at,state,transition_command,replay_command,payload,parent_artifact_id,issued_by`+columns+`) VALUES($11,$1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10::jsonb,$12::text,$13`+values+`)`, args...)
 		if err != nil {

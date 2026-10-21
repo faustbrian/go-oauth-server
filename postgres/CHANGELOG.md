@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add opt-in bounded explicit-consent reuse for OIDC `prompt=none`, issuing fresh
+  one-use codes without interaction or approval mutation. Append
+  `ConsentExpiryMigrationSource`, replace old accepting writers, then select
+  positive `ConsentReuseTTL` (1s..24h) on every accepting writer; mixed/zero-writer
+  rollback after activation is unsupported. Legacy NULL is never reusable.
+  Original expiry, current authority and <=20s observation fences survive waits,
+  required-effect rollback and original metadata-only COMMIT recovery.
+
 - Add selected managed metadata replacement with independent registration and
   secret generations, preserving both digest slots and original overlap expiry.
   Install forward `ClientUpdateMigrationSource`, replace all accepting old

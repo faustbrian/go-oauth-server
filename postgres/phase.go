@@ -282,14 +282,24 @@ func (p *phase) buildCommand() error {
 		return oauth.ErrInvalidRequest
 	}
 	if i.Authentication != nil {
-		if !authenticationRequested(i.Request) || i.Transition != createInteraction && i.Transition != approveInteraction || i.Authentication.Requirement != oauth.OIDCAuthenticationCurrent && (i.Authentication.Requirement != oauth.OIDCAuthenticationFresh || i.Transition != createInteraction) {
+		if !authenticationRequested(i.Request) || i.Transition != createInteraction && i.Transition != approveInteraction || i.Authentication.Requirement != oauth.OIDCAuthenticationCurrent && ((i.Authentication.Requirement != oauth.OIDCAuthenticationFresh && i.Authentication.Requirement != oauth.OIDCAuthenticationSilent) || i.Transition != createInteraction) {
 			return oauth.ErrInvalidRequest
 		}
+	}
+	if i.SilentConsent != nil {
+		if !p.store.validSilentInput(i, p.client) {
+			return oauth.ErrInvalidRequest
+		}
+	} else if i.Request.Prompt == "none" && (i.Transition == createInteraction || i.Transition == approveInteraction) {
+		return oauth.ErrInvalidRequest
 	}
 	if i.PreviousSource != nil && (i.Transition != approveInteraction || i.Authentication == nil || i.Authentication.Requirement != oauth.OIDCAuthenticationCurrent) {
 		return oauth.ErrInvalidRequest
 	}
 	if i.Transition == approveInteraction {
+		if i.Consent.ExpiresAt != nil && (!i.Consent.ExpiresAt.After(i.CreatedAt) || i.Consent.ExpiresAt.After(i.CreatedAt.Add(24*time.Hour))) {
+			return oauth.ErrInvalidRequest
+		}
 		if _, err := identity.ParseSubjectID(i.Consent.ID); err != nil || i.Consent.BeforeVersion == math.MaxUint64 || i.Consent.AfterVersion != i.Consent.BeforeVersion+1 || i.Consent.Created != (i.Consent.BeforeVersion == 0) {
 			return oauth.ErrInvalidRequest
 		}
@@ -620,6 +630,9 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 		}
 	}
 	if i.Transition == createInteraction || i.Transition == createWorkload {
+		if i.SilentConsent != nil {
+			return p.checkSilentConsent(ctx, w)
+		}
 		return nil
 	}
 	if err := p.checkGrantConsent(ctx, w, final); err != nil {
@@ -874,7 +887,11 @@ func (p *phase) GenerateFeaturePreparation(ctx context.Context, c identity.Comma
 	var kinds []oauth.TokenKind
 	switch i.Transition {
 	case createInteraction:
-		kinds = []oauth.TokenKind{oauth.TokenContinuation}
+		if i.SilentConsent == nil {
+			kinds = []oauth.TokenKind{oauth.TokenContinuation}
+		} else {
+			kinds = []oauth.TokenKind{oauth.TokenCode}
+		}
 	case approveInteraction:
 		kinds = []oauth.TokenKind{oauth.TokenCode}
 	case exchangeCode, rotateRefresh:
@@ -913,7 +930,7 @@ func (p *phase) GenerateFeaturePreparation(ctx context.Context, c identity.Comma
 			expires = minTime(expires, i.CreatedAt.Add(p.store.config.Protocol.ContinuationTTL))
 		case oauth.TokenCode:
 			expires = minTime(expires, i.CreatedAt.Add(p.store.config.Protocol.CodeTTL))
-			if authenticationRequested(i.Request) {
+			if authenticationRequested(i.Request) && i.Transition == approveInteraction {
 				expires = minTime(expires, i.TargetExpires)
 			}
 		case oauth.TokenAccess:
@@ -1075,6 +1092,9 @@ func (p *phase) restore(ctx context.Context, generation uint64, wire []byte, ini
 			return oauth.ErrUnavailable
 		}
 		expected := oauth.TokenContinuation
+		if out.Input.Transition == createInteraction && out.Input.SilentConsent != nil {
+			expected = oauth.TokenCode
+		}
 		switch out.Input.Transition {
 		case approveInteraction:
 			expected = oauth.TokenCode
@@ -1193,6 +1213,9 @@ func (p *phase) checkArtifactExpiry(ctx context.Context, w kernel.Work) error {
 	if p.input.Authentication != nil && !p.input.Authentication.Until.IsZero() && !now.Before(p.input.Authentication.Until) {
 		return kernel.OAuthReauthenticationRequiredError{}
 	}
+	if p.input.SilentConsent != nil && (p.observation.ValidateAt(now) != nil || p.observation.ValidateAt(p.store.now()) != nil || !now.Before(p.input.ObservationUntil) || !now.Before(p.input.SilentConsent.ExpiresAt)) {
+		return identity.ForbiddenError{}
+	}
 	for _, artifact := range p.output.Artifacts {
 		if !now.Before(artifact.ExpiresAt) {
 			return identity.ForbiddenError{}
@@ -1226,6 +1249,12 @@ func (p *phase) authorizationResult(r identity.CommandResult) oauth.AuthorizeRes
 	out.Request = p.input.Request
 	switch p.input.Transition {
 	case createInteraction:
+		if p.input.SilentConsent != nil {
+			out.Outcome = oauth.AuthorizationRedirect
+			out.Code = p.generatedToken(oauth.TokenCode)
+			out.ExpiresAt = p.generatedExpiry(oauth.TokenCode)
+			break
+		}
 		out.Outcome = oauth.ConsentRequired
 		if p.input.Authentication != nil && p.input.Authentication.Requirement == oauth.OIDCAuthenticationFresh {
 			out.Outcome = oauth.FreshAuthenticationRequired

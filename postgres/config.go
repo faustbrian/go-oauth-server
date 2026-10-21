@@ -69,6 +69,12 @@ type Config struct {
 	// Install ClientUpdateMigrationSource and retire all non-update-aware serving
 	// instances before enabling. Rotation-aware consent/client history is required.
 	ClientMetadataUpdates bool
+	// ConsentReuseTTL explicitly selects silent OIDC approval reuse for 1s..24h.
+	// Zero selects only a preactivation legacy writer. After installing expiry
+	// history, EVERY accepting writer must retain a positive TTL; mixed/zero
+	// writer rollback is unsupported. Revoke consent to withdraw reuse. Install
+	// forward history and retire old writers first; legacy NULL is never reusable.
+	ConsentReuseTTL time.Duration
 }
 
 // Format redacts keys, correlated deployment scopes and policy dependencies.
@@ -133,6 +139,9 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 		return nil, oauth.ErrInvalidRequest
 	}
 	if c.ClientMetadataUpdates && !c.ClientSecretRotation {
+		return nil, oauth.ErrInvalidRequest
+	}
+	if c.ConsentReuseTTL != 0 && (!c.ConsentManagement || len(protocol.OIDCScopes.Scopes()) == 0 || c.ConsentReuseTTL < time.Second || c.ConsentReuseTTL > 24*time.Hour || c.ConsentReuseTTL%time.Microsecond != 0) {
 		return nil, oauth.ErrInvalidRequest
 	}
 	// Privileged's native counters supply exactly velocity. The upstream
@@ -241,6 +250,10 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	}
 	s.identity = sha256.Sum256(frame)
 	clear(frame)
+	// ConsentReuseTTL is deliberately outside this legacy identity: changing a
+	// reuse ceiling must not strand existing grants or encrypted preparation.
+	// Explicit approval freezes its actual expiry; silent reuse never renews it
+	// and checks both that original expiry and today's selected ceiling.
 	// Narrowing enables a new operation, not a new policy for existing grants.
 	// Preserve their prepared configuration identity; its separate input profile
 	// and operation gate bind selection without stranding older recovery.

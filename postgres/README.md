@@ -385,6 +385,45 @@ kernel request preparation and feature preparation before reconciling metadata.
 It neither executes narrowing again nor redelivers credentials. A same-key
 retry returns only the original completion, never another generation advance.
 
+## Optional bounded OIDC silent reauthorization
+
+Select matching root/OIDC child versions and existing consent management, append
+`ConsentExpiryMigrationSource{Base: installedOAuthHistory, Schema: ...,
+Version: nextVersion}`, then explicitly set `ConsentReuseTTL` to 1s..24h at
+microsecond precision. Zero selects legacy writers before activation only.
+Stop accepting writers, install the forward history, and replace every old
+accepting instance before activation;
+old published SQL and retained preparation must not be rewritten. After activation
+EVERY accepting writer must retain a positive TTL; mixed/zero-writer rollback is
+unsupported, and history is not reversible. Revoke consent to withdraw reuse.
+The additive
+history preserves existing ordinary/workload parent constraints and marks only
+genuine silent root codes. Constructors perform no migration or IO.
+
+Only a new explicit approval captures `granted_at + ConsentReuseTTL`. Legacy NULL
+expiry is never backfilled or reusable. Silent issuance, scope narrowing,
+recovery and configuration increases never renew that original bound; a reduced
+configured ceiling may conservatively deny an older approval. The TTL stays
+outside the legacy configuration identity so changing a reuse ceiling does not
+strand unrelated grants or retained original preparation.
+
+`prompt=none` independently verifies the exact current session, client/version,
+tenant/subject/resource and approved scope subset. Current approval is locked
+and fenced in the sole existing authorize Work; no continuation, approval audit
+or consent write is created. Session/max-age failures before a command starts
+return `login_required`; missing/NULL/expired/withdrawn/insufficient/stale-client
+approval returns `consent_required`. Already-started late denials preserve their
+command/durability classification and disclose no credentials or redirect.
+Original exclusive session/credential/read/max-age/approval deadlines survive
+SQL waits and final delivery, without positive caching or fresh observation
+renewal. Required risk/audit/outbox failures roll back issuance atomically.
+
+Original authorize COMMIT ambiguity uses the existing `Recover` operation and
+metadata only: neither retry nor recovery reveals a code, creates a replacement
+grant, or renews approval. The selected consumer is static human OIDC
+registration. Managed OAuth client update/rotation/deletion remain OAuth-only,
+not newly supported OIDC-management variants.
+
 ## Unknown outcomes
 
 Cancellation, connection failure and lost COMMIT acknowledgement do not prove

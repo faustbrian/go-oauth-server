@@ -107,14 +107,16 @@ type phaseInput struct {
 	Authentication              *authenticationSelection      `json:",omitempty"`
 	PreviousSource              []identity.FeatureField       `json:",omitempty"`
 	ContinuationPrevious        identity.CommandID            `json:",omitempty"`
+	SilentConsent               *silentConsent                `json:",omitempty"`
 }
 
 type consentMutation struct {
 	ID                          string
 	BeforeVersion, AfterVersion uint64
 	Created                     bool
-	Generation                  uint64 `json:",omitempty"`
-	State                       string `json:",omitempty"`
+	Generation                  uint64     `json:",omitempty"`
+	State                       string     `json:",omitempty"`
+	ExpiresAt                   *time.Time `json:",omitempty"`
 }
 
 func (s *Store) prepareConsent(ctx context.Context, g grantRecord) (consentMutation, error) {
@@ -227,7 +229,8 @@ func selectedScopes(values []string) ([]string, error) {
 	return owned, nil
 }
 
-// Authorize creates only a browser-bound consent interaction. It authenticates
+// Authorize creates a browser-bound consent interaction, or a selected silent
+// code after independently checking original bounded explicit approval. It authenticates
 // sealed GetResult custody again and rechecks every current owner inside native
 // preparation/apply/final commit. It never issues or replaces a local session.
 func (s *Store) Authorize(ctx context.Context, c oauth.AuthorizationCommand) (oauth.AuthorizeResult, error) {
@@ -236,7 +239,7 @@ func (s *Store) Authorize(ctx context.Context, c oauth.AuthorizationCommand) (oa
 		return oauth.AuthorizeResult{}, err
 	}
 	defer stop()
-	if !boundedText(c.Network, 128) || !boundedText(c.Request.ClientID, 128) || !boundedText(c.Request.RedirectURI, 2048) || !boundedText(c.Request.CodeChallenge, 43) || !boundedText(c.Request.Resource, 2048) || c.Request.State != "" && !boundedText(c.Request.State, 1024) || c.Request.Nonce != "" && !boundedText(c.Request.Nonce, 256) || c.Request.Prompt != "" && c.Request.Prompt != "login" {
+	if !boundedText(c.Network, 128) || !boundedText(c.Request.ClientID, 128) || !boundedText(c.Request.RedirectURI, 2048) || !boundedText(c.Request.CodeChallenge, 43) || !boundedText(c.Request.Resource, 2048) || c.Request.State != "" && !boundedText(c.Request.State, 1024) || c.Request.Nonce != "" && !boundedText(c.Request.Nonce, 256) || c.Request.Prompt != "" && c.Request.Prompt != "login" && c.Request.Prompt != "none" {
 		return oauth.AuthorizeResult{}, oauth.ErrInvalidRequest
 	}
 	if c.Request.Scopes, err = selectedScopes(c.Request.Scopes); err != nil {
@@ -303,10 +306,27 @@ func (s *Store) Authorize(ctx context.Context, c oauth.AuthorizationCommand) (oa
 	grant := grantRecord{ID: string(command), Tenant: bindings.TenantID, User: bindings.UserID, ClientID: client.ID, ClientVersion: client.Version, ClientFingerprint: clientFingerprint(client), Source: source, Scopes: slices.Clone(request.Scopes), Resource: request.Resource, CreatedAt: now, ExpiresAt: now.Add(s.config.Protocol.RefreshTTL)}
 	p := &phase{store: s, client: client, browser: c.Browser, observation: c.Session}
 	p.input = phaseInput{Schema: 1, Configuration: s.identity, Transition: createInteraction, Grant: grant, Request: copyAuthorizationRequest(request), Scopes: slices.Clone(request.Scopes), CreatedAt: now, ObservationUntil: c.Session.ValidUntil(), Intent: s.intent("authorize", string(command)), Network: c.Network, SubjectCandidate: subjectCandidate, Authentication: authentication}
+	if request.Prompt == "none" {
+		if authentication == nil || authentication.Requirement != oauth.OIDCAuthenticationSilent {
+			return oauth.AuthorizeResult{}, oauth.ErrAccessDenied
+		}
+		approved, err := s.readSilentConsent(ctx, client, grant)
+		if err != nil {
+			return oauth.AuthorizeResult{}, err
+		}
+		p.input.SilentConsent = approved
+		p.input.Grant.ConsentID, p.input.Grant.ConsentGeneration = approved.ID, approved.Generation
+		p.input.Grant.ExpiresAt = minTime(p.input.Grant.ExpiresAt, approved.ExpiresAt)
+	}
 	p.bind(command, "identity.oauth-server.authorize", string(command))
 	result, err := p.execute(ctx)
 	if err != nil {
 		return oauth.AuthorizeResult{CommandID: command, Outcome: authorizeOutcome(result)}, publicError(ctx, err, oauth.ErrAccessDenied)
+	}
+	if p.input.SilentConsent != nil {
+		if err := p.finishSilentAuthorization(ctx); err != nil {
+			return oauth.AuthorizeResult{CommandID: command, Outcome: oauth.AuthorizationHistorical}, err
+		}
 	}
 	return p.authorizationResult(result), nil
 }
@@ -388,6 +408,10 @@ func (s *Store) Continue(ctx context.Context, c oauth.ContinuationCommand) (oaut
 		p.input.Consent, err = s.prepareConsent(ctx, target.Grant)
 		if err != nil {
 			return oauth.AuthorizeResult{}, err
+		}
+		if s.config.ConsentReuseTTL != 0 {
+			expiry := p.input.CreatedAt.Add(s.config.ConsentReuseTTL)
+			p.input.Consent.ExpiresAt = &expiry
 		}
 	}
 	p.input.Scopes = slices.Clone(selected)
@@ -774,6 +798,9 @@ func publicError(ctx context.Context, err, denied error) error {
 	}
 	if errors.Is(err, oauth.ErrLoginRequired) {
 		return oauth.ErrLoginRequired
+	}
+	if errors.Is(err, oauth.ErrConsentRequired) {
+		return oauth.ErrConsentRequired
 	}
 	var reauthentication kernel.OAuthReauthenticationRequiredError
 	if errors.As(err, &reauthentication) {

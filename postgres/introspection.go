@@ -38,11 +38,11 @@ func (s *Store) Introspect(ctx context.Context, c oauth.IntrospectionCommand) (o
 	if !s.config.Protocol.OwningClientIntrospection {
 		return out, oauth.ErrAccessDenied
 	}
-	client, err := s.client(c.Client)
+	client, err := s.checkedClient(ctx, c.Client)
 	if err != nil || client.Public || c.Request.ClientAuthentication.Method() != "client_secret_basic" || c.Request.ClientID != client.ID {
 		return out, oauth.ErrInvalidClient
 	}
-	if err := s.config.Protocol.AuthenticateClient(ctx, client.ID, c.Request.ClientAuthentication); err != nil {
+	if err := s.AuthenticateCurrentClient(ctx, client, c.Request.ClientAuthentication); err != nil {
 		return out, err
 	}
 	if !boundedText(c.Request.Token, 2048) || c.Request.Hint != 0 && c.Request.Hint != oauth.TokenAccess && c.Request.Hint != oauth.TokenRefresh {

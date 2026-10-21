@@ -34,6 +34,15 @@ func NewResourceVerifier(pool *database.Pool, c Config, keys *keyring.Provider, 
 			break
 		}
 	}
+	if s.managedID(policy.ClientID) {
+		p := s.config.Protocol.ManagedClients
+		if policy.TenantID != p.TenantID || policy.ClientVersion != 1 || policy.Resource != s.config.Protocol.Resource || !scopeSubset(policy.Scopes.Scopes(), p.Scopes.Scopes()) {
+			return nil, oauth.ErrInvalidRequest
+		}
+		// Construction selects immutable trust policy without reading a possibly
+		// not-yet-created registration. Every use resolves actual primary state.
+		client = oauth.Client{ID: policy.ClientID, Version: policy.ClientVersion, Resource: policy.Resource, Scopes: p.Scopes.Scopes()}
+	}
 	if client.ID == "" || client.Workload != nil || client.Version != policy.ClientVersion || policy.Issuer != s.config.Protocol.Issuer || policy.Environment != s.config.Protocol.Environment || policy.Resource != client.Resource || !scopeSubset(policy.Scopes.Scopes(), client.Scopes) {
 		return nil, oauth.ErrInvalidRequest
 	}
@@ -67,6 +76,18 @@ func (r *resourceAccessReader) ReadResourceAccess(ctx context.Context, token str
 	defer stop()
 	s := r.store
 	start := s.now()
+	if s.managedID(r.client.ID) {
+		client, err := s.CurrentClient(ctx, r.client.ID)
+		if err != nil {
+			return out, resourceAccessError(ctx, err)
+		}
+		if client.Version != r.policy.ClientVersion || client.Resource != r.policy.Resource || !scopeSubset(r.policy.Scopes.Scopes(), client.Scopes) {
+			return out, oauth.ErrInvalidResourceToken
+		}
+		owned := *r
+		owned.client = client
+		r = &owned
+	}
 	// Token.Digest authenticates issuer/environment/client/kind with independent
 	// length framing. lookup's persisted digest/version/kind/client predicate
 	// proves this exact namespace; no absent issuer column is treated as proof.
@@ -150,7 +171,7 @@ func resourceAccessError(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	if errors.Is(err, oauth.ErrAccessDenied) || introspectionError(ctx, err) == nil {
+	if errors.Is(err, oauth.ErrAccessDenied) || errors.Is(err, oauth.ErrInvalidClient) || introspectionError(ctx, err) == nil {
 		return oauth.ErrInvalidResourceToken
 	}
 	return oauth.ErrUnavailable

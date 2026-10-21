@@ -13,6 +13,9 @@ import (
 )
 
 func (p *phase) mutate(ctx context.Context, w kernel.Work) error {
+	if p.input.ClientChange != nil {
+		return p.mutateClientChange(ctx, w)
+	}
 	if p.input.Transition == deleteConsent {
 		return p.mutateConsentDeletion(ctx, w)
 	}
@@ -198,6 +201,9 @@ func (p *phase) RecoverParticipant(ctx context.Context, w kernel.RecoveryWork) (
 		return kernel.RecoveryUnknown, identity.ForbiddenError{}
 	}
 	ownerColumn := "grant_id"
+	if b.OperationID == "identity.oauth-server.client-create" || b.OperationID == "identity.oauth-server.client-delete" {
+		ownerColumn = "client_id"
+	}
 	if b.OperationID == "identity.oauth-server.consent-delete" || b.OperationID == "identity.oauth-server.consent-update" {
 		ownerColumn = "consent_id"
 	}
@@ -224,12 +230,15 @@ func (p *phase) RecoverParticipant(ctx context.Context, w kernel.RecoveryWork) (
 	if (b.OperationID == "identity.oauth-server.consent-delete" || b.OperationID == "identity.oauth-server.consent-update") && grant != b.RecordID {
 		return kernel.RecoveryUnknown, identity.UnavailableError{}
 	}
+	if (b.OperationID == "identity.oauth-server.client-create" || b.OperationID == "identity.oauth-server.client-delete") && grant != oauth.ManagedClientPrefix+b.RecordID {
+		return kernel.RecoveryUnknown, identity.UnavailableError{}
+	}
 	return kernel.RecoveryCommitted, nil
 }
 
 func oauthLifecycle(event string) bool {
 	switch event {
-	case "grant.created.v1", "grant.authorized.v1", "grant.scope_changed.v1", "grant.code_exchanged.v1", "grant.refresh_rotated.v1", "grant.revoked.v1", "oauth_access.revoked.v1", "consent.revoked.v1", "consent.scope_changed.v1":
+	case "grant.created.v1", "grant.authorized.v1", "grant.scope_changed.v1", "grant.code_exchanged.v1", "grant.refresh_rotated.v1", "grant.revoked.v1", "oauth_access.revoked.v1", "consent.revoked.v1", "consent.scope_changed.v1", "oauth_client.created.v1", "oauth_client.revoked.v1":
 		return true
 	default:
 		return false

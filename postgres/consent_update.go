@@ -45,7 +45,7 @@ func (s *Store) ConsentUpdate(ctx context.Context, c oauth.ConsentUpdateExecutio
 		return out, err
 	}
 	c.Request = r
-	client, err := s.client(c.Client)
+	client, err := s.checkedClient(ctx, c.Client)
 	if err != nil || client.Workload != nil || client.ID != r.ClientID || client.Version != r.ClientVersion || client.Resource != r.Resource || !scopeSubset(r.Scopes, client.Scopes) {
 		return out, oauth.ErrAccessDenied
 	}
@@ -144,6 +144,9 @@ func (p *phase) narrowingAAD(k kernel.RequestKeyPreparationBinding) (envelope.Co
 }
 
 func (p *phase) PrepareRequestKey(ctx context.Context, k kernel.RequestKeyPreparationBinding, intent identity.RequestIntent) ([]byte, error) {
+	if p.input.ClientChange != nil {
+		return p.prepareClientKey(ctx, k, intent)
+	}
 	aad, err := p.narrowingAAD(k)
 	if err != nil || p.consentUpdate == nil {
 		return nil, identity.ForbiddenError{}
@@ -165,7 +168,7 @@ func (p *phase) PrepareRequestKey(ctx context.Context, k kernel.RequestKeyPrepar
 	if err != nil {
 		return nil, err
 	}
-	client, err := p.store.consentClient(record)
+	client, err := p.store.consentClient(ctx, record)
 	if err != nil || client.ID != p.client.ID || record.State != "active" || record.Version != r.Consent.Input().Version || record.Version == math.MaxUint64 || record.Generation == math.MaxUint64 || len(r.Scopes) >= len(record.Scopes) || !scopeSubset(r.Scopes, record.Scopes) {
 		return nil, identity.ForbiddenError{}
 	}

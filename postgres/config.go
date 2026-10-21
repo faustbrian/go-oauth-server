@@ -99,7 +99,8 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	if err != nil || pool == nil || pool.Raw() == nil || keys == nil || !validSchema(c.Schema) || c.IntentKey == ([32]byte{}) || c.ActiveEnvelopeKeyID == "" || len(c.ActiveEnvelopeKeyID) > 256 || c.PolicyID == "" || len(c.PolicyID) > 128 || c.Coordinator.MaximumDuration <= 0 || c.Coordinator.MaximumDuration > protocol.MaximumDuration || c.Coordinator.QueryPolicy == nil || c.Coordinator.AdmissionPolicy == nil || c.Coordinator.QueryPolicy.PolicyVersion != c.Coordinator.AdmissionPolicy.PolicyVersion || c.Counters.CommandCounters == nil || !c.Counters.EnforceLockouts || len(c.TokenKeys) < 1 || len(c.TokenKeys) > 4 || len(c.CSRFKeys) > 4 {
 		return nil, oauth.ErrInvalidRequest
 	}
-	if webSelected(protocol.Clients) && (c.Session.Profile.Validate() != nil || c.Session.Profile.AuthenticationMethod != "password" || c.Session.Profile.CredentialKind != identity.CredentialPassword || c.Session.Profile.CredentialOwner != "identity/password" || c.Session.Repository.MaximumDuration <= 0 || c.Session.Repository.MaximumDuration > protocol.MaximumDuration || len(c.CSRFKeys) < 1) {
+	web := protocol.ManagedClients != nil || webSelected(protocol.Clients)
+	if web && (c.Session.Profile.Validate() != nil || c.Session.Profile.AuthenticationMethod != "password" || c.Session.Profile.CredentialKind != identity.CredentialPassword || c.Session.Profile.CredentialOwner != "identity/password" || c.Session.Repository.MaximumDuration <= 0 || c.Session.Repository.MaximumDuration > protocol.MaximumDuration || len(c.CSRFKeys) < 1) {
 		return nil, oauth.ErrInvalidRequest
 	}
 	if workloadSelected(protocol.Clients) {
@@ -111,10 +112,13 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	} else if c.WorkloadAuthority != (WorkloadAuthorityConfig{}) {
 		return nil, oauth.ErrInvalidRequest
 	}
-	if c.ConsentManagement && !webSelected(protocol.Clients) {
+	if c.ConsentManagement && !web {
 		return nil, oauth.ErrInvalidRequest
 	}
 	if c.ConsentNarrowing && !c.ConsentManagement {
+		return nil, oauth.ErrInvalidRequest
+	}
+	if protocol.ManagedClients != nil && !c.ConsentManagement {
 		return nil, oauth.ErrInvalidRequest
 	}
 	// Privileged's native counters supply exactly velocity. The upstream
@@ -126,6 +130,9 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	}
 	if c.ConsentNarrowing {
 		operations = append(operations, operation("identity.oauth-server.consent-update"))
+	}
+	if protocol.ManagedClients != nil {
+		operations = append(operations, operation("identity.oauth-server.client-create"), operation("identity.oauth-server.client-delete"))
 	}
 	for _, operation := range operations {
 		admitted, err := c.Counters.CommandCounters.Policy.Admit(risk.Action(operation.OperationID))
@@ -171,7 +178,7 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	if s.domain, err = kernel.NewRepository(pool, kernel.Config{MaximumDuration: protocol.MaximumDuration}); err != nil {
 		return nil, oauth.ErrInvalidRequest
 	}
-	if protocol.OwningClientIntrospection || workloadSelected(protocol.Clients) || len(protocol.OIDCScopes.Scopes()) > 0 {
+	if protocol.OwningClientIntrospection || workloadSelected(protocol.Clients) || len(protocol.OIDCScopes.Scopes()) > 0 || protocol.ManagedClients != nil {
 		if s.policy, err = authority.NewAuthorityStore(pool.Raw(), protocol.MaximumDuration); err != nil {
 			return nil, oauth.ErrInvalidRequest
 		}
@@ -217,7 +224,7 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	// Narrowing enables a new operation, not a new policy for existing grants.
 	// Preserve their prepared configuration identity; its separate input profile
 	// and operation gate bind selection without stranding older recovery.
-	if c.ConsentNarrowing {
+	if c.ConsentNarrowing || protocol.ManagedClients != nil {
 		if err := s.coordinator(&phase{store: s}); err != nil {
 			return nil, oauth.ErrInvalidRequest
 		}
@@ -233,14 +240,18 @@ func NewService(pool *database.Pool, c Config, keys *keyring.Provider) (*oauth.S
 	if err != nil {
 		return nil, err
 	}
-	if !webSelected(store.config.Protocol.Clients) {
+	if store.config.Protocol.ManagedClients == nil && !webSelected(store.config.Protocol.Clients) {
 		return oauth.NewService(store.config.Protocol, oauth.Dependencies{Store: store})
 	}
 	sessions, err := sessionpg.NewSessionService(pool, store.config.Session)
 	if err != nil {
 		return nil, oauth.ErrInvalidRequest
 	}
-	return oauth.NewService(store.config.Protocol, oauth.Dependencies{Sessions: sessions, Store: store})
+	deps := oauth.Dependencies{Sessions: sessions, Store: store}
+	if store.config.Protocol.ManagedClients != nil {
+		deps.Clients = store
+	}
+	return oauth.NewService(store.config.Protocol, deps)
 }
 
 type clientPolicy struct {

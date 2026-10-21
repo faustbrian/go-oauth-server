@@ -3,6 +3,52 @@
 Experimental persistence and public service composition for the
 [selected authorization-code profile](../docs/selected-profile.md).
 
+## Optional platform-owned confidential client management
+
+Select `Config.Protocol.ManagedClients` with one exact platform owner, tenant,
+redirect allowlist and OAuth-only scope ceiling, plus installed/selected consent
+management and existing native prepared request keys. Append
+`ClientMigrationSource` after the installed consent history at a new version.
+Install while issuance is stopped and replace every accepting old instance
+before activation; never rewrite an installed migration. The `managed.` prefix
+is exclusive and static collisions deny construction. Constructors do no IO.
+The existing selected OAuth discovery advertises this human-web/Basic capability
+without requiring a static confidential client. Existing configured workload
+clients may coexist; their separate migration and authority requirements remain.
+
+`ClientCreate/Delete` authenticate genuine original current password-session
+custody, its nonrenewing sensitive-proof/read deadline, exact origin/CSRF and
+the configured application policy on resource `oauth.platform` with the exact
+platform-owner ID. Owner configuration is not a manager credential. The policy
+decision runs outside protected SQL locks. Its revision is immutable configured
+policy; permission changes must advance the existing actor authorization epoch
+in `Session.Profile.PolicyNamespace`. The original sealed actor epoch, directory,
+credential, session and synchronizer are fenced through their actual owners in
+the sole coordinator Work. Changing an unversioned callback is not an atomic
+permission-revocation mechanism.
+
+Creation allocates one server-random reserved ID/version1 and random 32-byte
+Basic secret. Only its digest persists in the client registry; secret custody
+in existing encrypted preparation is never redelivered by retry or recovery.
+Delete requires the exact original client/version and writes a version2 terminal
+tombstone. Registrations cannot edit redirects/scopes/owner, reactivate, or rotate
+secrets. Warm services and direct native readers repeatedly resolve current
+registry status. Mutating protocol paths take the client SHARE fence before
+grant/consent locks; deletion takes UPDATE, avoiding unbounded artifact fanout.
+Lifecycle topics are exactly `oauth_client.created.v1` and
+`oauth_client.revoked.v1`, as required by the binding lifecycle catalog.
+
+`Recover` accepts the original current manager session/tenant and exact managed
+client ID for `identity.oauth-server.client-create/client-delete`. For an unknown
+create, its ID is `ManagedClientPrefix + string(CommandID)`. Retained native
+request preparation authenticates original identity/input; the existing journal
+alone determines durability. Pending/Unknown is not rollback, and terminal
+NotCommitted can retain its original classified error. No recovery returns
+secret material, tokens, or new management permission. Retain original policy,
+keys and history while recovery remains supported. This profile is not dynamic
+registration transport, user/org ownership, overlap rotation, workload or OIDC
+client management, nor complete M30 support.
+
 The optional [selected OIDC profile](../docs/selected-oidc-profile.md) adds native
 encrypted ID-token preparation, subject-bound UserInfo and public signing-key
 lifecycle. Install SigningMigrationSource before enabling it; existing OAuth
@@ -67,7 +113,7 @@ Supply an existing primary PostgreSQL pool and actual public native
 configuration for the identity coordinator, password-session admission,
 authorization policy, risk counters/lockouts, token digests and envelope keys.
 Configured clients are immutable platform-owned public or confidential Basic
-registrations. Confidential clients require exactly one startup verifier matching
+registrations. Statically configured confidential clients require exactly one startup verifier matching
 their ID/version; the root's [configured secret policy](../docs/selected-profile.md)
 requires retiring old instances and advancing client version when secrets change.
 No plaintext client secret enters OAuth SQL, preparation, audit or outbox. All four

@@ -42,6 +42,8 @@ type preparedOutput struct {
 	IDToken      string `json:",omitempty"`
 	Subject      string `json:",omitempty"`
 	SigningKeyID string `json:",omitempty"`
+	ClientSecret string `json:",omitempty"`
+	ClientDigest []byte `json:",omitempty"`
 }
 
 // Generated credentials exist only in invocation memory or the existing
@@ -62,6 +64,7 @@ type phase struct {
 	observation       session.GetResult
 	consentCommand    oauth.ConsentCommand
 	consentUpdate     *oauth.ConsentUpdateExecution
+	clientManagement  *oauth.ClientManagementExecution
 	command           identity.Command
 	declaration, plan kernel.CommandPlan
 	counters          kernel.CommandCounterPlan
@@ -100,6 +103,9 @@ func (p *phase) FeatureOperations() []identity.FeatureOperation {
 	if p.store != nil && p.store.config.ConsentNarrowing {
 		operations = append(operations, operation("identity.oauth-server.consent-update"))
 	}
+	if p.store != nil && p.store.config.Protocol.ManagedClients != nil {
+		operations = append(operations, operation("identity.oauth-server.client-create"), operation("identity.oauth-server.client-delete"))
+	}
 	return operations
 }
 func (p *phase) registration() kernel.FeatureRegistration {
@@ -111,6 +117,10 @@ func (p *phase) registration() kernel.FeatureRegistration {
 // and replay revocation each declare their distinct composed actions once.
 func (p *phase) auditActions() []string {
 	switch p.input.Transition {
+	case createManagedClient:
+		return []string{"identity.oauth_server.create_client"}
+	case deleteManagedClient:
+		return []string{"identity.oauth_server.delete_client"}
 	case deleteConsent, narrowConsent:
 		return []string{"identity.oauth_server.revoke_consent"}
 	case createInteraction, createWorkload:
@@ -142,6 +152,14 @@ func (p *phase) lifecycle() kernel.LifecyclePlan {
 	before := p.input.Grant.Version
 	event := "grant.revoked.v1"
 	switch p.input.Transition {
+	case createManagedClient:
+		before = 0
+		// LIFECYCLE_CASCADES.md lifecycle.events.oauth_server fixes these
+		// names; terminal deletion is client revocation, not a new event family.
+		event = "oauth_client.created.v1"
+	case deleteManagedClient:
+		before = p.input.ClientChange.Version
+		event = "oauth_client.revoked.v1"
 	case deleteConsent:
 		before = p.input.Deletion.Version
 		event = "consent.revoked.v1"
@@ -167,6 +185,9 @@ func (p *phase) lifecycle() kernel.LifecyclePlan {
 }
 
 func (p *phase) subjectType() string {
+	if p.input.ClientChange != nil {
+		return "oauth_client"
+	}
 	if p.input.Transition == deleteConsent || p.input.Transition == narrowConsent {
 		return "oauth_consent"
 	}
@@ -273,6 +294,13 @@ func (p *phase) buildCommand() error {
 	} else if i.Narrowing != nil {
 		return oauth.ErrInvalidRequest
 	}
+	if i.ClientChange != nil {
+		if (i.Transition != createManagedClient && i.Transition != deleteManagedClient) || !p.store.managedMetadata(i.ClientChange.Client) || i.ClientChange.Client.ID != oauth.ManagedClientPrefix+b.RecordID || clientFingerprint(i.ClientChange.Client) != clientFingerprint(p.client) || i.Transition == createManagedClient && i.ClientChange.Version != 0 || i.Transition == deleteManagedClient && i.ClientChange.Version != 1 {
+			return oauth.ErrInvalidRequest
+		}
+	} else if i.Transition == createManagedClient || i.Transition == deleteManagedClient {
+		return oauth.ErrInvalidRequest
+	}
 	// This fixed native codec commits every nonsecret typed input, including
 	// original owner fields, with a scalar commitment. It never places JSON or
 	// credential wire bytes in FeatureFields. The original encrypted preparation
@@ -293,6 +321,10 @@ func (p *phase) buildCommand() error {
 	if i.Transition == narrowConsent {
 		recordField = identity.FeatureField{Name: "oauth.consent-root", Value: identity.FeatureValue{Kind: identity.FeatureText, Text: i.Narrowing.ID}}
 		versionField = identity.FeatureField{Name: "oauth.consent-version", Value: identity.FeatureValue{Kind: identity.FeatureUint64, Uint64: i.Narrowing.Version}}
+	}
+	if i.ClientChange != nil {
+		recordField = identity.FeatureField{Name: "oauth.client-root", Value: identity.FeatureValue{Kind: identity.FeatureText, Text: i.ClientChange.Client.ID}}
+		versionField = identity.FeatureField{Name: "oauth.client-version", Value: identity.FeatureValue{Kind: identity.FeatureUint64, Uint64: i.ClientChange.Version}}
 	}
 	fields = append(fields,
 		identity.FeatureField{Name: "oauth.input-commitment", Value: identity.FeatureValue{Kind: identity.FeatureBytes, Bytes: commitment[:]}},
@@ -429,7 +461,7 @@ func (p *phase) AdmitFeaturePreparation(ctx context.Context, w kernel.Work, c id
 	return p.checkArtifactExpiry(ctx, w)
 }
 func (p *phase) browserRequired() bool {
-	return p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == denyInteraction || p.input.Transition == deleteConsent || p.input.Transition == narrowConsent
+	return p.input.ClientChange != nil || p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == denyInteraction || p.input.Transition == deleteConsent || p.input.Transition == narrowConsent
 }
 func (p *phase) issuing() bool {
 	return p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == exchangeCode || p.input.Transition == rotateRefresh || p.input.Transition == createWorkload
@@ -444,6 +476,11 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 	g := i.Grant
 	if g.ClientFingerprint != clientFingerprint(p.client) || g.ClientVersion != p.client.Version || g.ClientID != p.client.ID || i.Configuration != p.store.identity {
 		return identity.ForbiddenError{}
+	}
+	if p.input.ClientChange == nil {
+		if err := p.requireManagedClient(ctx, w); err != nil {
+			return err
+		}
 	}
 	if g.Workload != nil {
 		if !p.store.validWorkload(g, p.client) || b.UserID != "" || b.AnonymousFlowID != g.ID || b.ActorKind != authorization.SubjectServiceAccount || string(b.ActorID) != g.Workload.ID {
@@ -517,6 +554,12 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 	}
 	if p.browserRequired() && (p.observation.ValidateAt(now) != nil || !now.Before(i.ObservationUntil)) {
 		return identity.ForbiddenError{}
+	}
+	if i.ClientChange != nil {
+		if p.clientManagement == nil || p.clientManagement.ValidateAt(now) != nil {
+			return identity.ForbiddenError{}
+		}
+		return p.checkClientChange(ctx, w, final)
 	}
 	if i.Transition == deleteConsent {
 		if (oauth.ConsentExecution{Command: p.consentCommand, Session: p.observation}).ValidateAt(now) != nil {
@@ -759,7 +802,33 @@ func (p *phase) GenerateFeaturePreparation(ctx context.Context, c identity.Comma
 	if p.browserRequired() && !p.store.now().Before(i.ObservationUntil) {
 		return nil, identity.ForbiddenError{}
 	}
+	if i.ClientChange != nil {
+		// Generation is outside the coordinator's protected SQL transaction.
+		// Keep application policy callbacks here; Work only fences the original
+		// real actor epoch and immutable configured revision, without renewing time.
+		if p.clientManagement == nil || p.clientManagement.ValidateAt(p.store.now()) != nil {
+			return nil, identity.ForbiddenError{}
+		}
+		if err := p.store.managementDecision(ctx, i.Grant.User, i.Binding.OperationID); err != nil {
+			return nil, err
+		}
+	}
 	out := preparedOutput{Schema: 1, Generation: generation, Input: i}
+	if i.Transition == createManagedClient {
+		token, err := oauth.NewToken()
+		if err != nil {
+			return nil, err
+		}
+		out.ClientSecret, err = token.Reveal()
+		if err != nil {
+			return nil, err
+		}
+		digest, err := oauth.DigestClientSecret(p.client.ID, 1, out.ClientSecret)
+		if err != nil {
+			return nil, err
+		}
+		out.ClientDigest = slices.Clone(digest[:])
+	}
 	out.Subject = i.TargetPayload.Subject
 	out.SigningKeyID = i.TargetPayload.SigningKeyID
 	var kinds []oauth.TokenKind
@@ -946,6 +1015,14 @@ func (p *phase) restore(ctx context.Context, generation uint64, wire []byte, ini
 	if len(out.Artifacts) != want {
 		return oauth.ErrUnavailable
 	}
+	if out.Input.Transition == createManagedClient {
+		digest, err := oauth.DigestClientSecret(p.client.ID, 1, out.ClientSecret)
+		if err != nil || !slices.Equal(digest[:], out.ClientDigest) {
+			return oauth.ErrUnavailable
+		}
+	} else if out.ClientSecret != "" || len(out.ClientDigest) != 0 {
+		return oauth.ErrUnavailable
+	}
 	for index, a := range out.Artifacts {
 		if _, err := identity.ParseSubjectID(a.ID); err != nil {
 			return oauth.ErrUnavailable
@@ -1058,6 +1135,9 @@ func (p *phase) checkArtifactExpiry(ctx context.Context, w kernel.Work) error {
 	// The consent-root lock may wait after the original source check. Neither
 	// that wait nor a second primary read can renew sensitive proof or admission.
 	if p.input.Transition == narrowConsent && ((oauth.ConsentExecution{Command: p.consentCommand, Session: p.observation}).ValidateAt(now) != nil || !now.Before(p.input.ObservationUntil)) {
+		return identity.ForbiddenError{}
+	}
+	if p.input.ClientChange != nil && (p.clientManagement == nil || p.clientManagement.ValidateAt(now) != nil || !now.Before(p.input.ObservationUntil)) {
 		return identity.ForbiddenError{}
 	}
 	if p.input.Authentication != nil && !p.input.Authentication.Until.IsZero() && !now.Before(p.input.Authentication.Until) {

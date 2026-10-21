@@ -112,7 +112,9 @@ func (s *Store) consentObservation(ctx context.Context, c oauth.ConsentExecution
 	if op == oauth.ConsentRemove {
 		action = "identity.oauth-server.consent-delete"
 	}
-	if op==oauth.ConsentNarrow { action="identity.oauth-server.consent-update" }
+	if op == oauth.ConsentNarrow {
+		action = "identity.oauth-server.consent-update"
+	}
 	policy := s.config.Coordinator.AdmissionPolicy
 	caller := authorization.DecisionContext{PolicyRevision: authorization.Revision(policy.PolicyVersion), Request: authorization.Request{Tenant: authorization.TenantID(b.TenantID), Subject: authorization.Subject{Kind: authorization.SubjectUser, ID: authorization.SubjectID(b.UserID)}, Action: authorization.Action(action), Resource: authorization.Resource{Type: "identity.user", ID: authorization.ResourceID(b.UserID)}}}
 	if err := s.consentDecision(ctx, caller); err != nil {
@@ -186,11 +188,13 @@ func (s *Store) readConsent(ctx context.Context, tenant identity.TenantID, user 
 	}
 	return c, nil
 }
-func (s *Store) consentClient(c consentRecord) (oauth.Client, error) {
-	for _, client := range s.config.Protocol.Clients {
-		if client.ID == c.ClientID && client.Workload == nil && client.Version == c.ClientVersion && clientFingerprint(client) == c.Fingerprint && scopeSubset(c.Scopes, client.Scopes) {
-			return client, nil
-		}
+func (s *Store) consentClient(ctx context.Context, c consentRecord) (oauth.Client, error) {
+	client, err := s.CurrentClient(ctx, c.ClientID)
+	if err != nil {
+		return oauth.Client{}, err
+	}
+	if client.Workload == nil && client.Version == c.ClientVersion && clientFingerprint(client) == c.Fingerprint && scopeSubset(c.Scopes, client.Scopes) && (!s.managedID(client.ID) || c.Tenant == s.config.Protocol.ManagedClients.TenantID) {
+		return client, nil
 	}
 	return oauth.Client{}, oauth.ErrAccessDenied
 }
@@ -224,7 +228,7 @@ func (s *Store) ConsentGet(ctx context.Context, c oauth.ConsentExecution) (out o
 	if record.State != "active" {
 		return out, oauth.ErrAccessDenied
 	}
-	if _, err := s.consentClient(record); err != nil {
+	if _, err := s.consentClient(ctx, record); err != nil {
 		return out, err
 	}
 	projection, err := consentProjection(record)
@@ -242,6 +246,9 @@ func (s *Store) ConsentGet(ctx context.Context, c oauth.ConsentExecution) (out o
 	}
 	if !sameJSON(final, record) {
 		return out, oauth.ErrAccessDenied
+	}
+	if _, err := s.consentClient(ctx, record); err != nil {
+		return out, err
 	}
 	if c.Session.ValidateAt(s.now()) != nil {
 		return out, oauth.ErrAccessDenied
@@ -281,7 +288,13 @@ func (s *Store) ConsentList(ctx context.Context, c oauth.ConsentExecution) (out 
 			ids = append(ids, client.ID)
 		}
 	}
-	rows, err := s.pool.Raw().Query(ctx, `SELECT consent_id FROM `+s.schema+`.consents WHERE tenant_id=$1 AND user_id=$2 AND state='active' AND consent_id>$3 AND client_id=ANY($4::text[]) ORDER BY consent_id COLLATE "C" LIMIT 65`, string(b.TenantID), string(b.UserID), after, ids)
+	selectedClients := `client_id=ANY($4::text[])`
+	args := []any{string(b.TenantID), string(b.UserID), after, ids}
+	if policy := s.config.Protocol.ManagedClients; policy != nil {
+		selectedClients = `(client_id=ANY($4::text[]) OR client_id IN (SELECT client_id FROM ` + s.schema + `.managed_clients WHERE issuer=$5 AND environment=$6 AND platform_owner=$7 AND tenant_id=$1 AND state='active'))`
+		args = append(args, s.config.Protocol.Issuer.String(), s.config.Protocol.Environment, policy.Owner.PlatformID())
+	}
+	rows, err := s.pool.Raw().Query(ctx, `SELECT consent_id FROM `+s.schema+`.consents WHERE tenant_id=$1 AND user_id=$2 AND state='active' AND consent_id>$3 AND `+selectedClients+` ORDER BY consent_id COLLATE "C" LIMIT 65`, args...)
 	if err != nil {
 		return out, publicError(ctx, err, oauth.ErrAccessDenied)
 	}
@@ -309,8 +322,11 @@ func (s *Store) ConsentList(ctx context.Context, c oauth.ConsentExecution) (out 
 		if record.State != "active" {
 			return out, oauth.ErrAccessDenied
 		}
-		if _, err := s.consentClient(record); err != nil {
-			continue
+		if _, err := s.consentClient(ctx, record); err != nil {
+			if errors.Is(err, oauth.ErrInvalidClient) || errors.Is(err, oauth.ErrAccessDenied) {
+				continue
+			}
+			return out, err
 		}
 		projection, err := consentProjection(record)
 		if err != nil {
@@ -338,6 +354,9 @@ func (s *Store) ConsentList(ctx context.Context, c oauth.ConsentExecution) (out 
 		}
 		if !sameJSON(current, record) {
 			return out, oauth.ErrAccessDenied
+		}
+		if _, err := s.consentClient(ctx, record); err != nil {
+			return out, err
 		}
 	}
 	if c.Session.ValidateAt(s.now()) != nil {
@@ -399,7 +418,7 @@ func (s *Store) ConsentDelete(ctx context.Context, c oauth.ConsentExecution) (ou
 	if err != nil {
 		return out, err
 	}
-	client, err := s.consentClient(record)
+	client, err := s.consentClient(ctx, record)
 	if err != nil {
 		return out, err
 	}

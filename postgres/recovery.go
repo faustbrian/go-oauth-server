@@ -2,6 +2,7 @@ package oauthpostgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -87,14 +88,14 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 	if _, err := identity.ParseCommandID(string(request.CommandID)); err != nil || len(request.ClientID) == 0 || len(request.ClientID) > 128 {
 		return out, oauth.ErrInvalidRequest
 	}
-	var client oauth.Client
-	for _, candidate := range s.config.Protocol.Clients {
-		if candidate.ID == request.ClientID {
-			client = candidate
-			break
-		}
+	if request.OperationID == "identity.oauth-server.client-create" || request.OperationID == "identity.oauth-server.client-delete" {
+		return s.recoverClientManagement(ctx, request)
 	}
-	if client.ID == "" {
+	client, lookupErr := s.CurrentClient(ctx, request.ClientID)
+	if lookupErr != nil {
+		if !errors.Is(lookupErr, oauth.ErrInvalidClient) {
+			return out, lookupErr
+		}
 		if request.ClientAuthentication.Method() != "none" {
 			return out, oauth.ErrInvalidClient
 		}
@@ -186,7 +187,7 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 			p.metadataRecovery = authenticationContinuation
 		}
 	case "identity.oauth-server.token", "identity.oauth-server.revoke":
-		if err := s.config.Protocol.AuthenticateClient(ctx, client.ID, request.ClientAuthentication); err != nil {
+		if err := s.AuthenticateCurrentClient(ctx, client, request.ClientAuthentication); err != nil {
 			return out, err
 		}
 		if request.TenantID != "" || request.Session.Token() != "" {

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add selected platform-owned confidential-client creation/terminal deletion
+  using existing authenticated human/session/CSRF, exact platform policy,
+  prepared request keys, encrypted preparation, coordinator, audit and outbox.
+  Append `ClientMigrationSource` after installed consent history and replace old
+  accepting instances before activation. Current registry version/tombstones
+  fence ordinary protocol, resource, consent and recovery paths without a
+  positive registration cache or unbounded token revocation writes.
+  Emit canonical OAuth-client creation/revocation lifecycle topics and return
+  independently owned static registry projections, including nested policies.
+
 - Compose direct opaque human-access verification over actual stored digest
   namespace, token/consent generation and current directory/user/identifier/
   credential/authorization owners. Fixed trusted policy rejects refresh and

@@ -25,7 +25,7 @@ func (s *Store) UserInfo(ctx context.Context, c oauth.UserInfoCommand) (out oaut
 		return out, err
 	}
 	defer stop()
-	client, err := s.client(c.Client)
+	client, err := s.checkedClient(ctx, c.Client)
 	if err != nil || client.Workload != nil || client.ID != c.Request.ClientID {
 		return out, oauth.ErrAccessDenied
 	}

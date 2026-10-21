@@ -41,6 +41,8 @@ const (
 	createWorkload
 	deleteConsent
 	narrowConsent
+	createManagedClient
+	deleteManagedClient
 )
 
 type grantRecord struct {
@@ -97,6 +99,7 @@ type phaseInput struct {
 	Consent                     consentMutation
 	Deletion                    *consentDeletion            `json:",omitempty"`
 	Narrowing                   *consentDeletion            `json:",omitempty"`
+	ClientChange                *clientMutation             `json:",omitempty"`
 	SubjectCandidate            *oauth.OIDCSubjectCandidate `json:",omitempty"`
 	Authentication              *authenticationSelection    `json:",omitempty"`
 	PreviousSource              []identity.FeatureField     `json:",omitempty"`
@@ -236,7 +239,7 @@ func (s *Store) Authorize(ctx context.Context, c oauth.AuthorizationCommand) (oa
 	if c.Request.Scopes, err = selectedScopes(c.Request.Scopes); err != nil {
 		return oauth.AuthorizeResult{}, err
 	}
-	client, err := s.client(c.Client)
+	client, err := s.checkedClient(ctx, c.Client)
 	if err != nil {
 		return oauth.AuthorizeResult{}, err
 	}
@@ -277,6 +280,9 @@ func (s *Store) Authorize(ctx context.Context, c oauth.AuthorizationCommand) (oa
 	}
 	bindings, err := c.Session.Session.Bindings()
 	if err != nil {
+		return oauth.AuthorizeResult{}, oauth.ErrAccessDenied
+	}
+	if s.managedID(client.ID) && bindings.TenantID != s.config.Protocol.ManagedClients.TenantID {
 		return oauth.AuthorizeResult{}, oauth.ErrAccessDenied
 	}
 	source, err := sessionpg.OriginalSessionFields(c.Session.Session)
@@ -321,7 +327,7 @@ func (s *Store) Continue(ctx context.Context, c oauth.ContinuationCommand) (oaut
 			return oauth.AuthorizeResult{}, err
 		}
 	}
-	client, err := s.client(c.Client)
+	client, err := s.checkedClient(ctx, c.Client)
 	if err != nil {
 		return oauth.AuthorizeResult{}, err
 	}
@@ -413,12 +419,12 @@ func (s *Store) Token(ctx context.Context, c oauth.TokenCommand) (oauth.TokenRes
 			return oauth.TokenResult{}, err
 		}
 	}
-	client, err := s.client(c.Client)
+	client, err := s.checkedClient(ctx, c.Client)
 	if err != nil {
 		return oauth.TokenResult{}, err
 	}
 	r := c.Request
-	if err := s.config.Protocol.AuthenticateClient(ctx, client.ID, r.ClientAuthentication); err != nil {
+	if err := s.AuthenticateCurrentClient(ctx, client, r.ClientAuthentication); err != nil {
 		return oauth.TokenResult{}, err
 	}
 	if r.ClientID != client.ID || r.Resource != "" && r.Resource != client.Resource {
@@ -538,11 +544,11 @@ func (s *Store) Revoke(ctx context.Context, c oauth.RevocationCommand) (oauth.Re
 	if !boundedText(c.Request.Network, 128) {
 		return oauth.RevokeResult{}, oauth.ErrInvalidRequest
 	}
-	client, err := s.client(c.Client)
+	client, err := s.checkedClient(ctx, c.Client)
 	if err != nil {
 		return oauth.RevokeResult{}, err
 	}
-	if err := s.config.Protocol.AuthenticateClient(ctx, client.ID, c.Request.ClientAuthentication); err != nil {
+	if err := s.AuthenticateCurrentClient(ctx, client, c.Request.ClientAuthentication); err != nil {
 		return oauth.RevokeResult{}, err
 	}
 	if c.Request.ClientID != client.ID || c.Request.Hint != 0 && c.Request.Hint != oauth.TokenAccess && c.Request.Hint != oauth.TokenRefresh {
@@ -611,6 +617,9 @@ func (p *phase) caller() authorization.DecisionContext {
 }
 
 func (s *Store) lookup(ctx context.Context, wire string, client oauth.Client, kinds []oauth.TokenKind) (artifactRecord, error) {
+	if _, err := s.checkedClient(ctx, client); err != nil {
+		return artifactRecord{}, err
+	}
 	token, err := oauth.ParseToken(wire)
 	if err != nil {
 		return artifactRecord{}, oauth.ErrInvalidGrant
@@ -641,6 +650,9 @@ func (s *Store) lookup(ctx context.Context, wire string, client oauth.Client, ki
 				return artifactRecord{}, oauth.ErrUnavailable
 			}
 			copy(artifact.Grant.ClientFingerprint[:], fingerprint)
+			if s.managedID(client.ID) && artifact.Grant.Tenant != s.config.Protocol.ManagedClients.TenantID {
+				return artifactRecord{}, oauth.ErrInvalidGrant
+			}
 			if len(workload) > 0 {
 				var original workloadSource
 				if decodeJSON(workload, &original) != nil {
@@ -692,6 +704,9 @@ func (s *Store) lookup(ctx context.Context, wire string, client oauth.Client, ki
 		if found.Kind != oauth.TokenContinuation && !active {
 			found.GrantState = "revoked"
 		}
+	}
+	if _, err := s.checkedClient(ctx, client); err != nil {
+		return artifactRecord{}, err
 	}
 	return *found, nil
 }

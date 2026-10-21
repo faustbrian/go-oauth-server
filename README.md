@@ -79,6 +79,14 @@ replacement authentication engine.
   during overlap; only the immediately preceding Basic secret can authenticate
   those new grants, until its original exclusive expiry. Static clients are
   unchanged. See the native forward-migration and fleet adoption requirements.
+- `Service.ClientGet/List` optionally read safe active managed-client metadata
+  through `ClientReader`. A fresh service can discover current IDs/versions for
+  the existing rotation/deletion calls without retaining creation responses.
+  Reads require an actual current password session and exact platform policy,
+  not mutation-only password freshness or CSRF. List limits are 1..100, with
+  actor/tenant/owner/limit/configuration-bound cursors; no
+  static/deleted client, secret, digest or encrypted preparation is returned.
+  Pages are snapshots, not permission or mutation-version leases.
 - `Service.DiscoveryOauth` returns OAuth-only RFC8414 metadata when explicitly
   selected by `Config.Discovery`. Trusted issuer-origin endpoint configuration
   and actual configured clients determine grants, authentication methods, S256,

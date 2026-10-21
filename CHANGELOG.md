@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add optional authenticated managed-client get/list safe metadata, enabling a
+  fresh manager service to discover current versions for existing mutations.
+  Bounded scoped pagination excludes static/deleted clients and all secret
+  custody; current reads do not require mutation-only freshness or CSRF.
+  Existing mandatory Store interfaces and mutation requirements are unchanged.
+
 - Use the patched Go 1.27.3 verification toolchain for the GO-2026-6809
   `crypto/x509` fix. Consumers must also build with a patched Go toolchain;
   the module/API minimum remains Go 1.27.0.

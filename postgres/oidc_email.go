@@ -19,7 +19,7 @@ func earliestUserInfoExpiry(values ...time.Time) time.Time {
 }
 
 // This adapter transports the selected extension's native primary custody; it
-// does not choose an email or interpret verification as an OIDC claim. The
+// does not choose a contact or interpret verification as an OIDC claim. The
 // child owns that policy. No callback, cache or substitute directory is used.
 func (s *Store) userInfoIdentifiers(ctx context.Context, token string, client oauth.Client, original artifactRecord, out oauth.OIDCClaimsInput, start time.Time) (oauth.OIDCClaimsInput, error) {
 	query := identity.IdentifierQuery{TenantID: original.Grant.Tenant, UserID: original.Grant.User, MaximumIdentifiers: 128}

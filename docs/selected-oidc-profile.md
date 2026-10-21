@@ -68,6 +68,29 @@ revoke/remove/replace never silently changes its contact. Cancellation or owner
 failure returns no partial subject or email. Approved-grant browser logout
 policy remains unchanged.
 
+## Optional consented phone UserInfo
+
+Select `oidc.Config.PhoneUserInfo=true`, root extension scope `phone` and the
+same allowed human-client scope. Explicit native approval is required. The
+selected phone owner must commit actual purpose-bound OTP verification before
+`phone_number_verified:true` can be disclosed. Pending and revoked contacts omit
+both phone claims. Prefer the owner's per-kind primary among verified contacts;
+otherwise choose the verified contact with lowest IdentifierID. Retain original
+E.164 canonical bytes. This conservative selection is local policy permitted by
+[Core1.0 errata2 sections5.1/5.4](https://openid.net/specs/openid-connect-core-1_0.html#ScopeClaims),
+not a claim that the specification requires this ordering or omission policy.
+
+In code/access-token flows those scope claims are UserInfo-only. ID tokens stay
+subject/authentication-only; independent RP validation and equal `sub` remain
+mandatory. Email and phone can coexist; openid/email-only grants disclose no
+phone. The existing primary identifier transport and earliest original
+token/grant/session/credential/read-start+20s ceiling apply without another
+cache, claims source, parser, grant engine or extension method. Current identity
+authority changes deny original grants rather than silently substituting a
+replacement contact; cancellation and owner errors return no partial claims.
+No new OAuth schema is required; native phone workflow/OTP history remains the
+identity owner's prerequisite, not a migration this extension installs.
+
 ## Original authorization and fresh login
 
 [OIDC Core 1.0 errata2 section3.1.2.1](https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest)

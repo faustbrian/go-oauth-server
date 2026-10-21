@@ -53,6 +53,7 @@ type authenticatedPasswordFixture struct {
 	changePassword func()
 	signInAgain    func() (auth.BearerCredential, session.CSRFToken)
 	anotherUser    func() (auth.BearerCredential, session.CSRFToken)
+	phoneInput     *nativePhoneInput
 }
 
 // The explicit provider seam records at most one bounded rendered registration
@@ -464,7 +465,15 @@ func passwordFixtureWithChange(t *testing.T, change bool, faults ...*oauthCommit
 		}
 		return auth.NewBearerCredential(cookies[0].Value), csrf
 	}
-	return authenticatedPasswordFixture{ctx: ctx, pool: pool, tenant: baselineTenant, browser: browser, csrf: csrf, sessions: sessions, keys: keys, oauth: config, signOut: signOut, changePassword: changePassword, signInAgain: signInAgain, anotherUser: anotherUser}
+	phoneKeys, err := keyring.New(map[string][]byte{"delivery-envelope": material("delivery-envelope")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	phoneCandidate := []byte(candidate)
+	phoneSessionKey := material("session-token")
+	t.Cleanup(func() { clear(phoneCandidate); clear(phoneSessionKey) })
+	return authenticatedPasswordFixture{ctx: ctx, pool: pool, tenant: baselineTenant, browser: browser, csrf: csrf, sessions: sessions, keys: keys, oauth: config, signOut: signOut, changePassword: changePassword, signInAgain: signInAgain, anotherUser: anotherUser,
+		phoneInput: &nativePhoneInput{signin: graph.signin, signup: graph.signup, hibp: graph.hibp, keys: phoneKeys, password: phoneCandidate, sessionKey: phoneSessionKey}}
 }
 
 // This bounded test-only Source composes immutable Migration values returned

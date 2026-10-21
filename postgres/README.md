@@ -163,6 +163,13 @@ adds consented email UserInfo from the existing native identity repository.
 Repeated owner/token/consent/key checks retain the original earliest validity
 deadline; changed identifier authority denies old grants. No claim callback,
 email copy in OAuth persistence, or new migration is required.
+Explicit child `PhoneUserInfo` with matching openid/phone scope permission uses
+that same native custody path. Actual phone workflow/OTP owners establish
+canonical E.164 possession; the child omits pending/revoked contacts and emits
+only consented UserInfo phone claims. Native removal/replacement withdraws old
+grant authority immediately; a new genuine session/approval is needed to reflect
+the changed contact. Identifier cascades may remain pending: epoch-based denial
+does not claim every downstream cleanup acknowledgement completed.
 Registered pairwise clients additionally require `PairwiseMigrationSource`
 appended at a fresh version. Native `InstallSubjectKey` authenticates/stages
 encrypted HMAC custody; `ActivateSubjectKey` selects new writers. Authenticated

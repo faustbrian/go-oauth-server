@@ -47,6 +47,8 @@ type baselineGraph struct {
 	server   *reference.Server
 	hibp     *hibp.Client
 	http     *httpclient.Client
+	signin   passwordpg.SigninConfig
+	signup   passwordpg.SignupConfig
 }
 
 func (g *baselineGraph) close(ctx context.Context) error {
@@ -273,6 +275,7 @@ func fixtureGraph(ctx context.Context, origin string, fixtureKeys map[string][32
 		Risk: risk.AuthenticationAdmissionCustodyConfig{ConfigurationID: "local-password-v1", Keys: []risk.EvidenceKey{evidence}}, Coordinator: coordinator, SigningKey: loginSigner, VerificationKeys: map[string]ed25519.PublicKey{"local-baseline": private.Public().(ed25519.PublicKey)}, Issuer: origin, Environment: "local-capture", PolicyID: "password-login", ProofTTL: time.Minute, IdentifierKey: bytes("password-flow"), Origins: []string{origin}, CallbackURLs: []string{callback},
 	}
 	configured.PasswordSignin = &reference.PasswordSigninConfiguration{Native: signin, PreAuth: preauth}
+	g.signin = signin
 	configured.HTTPPasswordSignin = &reference.HTTPPasswordSigninConfiguration{ActorID: baselineActor, PolicyRevision: 9}
 	configured.PasswordSignup = &reference.PasswordSignupConfiguration{
 		Native: passwordpg.SignupConfig{
@@ -292,6 +295,7 @@ func fixtureGraph(ctx context.Context, origin string, fixtureKeys map[string][32
 		Counters:    riskpg.Config{Schema: "risk_store", PolicyVersion: 9, EvidenceKeys: []risk.EvidenceKey{evidence}, EnvelopeKeys: map[string][]byte{"counter": bytes("counter-envelope")}, CurrentEnvelopeKey: "counter", CommandCounters: &risk.CommandCounterPolicyConfig{Policy: protectedPolicy, Keys: []risk.CounterDigestKey{digest}}}, PreAuth: preauth,
 	}
 	configured.HTTPPasswordSignup = &reference.HTTPPasswordSignupConfiguration{ActorID: baselineActor, PolicyRevision: 9}
+	g.signup = configured.PasswordSignup.Native
 	configured.HTTPRegistrationVerification = &reference.HTTPRegistrationVerificationConfiguration{Origin: origin, ActorID: baselineActor, PolicyRevision: 9, VerificationNamespace: "local-registration", VerificationKey: key("verification-http")}
 	configured.Session = &reference.SessionConfiguration{Native: sessionpg.SignOutServiceConfig{Execution: sessionpg.IssueExecutorConfig{Repository: storage, Profile: sessionpg.IssueAdmissionConfig(signin.Profile), Coordinator: coordinator, Authorization: authorize, Clock: clock.System{}, PolicyID: "session-signout", PolicyVersion: 9, AuditRetentionVersion: 1}, Validation: session.ServiceConfig{Profile: session.StorageStatefulOpaque, Audience: "local-baseline", MaximumDuration: 2 * time.Second, ClockUncertainty: time.Millisecond, LookupKeys: []session.DigestKey{lookup}}, Cookie: sessionCookie, MaximumDuration: 4 * time.Second}, CSRFKeys: []session.CSRFKey{csrf}}
 	if change {

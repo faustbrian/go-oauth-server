@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -108,7 +109,7 @@ func pairwiseService(t *testing.T, f authenticatedPasswordFixture, signer *oauth
 		t.Fatal(err)
 	}
 	issuer := f.oauth.Protocol.Issuer.String()
-	child, err := op.NewService(op.Config{Issuer: f.oauth.Protocol.Issuer, JWKSURI: issuer + "/oauth2/jwks", UserInfoEndpoint: issuer + "/oauth2/userinfo", Signing: signer, SubjectKey: [32]byte{42}, SubjectPolicy: policy, Clock: clock.System{}, MaximumDuration: 4 * time.Second}, core)
+	child, err := op.NewService(op.Config{Issuer: f.oauth.Protocol.Issuer, JWKSURI: issuer + "/oauth2/jwks", UserInfoEndpoint: issuer + "/oauth2/userinfo", Signing: signer, SubjectKey: [32]byte{42}, SubjectPolicy: policy, Clock: clock.System{}, MaximumDuration: 4 * time.Second, EmailUserInfo: slices.Contains(f.oauth.Protocol.OIDCScopes.Scopes(), "email"), PhoneUserInfo: slices.Contains(f.oauth.Protocol.OIDCScopes.Scopes(), "phone")}, core)
 	if err != nil {
 		t.Fatal(err)
 	}

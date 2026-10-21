@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Supply existing native identifier/verification custody for approved OIDC phone
+  scopes, preserving original grant/session/credential and exclusive freshness
+  fences. Identifier-authority changes deny old grants rather than silently
+  replacing their contact. No new OAuth migration or grant engine is introduced.
+
 - Add opt-in bounded explicit-consent reuse for OIDC `prompt=none`, issuing fresh
   one-use codes without interaction or approval mutation. Append
   `ConsentExpiryMigrationSource`, replace old accepting writers, then select

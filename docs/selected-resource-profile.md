@@ -75,8 +75,8 @@ refresh evidence. Do not cache/reuse principals across resource operations;
 verify current custody for each operation and consume its scope check promptly.
 Bounded positive evidence is not an atomic lease over every later domain change.
 
-Invalid custody returns `ErrInvalidResourceToken`; an unsupported or ungranted
-scope returns `ErrInvalidScope`. Dependency failures return `ErrUnavailable`,
+Invalid custody returns `ErrInvalidResourceToken`; a scope that is unsupported or
+not granted returns `ErrInvalidScope`. Dependency failures return `ErrUnavailable`,
 and cancellation/deadlines retain their context error. Every error returns a
 zero principal. A transient read failure does not consume, revoke, issue or
 otherwise mutate tokens or audit/outbox/journal state; retry performs only

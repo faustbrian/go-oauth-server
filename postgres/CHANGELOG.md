@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add selected managed metadata replacement with independent registration and
+  secret generations, preserving both digest slots and original overlap expiry.
+  Install forward `ClientUpdateMigrationSource`, replace all accepting old
+  instances, then select `ClientMetadataUpdates` with rotation enabled. Existing
+  encrypted preparation retains its original generation interpretation; sole
+  Work, required risk/audit/outbox and original metadata-only recovery remain.
+  Emit `oauth_client.configuration_changed.v1`; old grants require new approval.
+
 - Add private managed-client metadata reads over genuine current session and
   exact platform policy, preserving original <=20s deadlines and late current
   owner/client fences. Scoped limit1..100 keyset pages select no secret material

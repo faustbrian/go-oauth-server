@@ -88,7 +88,7 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 	if _, err := identity.ParseCommandID(string(request.CommandID)); err != nil || len(request.ClientID) == 0 || len(request.ClientID) > 128 {
 		return out, oauth.ErrInvalidRequest
 	}
-	if request.OperationID == "identity.oauth-server.client-create" || request.OperationID == "identity.oauth-server.client-delete" || request.OperationID == "identity.oauth-server.client-rotate-secret" {
+	if request.OperationID == "identity.oauth-server.client-create" || request.OperationID == "identity.oauth-server.client-delete" || request.OperationID == "identity.oauth-server.client-rotate-secret" || request.OperationID == "identity.oauth-server.client-update" {
 		return s.recoverClientManagement(ctx, request)
 	}
 	client, lookupErr := s.CurrentClient(ctx, request.ClientID)

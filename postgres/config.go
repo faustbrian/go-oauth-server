@@ -65,6 +65,10 @@ type Config struct {
 	// Install ClientRotationMigrationSource and retire non-rotation instances
 	// before enabling; every secret change advances actual client authority.
 	ClientSecretRotation bool
+	// ClientMetadataUpdates separates registration authority from digest generation.
+	// Install ClientUpdateMigrationSource and retire all non-update-aware serving
+	// instances before enabling. Rotation-aware consent/client history is required.
+	ClientMetadataUpdates bool
 }
 
 // Format redacts keys, correlated deployment scopes and policy dependencies.
@@ -128,6 +132,9 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	if c.ClientSecretRotation && protocol.ManagedClients == nil {
 		return nil, oauth.ErrInvalidRequest
 	}
+	if c.ClientMetadataUpdates && !c.ClientSecretRotation {
+		return nil, oauth.ErrInvalidRequest
+	}
 	// Privileged's native counters supply exactly velocity. The upstream
 	// protected-provider admission API is CredentialMutation-only; accepting
 	// another mandatory signal here would silently omit its owning provider.
@@ -143,6 +150,9 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	}
 	if c.ClientSecretRotation {
 		operations = append(operations, operation("identity.oauth-server.client-rotate-secret"))
+	}
+	if c.ClientMetadataUpdates {
+		operations = append(operations, operation("identity.oauth-server.client-update"))
 	}
 	for _, operation := range operations {
 		admitted, err := c.Counters.CommandCounters.Policy.Admit(risk.Action(operation.OperationID))

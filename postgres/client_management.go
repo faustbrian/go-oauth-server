@@ -25,22 +25,30 @@ type clientMutation struct {
 	Version uint64
 	Policy  [32]byte
 	Overlap time.Duration
+	// Absent in published preparation v1: legacy digest generation equals the
+	// original registration version. Never infer it from today's registration.
+	SecretVersion uint64
+	Replacement   *clientReplacement
 }
 
 func (m clientMutation) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		Registration managedRegistration
-		Version      uint64
-		Policy       [32]byte
-		Overlap      time.Duration `json:",omitempty"`
-	}{registrationWire(m.Client), m.Version, m.Policy, m.Overlap})
+		Registration  managedRegistration
+		Version       uint64
+		Policy        [32]byte
+		Overlap       time.Duration      `json:",omitempty"`
+		SecretVersion uint64             `json:",omitempty"`
+		Replacement   *clientReplacement `json:",omitempty"`
+	}{registrationWire(m.Client), m.Version, m.Policy, m.Overlap, m.SecretVersion, m.Replacement})
 }
 func (m *clientMutation) UnmarshalJSON(wire []byte) error {
 	var v struct {
-		Registration managedRegistration
-		Version      uint64
-		Policy       [32]byte
-		Overlap      time.Duration `json:",omitempty"`
+		Registration  managedRegistration
+		Version       uint64
+		Policy        [32]byte
+		Overlap       time.Duration      `json:",omitempty"`
+		SecretVersion uint64             `json:",omitempty"`
+		Replacement   *clientReplacement `json:",omitempty"`
 	}
 	if err := decodeJSON(wire, &v); err != nil {
 		return err
@@ -49,7 +57,7 @@ func (m *clientMutation) UnmarshalJSON(wire []byte) error {
 	if err != nil {
 		return err
 	}
-	*m = clientMutation{c, v.Version, v.Policy, v.Overlap}
+	*m = clientMutation{Client: c, Version: v.Version, Policy: v.Policy, Overlap: v.Overlap, SecretVersion: v.SecretVersion, Replacement: v.Replacement}
 	return nil
 }
 
@@ -192,6 +200,10 @@ func (s *Store) clientManagementPhase(ctx context.Context, c oauth.ClientManagem
 	r := c.Request
 	client := oauth.Client{ID: oauth.ManagedClientPrefix + "pending", Owner: s.config.Protocol.ManagedClients.Owner, Version: 1, Resource: s.config.Protocol.Resource, AuthenticationMethod: "client_secret_basic", Redirects: r.Redirects, Scopes: r.Scopes}
 	version := uint64(0)
+	secretVersion := uint64(0)
+	if s.config.ClientMetadataUpdates {
+		secretVersion = 1
+	}
 	transition := createManagedClient
 	record := ""
 	if c.Delete {
@@ -200,6 +212,9 @@ func (s *Store) clientManagementPhase(ctx context.Context, c oauth.ClientManagem
 			return nil, err
 		}
 		client = existing.Client
+		if s.config.ClientMetadataUpdates {
+			secretVersion = existing.SecretVersion
+		}
 		version = r.Version
 		transition = deleteManagedClient
 		record = strings.TrimPrefix(client.ID, oauth.ManagedClientPrefix)
@@ -209,7 +224,7 @@ func (s *Store) clientManagementPhase(ctx context.Context, c oauth.ClientManagem
 		return nil, oauth.ErrAccessDenied
 	}
 	b, _ := c.Session.Session.Bindings()
-	p := &phase{store: s, client: client, observation: c.Session, browser: r.Session, csrf: r.CSRF, clientManagement: &c, input: phaseInput{Schema: 1, Configuration: s.identity, Transition: transition, Grant: grantRecord{Tenant: b.TenantID, User: b.UserID, ClientID: client.ID, ClientVersion: client.Version, ClientFingerprint: clientFingerprint(client), Resource: client.Resource, Source: source, Scopes: slices.Clone(client.Scopes)}, Scopes: slices.Clone(client.Scopes), ClientChange: &clientMutation{Client: client, Version: version, Policy: s.managementPolicy()}, Intent: s.intent(action, r.ClientID)}}
+	p := &phase{store: s, client: client, observation: c.Session, browser: r.Session, csrf: r.CSRF, clientManagement: &c, input: phaseInput{Schema: 1, Configuration: s.identity, Transition: transition, Grant: grantRecord{Tenant: b.TenantID, User: b.UserID, ClientID: client.ID, ClientVersion: client.Version, ClientFingerprint: clientFingerprint(client), Resource: client.Resource, Source: source, Scopes: slices.Clone(client.Scopes)}, Scopes: slices.Clone(client.Scopes), ClientChange: &clientMutation{Client: client, Version: version, Policy: s.managementPolicy(), SecretVersion: secretVersion}, Intent: s.intent(action, r.ClientID)}}
 	p.bind("", action, record)
 	return p, nil
 }
@@ -223,8 +238,9 @@ func (p *phase) clientIntent(r oauth.ClientManagementRequest) (identity.RequestI
 		Redirects, Scopes []string
 		Origin, Network   string
 		Source            []identity.FeatureField
-		RotationOverlap   *time.Duration `json:",omitempty"`
-	}{p.store.managementPolicy(), p.input.Transition == deleteManagedClient, r.ClientID, r.Version, r.Redirects, r.Scopes, r.Origin, r.Network, p.input.Grant.Source, p.rotationOverlap()})
+		RotationOverlap   *time.Duration     `json:",omitempty"`
+		Replacement       *clientReplacement `json:",omitempty"`
+	}{p.store.managementPolicy(), p.input.Transition == deleteManagedClient, r.ClientID, r.Version, r.Redirects, r.Scopes, r.Origin, r.Network, p.input.Grant.Source, p.rotationOverlap(), p.input.ClientChange.Replacement})
 	if err != nil {
 		return identity.RequestIntent{}, err
 	}
@@ -279,9 +295,14 @@ func (p *phase) prepareClientKey(ctx context.Context, k kernel.RequestKeyPrepara
 			return nil, identity.ForbiddenError{}
 		}
 		client = r.Client
+		if p.store.config.ClientMetadataUpdates {
+			i.ClientChange.SecretVersion = r.SecretVersion
+		}
 	}
 	i.Binding.CommandID, i.Binding.CorrelationID = k.Admission.CommandID, string(k.Admission.CommandID)
-	i.ClientChange = &clientMutation{Client: client, Version: i.ClientChange.Version, Policy: p.store.managementPolicy(), Overlap: i.ClientChange.Overlap}
+	change := *i.ClientChange
+	change.Client, change.Policy = client, p.store.managementPolicy()
+	i.ClientChange = &change
 	i.Grant.ClientID, i.Grant.ClientFingerprint = client.ID, clientFingerprint(client)
 	i.CreatedAt, i.ObservationUntil, i.Network = p.store.now(), c.Session.ValidUntil(), c.Request.Network
 	wire, err := json.Marshal(i)
@@ -333,7 +354,12 @@ func (p *phase) checkClientChange(ctx context.Context, w kernel.Work, final bool
 	// above fences the original actor's actual authorization epoch under lock.
 	// Permission withdrawal must advance that existing owning epoch, not mutate
 	// an unversioned callback and expect a new in-transaction policy authority.
-	rows, err := w.Query(ctx, `SELECT version::text,state,registration FROM `+p.store.schema+`.managed_clients WHERE client_id=$1 FOR UPDATE`, p.client.ID)
+	query := `SELECT version::text,state,registration`
+	var secretVersion string
+	if p.store.config.ClientSecretRotation {
+		query += `,secret_version::text`
+	}
+	rows, err := w.Query(ctx, query+` FROM `+p.store.schema+`.managed_clients WHERE client_id=$1 FOR UPDATE`, p.client.ID)
 	if err != nil {
 		return err
 	}
@@ -350,7 +376,11 @@ func (p *phase) checkClientChange(ctx context.Context, w kernel.Work, final bool
 	}
 	var version, state string
 	var wire []byte
-	if rows.Scan(&version, &state, &wire) != nil || rows.Next() || rows.Err() != nil {
+	targets := []any{&version, &state, &wire}
+	if p.store.config.ClientSecretRotation {
+		targets = append(targets, &secretVersion)
+	}
+	if rows.Scan(targets...) != nil || rows.Next() || rows.Err() != nil {
 		return identity.UnavailableError{}
 	}
 	wantVersion, wantState := uint64(1), "active"
@@ -367,6 +397,23 @@ func (p *phase) checkClientChange(ctx context.Context, w kernel.Work, final bool
 	if final && p.applied && i.Transition == rotateManagedSecret {
 		wantVersion++
 		wantClient.Version++
+	}
+	if final && p.applied && i.Transition == updateManagedClient {
+		wantVersion++
+		var err error
+		wantClient, err = p.store.updatedClient(p.client, i.ClientChange.Replacement)
+		if err != nil {
+			return identity.ForbiddenError{}
+		}
+	}
+	if p.store.config.ClientSecretRotation {
+		generation := p.managementSecretVersion()
+		if final && p.applied && i.Transition == rotateManagedSecret {
+			generation++
+		}
+		if secretVersion != strconv.FormatUint(generation, 10) {
+			return identity.ForbiddenError{}
+		}
 	}
 	c, decodeErr := decodeRegistration(wire)
 	if version != strconv.FormatUint(wantVersion, 10) || state != wantState || decodeErr != nil || clientFingerprint(c) != clientFingerprint(wantClient) {
@@ -398,6 +445,20 @@ func (p *phase) mutateClientChange(ctx context.Context, w kernel.Work) error {
 			expiry = i.CreatedAt.Add(i.ClientChange.Overlap)
 		}
 		n, err = w.Exec(ctx, `UPDATE `+p.store.schema+`.managed_clients SET version=version+1,registration=$4::jsonb,previous_secret_digest=CASE WHEN $5::timestamptz IS NULL THEN NULL ELSE secret_digest END,previous_secret_version=CASE WHEN $5::timestamptz IS NULL THEN NULL ELSE secret_version END,previous_secret_expires_at=$5,secret_digest=$6,secret_version=secret_version+1,rotated_command=$2,rotated_at=$3 WHERE client_id=$1 AND version=$7::numeric AND state='active'`, p.client.ID, string(i.Binding.CommandID), i.CreatedAt, string(wire), expiry, p.output.ClientDigest, strconv.FormatUint(i.ClientChange.Version, 10))
+	} else if i.Transition == updateManagedClient {
+		client, e := p.store.updatedClient(p.client, i.ClientChange.Replacement)
+		if e != nil {
+			return e
+		}
+		wire, e := json.Marshal(registrationWire(client))
+		if e != nil {
+			return e
+		}
+		defer clear(wire)
+		// Registration replacement cannot extend overlap, change either digest
+		// slot/generation, or create a secret. Current version/generation were
+		// fenced on the same root lock before this sole-Work mutation.
+		n, err = w.Exec(ctx, `UPDATE `+p.store.schema+`.managed_clients SET version=version+1,registration=$2::jsonb WHERE client_id=$1 AND version=$3::numeric AND secret_version=$4::numeric AND state='active'`, p.client.ID, string(wire), strconv.FormatUint(i.ClientChange.Version, 10), strconv.FormatUint(p.managementSecretVersion(), 10))
 	} else if p.store.config.ClientSecretRotation {
 		n, err = w.Exec(ctx, `UPDATE `+p.store.schema+`.managed_clients SET version=version+1,state='deleted',deleted_command=$2,deleted_at=$3,previous_secret_digest=NULL,previous_secret_version=NULL,previous_secret_expires_at=NULL WHERE client_id=$1 AND version=$4::numeric AND state='active'`, p.client.ID, string(i.Binding.CommandID), i.CreatedAt, strconv.FormatUint(i.ClientChange.Version, 10))
 	} else {
@@ -462,6 +523,12 @@ func (s *Store) recoverClientManagement(ctx context.Context, r RecoveryRequest) 
 			return out, oauth.ErrAccessDenied
 		}
 		transition, version, intentID = rotateManagedSecret, 1, r.ClientID
+	}
+	if r.OperationID == "identity.oauth-server.client-update" {
+		if !s.config.ClientMetadataUpdates {
+			return out, oauth.ErrAccessDenied
+		}
+		transition, version, intentID = updateManagedClient, 1, r.ClientID
 	}
 	client := oauth.Client{ID: r.ClientID, Owner: policy.Owner, Version: 1, Resource: s.config.Protocol.Resource, AuthenticationMethod: "client_secret_basic", Redirects: policy.Redirects, Scopes: policy.Scopes.Scopes()}
 	p := &phase{store: s, client: client, observation: observed, input: phaseInput{Schema: 1, Configuration: s.identity, Transition: transition, Grant: grantRecord{Tenant: b.TenantID, User: b.UserID, Source: source}, ClientChange: &clientMutation{Client: client, Version: version, Policy: s.managementPolicy()}, Intent: s.intent(r.OperationID, intentID)}}

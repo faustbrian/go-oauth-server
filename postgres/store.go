@@ -44,6 +44,7 @@ const (
 	createManagedClient
 	deleteManagedClient
 	rotateManagedSecret
+	updateManagedClient
 )
 
 type grantRecord struct {

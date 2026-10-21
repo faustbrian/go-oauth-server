@@ -117,7 +117,7 @@ func (s *Store) readManagedClient(ctx context.Context, id string) (managedClient
 	r.SecretVersion = r.Client.Version
 	if s.config.ClientSecretRotation {
 		r.SecretVersion, err = strconv.ParseUint(secretVersion, 10, 64)
-		if err != nil || r.SecretVersion != r.Client.Version {
+		if err != nil || r.SecretVersion == 0 || r.SecretVersion > r.Client.Version || !s.config.ClientMetadataUpdates && r.SecretVersion != r.Client.Version {
 			return managedClientRecord{}, oauth.ErrUnavailable
 		}
 		if previousVersion != "" {

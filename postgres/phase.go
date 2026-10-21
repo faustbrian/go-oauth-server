@@ -109,6 +109,9 @@ func (p *phase) FeatureOperations() []identity.FeatureOperation {
 	if p.store != nil && p.store.config.ClientSecretRotation {
 		operations = append(operations, operation("identity.oauth-server.client-rotate-secret"))
 	}
+	if p.store != nil && p.store.config.ClientMetadataUpdates {
+		operations = append(operations, operation("identity.oauth-server.client-update"))
+	}
 	return operations
 }
 func (p *phase) registration() kernel.FeatureRegistration {
@@ -126,6 +129,8 @@ func (p *phase) auditActions() []string {
 		return []string{"identity.oauth_server.delete_client"}
 	case rotateManagedSecret:
 		return []string{"identity.oauth_server.rotate_client_secret"}
+	case updateManagedClient:
+		return []string{"identity.oauth_server.update_client"}
 	case deleteConsent, narrowConsent:
 		return []string{"identity.oauth_server.revoke_consent"}
 	case createInteraction, createWorkload:
@@ -168,6 +173,9 @@ func (p *phase) lifecycle() kernel.LifecyclePlan {
 	case rotateManagedSecret:
 		before = p.input.ClientChange.Version
 		event = "oauth_client.secret_rotated.v1"
+	case updateManagedClient:
+		before = p.input.ClientChange.Version
+		event = "oauth_client.configuration_changed.v1"
 	case deleteConsent:
 		before = p.input.Deletion.Version
 		event = "consent.revoked.v1"
@@ -303,7 +311,7 @@ func (p *phase) buildCommand() error {
 		return oauth.ErrInvalidRequest
 	}
 	if i.ClientChange != nil {
-		if (i.Transition != createManagedClient && i.Transition != deleteManagedClient && i.Transition != rotateManagedSecret) || !p.store.managedMetadata(i.ClientChange.Client) || i.ClientChange.Client.ID != oauth.ManagedClientPrefix+b.RecordID || clientFingerprint(i.ClientChange.Client) != clientFingerprint(p.client) || i.Transition == createManagedClient && i.ClientChange.Version != 0 || i.Transition != createManagedClient && (i.ClientChange.Version == 0 || i.ClientChange.Version == math.MaxUint64 || i.ClientChange.Version != p.client.Version) {
+		if (i.Transition != createManagedClient && i.Transition != deleteManagedClient && i.Transition != rotateManagedSecret && i.Transition != updateManagedClient) || !p.store.managedMetadata(i.ClientChange.Client) || i.ClientChange.Client.ID != oauth.ManagedClientPrefix+b.RecordID || clientFingerprint(i.ClientChange.Client) != clientFingerprint(p.client) || i.Transition == createManagedClient && i.ClientChange.Version != 0 || i.Transition != createManagedClient && (i.ClientChange.Version == 0 || i.ClientChange.Version == math.MaxUint64 || i.ClientChange.Version != p.client.Version) {
 			return oauth.ErrInvalidRequest
 		}
 		if i.Transition == rotateManagedSecret {
@@ -313,7 +321,20 @@ func (p *phase) buildCommand() error {
 		} else if i.ClientChange.Overlap != 0 {
 			return oauth.ErrInvalidRequest
 		}
-	} else if i.Transition == createManagedClient || i.Transition == deleteManagedClient || i.Transition == rotateManagedSecret {
+		if i.ClientChange.SecretVersion != 0 && (!p.store.config.ClientMetadataUpdates || i.ClientChange.SecretVersion > p.client.Version) {
+			return oauth.ErrInvalidRequest
+		}
+		if i.Transition == updateManagedClient {
+			if !p.store.config.ClientMetadataUpdates || i.ClientChange.SecretVersion == 0 {
+				return oauth.ErrInvalidRequest
+			}
+			if _, err := p.store.updatedClient(p.client, i.ClientChange.Replacement); err != nil {
+				return err
+			}
+		} else if i.ClientChange.Replacement != nil {
+			return oauth.ErrInvalidRequest
+		}
+	} else if i.Transition == createManagedClient || i.Transition == deleteManagedClient || i.Transition == rotateManagedSecret || i.Transition == updateManagedClient {
 		return oauth.ErrInvalidRequest
 	}
 	// This fixed native codec commits every nonsecret typed input, including
@@ -838,7 +859,7 @@ func (p *phase) GenerateFeaturePreparation(ctx context.Context, c identity.Comma
 		if err != nil {
 			return nil, err
 		}
-		version := p.client.Version
+		version := p.managementSecretVersion()
 		if i.Transition == rotateManagedSecret {
 			version++
 		}
@@ -1035,7 +1056,10 @@ func (p *phase) restore(ctx context.Context, generation uint64, wire []byte, ini
 		return oauth.ErrUnavailable
 	}
 	if out.Input.Transition == createManagedClient || out.Input.Transition == rotateManagedSecret {
-		version := p.client.Version
+		// Authenticate the originally captured generation, not a registration
+		// version advanced by metadata replacement. Legacy absent fields retain
+		// their original coupled interpretation in managementSecretVersion.
+		version := p.managementSecretVersion()
 		if out.Input.Transition == rotateManagedSecret {
 			version++
 		}

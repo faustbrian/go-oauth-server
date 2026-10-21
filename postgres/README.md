@@ -31,7 +31,8 @@ Creation allocates one server-random reserved ID/version1 and random 32-byte
 Basic secret. Only its digest persists in the client registry; secret custody
 in existing encrypted preparation is never redelivered by retry or recovery.
 Delete requires the exact current client/version and advances it to a terminal
-tombstone. Registrations cannot edit redirects/scopes/owner or reactivate.
+tombstone. Registrations cannot edit owner or reactivate; redirect/scope
+replacement requires the separately selected metadata-update profile below.
 Warm services and direct native readers repeatedly resolve current
 registry status. Mutating protocol paths take the client SHARE fence before
 grant/consent locks; deletion takes UPDATE, avoiding unbounded artifact fanout.
@@ -109,6 +110,49 @@ reveals the successor; keyed retries, unknown COMMIT and metadata-only `Recover`
 never disclose it or repeat the version change. Recover uses the original
 CommandID/ClientID/TenantID/current original manager Session, without Token or
 client authentication, including after deletion.
+
+### Optional complete managed metadata replacement
+
+Append `ClientUpdateMigrationSource{Base: installedRotationHistory, Schema: ...,
+Version: nextVersion}` without changing prior migration bytes. **Stop serving,
+install the forward history, replace every accepting old/unselected instance,
+then enable `Config.ClientMetadataUpdates=true`.** `ClientSecretRotation` and
+its installed history remain required. Do not return to old binaries after a
+metadata update: they assume registration version equals secret generation and
+fail closed on separated counters. Constructors neither install nor infer schema.
+
+`ClientUpdate` accepts exact existing management custody (current ID/version,
+immutable owner/tenant, original fresh password session, origin/CSRF and native
+request key) plus complete nonempty `Redirects` and `Scopes` replacements within
+the configured immutable ceilings. No patch merge, resource/authentication-method
+edit, secret input or additional ownership/client class is accepted. Even an
+identical replacement advances authority exactly once. **All old consent,
+interactions, codes, access and refresh grants are invalid.** Unchanged Basic
+custody performs only NEW explicit consent/code/S256 authorization at the new
+registration version; removed redirects/scopes deny on warm ordinary services.
+
+Only registration authority advances. Both digest bytes/generations and any
+predecessor's original exclusive overlap expiry remain unchanged. Later rotation
+advances registration and secret generation independently; the immediately older
+generation alone overlaps, and deletion still retires every slot. New encrypted
+preparation captures the actual secret generation. Published preparation without
+that optional field retains its original coupled client-version interpretation,
+never a generation inferred from today's aggregate. Existing history, digest
+framing and original recovery remain intact.
+
+The existing sole Work serializes update/rotation/deletion and ordinary grant
+admission on the same client root, preserving original <=20s authority through
+callbacks, SQL waits, commit, delivery and retries. Exact platform policy runs
+outside protected locks; existing actor-epoch withdrawal and required risk,
+audit/outbox effects still apply. The canonical operation is
+`identity.oauth-server.client-update`, audit action
+`identity.oauth_server.update_client`, and lifecycle topic
+`oauth_client.configuration_changed.v1`. Failure/unknown returns Completion only.
+Committed retry metadata describes the ORIGINAL replacement, not today's client;
+it never repeats a mutation or reveals a secret. `Recover` uses the original
+operation/command/client/tenant/current original manager Session and reconciles
+metadata only. Fresh invocation custody cannot renew retained preparation's
+original deadline. Use a current read and new explicit key for a later change.
 
 The optional [selected OIDC profile](../docs/selected-oidc-profile.md) adds native
 encrypted ID-token preparation, subject-bound UserInfo and public signing-key

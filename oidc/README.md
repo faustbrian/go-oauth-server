@@ -38,6 +38,29 @@ bytes remain unchanged. Identifier changes invalidate original identifier
 authority, so existing grants deny instead of silently adopting a new contact.
 All errors/cancellation return zero claims; the original earliest native
 20-second/credential/session/token deadline is never renewed by projection.
+
+## Optional consented phone UserInfo
+
+Set `Config.PhoneUserInfo=true`, include `phone` with `openid` in the root
+extension catalog and selected human client, and obtain actual native consent.
+The phone owner must first commit `SendVerification` and purpose-bound OTP
+`Verify`; a pending SMS challenge or sender callback is not possession proof.
+The child receives the existing native identifier snapshot, not an application
+phone string or verification flag. Select compatible public native owner versions
+and installed phone/OTP histories before enabling that composition.
+
+Only UserInfo receives `phone_number` and Boolean `phone_number_verified:true`;
+ID tokens remain minimized. This conservative profile omits pending/revoked
+phones, preferring the owner's per-kind primary among verified contacts and
+otherwise the lowest IdentifierID. E.164 canonical bytes remain unchanged.
+Both optional email and phone may be selected without replacing either claim
+projection. Openid-only and email-only grants disclose no phone.
+
+The original earliest native validity deadline and all grant/client/consent/
+subject/key fences remain unchanged. Native identifier-authority advancement
+denies old grants rather than silently adopting another number. Relying parties
+must independently verify the ID token and compare UserInfo `sub`; the phone is
+not a stable identity key. This finite extension is not full M31 qualification.
 See [OIDC Core sections5.1 and5.4](https://openid.net/specs/openid-connect-core-1_0.html#ScopeClaims).
 
 Signing requires core SigningService with the native durable SigningLifecycle,
@@ -95,6 +118,6 @@ The child supplies authentication policy, never consent permission. Silent
 requests cannot be completed through `Continue` or combined with other prompts.
 
 Other prompt variants,
-profile/address/phone/offline scopes, logout, private session JWT exchange,
+profile/address/offline scopes, logout, private session JWT exchange,
 shared-issuer access-JWT/delegation, HTTP/reference integration and complete
 conformance/release qualification remain open, unadvertised and unstubbed.

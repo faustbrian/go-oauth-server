@@ -37,6 +37,10 @@ type Config struct {
 	// EmailUserInfo explicitly enables consented email/email_verified UserInfo
 	// projection from native primary identifier custody. It never expands ID tokens.
 	EmailUserInfo bool
+	// PhoneUserInfo explicitly enables verified, consented phone UserInfo claims
+	// from native primary custody. Pending/revoked numbers are omitted; ID tokens
+	// retain their subject/authentication-only projection.
+	PhoneUserInfo bool
 }
 
 func (Config) Format(f fmt.State, _ rune)   { _, _ = f.Write([]byte("oidc.Config(redacted)")) }
@@ -71,10 +75,14 @@ func NewService(c Config, core *oauth.Service) (*Service, error) {
 			return nil, oauth.ErrInvalidRequest
 		}
 	}
-	scopes, _ := oauth.NewOIDCScopeCatalog([]string{"openid"})
+	names := []string{"openid"}
 	if c.EmailUserInfo {
-		scopes, _ = oauth.NewOIDCScopeCatalog([]string{"openid", "email"})
+		names = append(names, "email")
 	}
+	if c.PhoneUserInfo {
+		names = append(names, "phone")
+	}
+	scopes, _ := oauth.NewOIDCScopeCatalog(names)
 	publicSubject, _ := opaqueHMAC(c.SubjectKey, "golib.oidc.public-subject.v1\x00")
 	clear(c.SubjectKey[:])
 	return &Service{config: c, core: core, scopes: scopes, publicSubject: publicSubject}, nil
@@ -110,7 +118,7 @@ func (s *Service) bounded(ctx context.Context) (context.Context, context.CancelF
 	return c, stop, nil
 }
 
-// Scopes returns only implemented scope ownership. Profile/address/phone
+// Scopes returns only implemented scope ownership. Profile/address
 // claims, offline_access and every logout profile remain
 // unselected, unadvertised and unavailable rather than approximated.
 func (s *Service) Scopes() oauth.ScopeCatalog {
@@ -130,7 +138,11 @@ func (s *Service) selected(scopes []string) bool {
 			if !s.config.EmailUserInfo {
 				return false
 			}
-		case "profile", "address", "phone", "offline_access":
+		case "phone":
+			if !s.config.PhoneUserInfo {
+				return false
+			}
+		case "profile", "address", "offline_access":
 			return false
 		}
 	}
@@ -314,6 +326,9 @@ func (s *Service) OIDCDiscovery(ctx context.Context) (oauth.OIDCDiscoveryProject
 	if s.config.EmailUserInfo {
 		claims = append(claims, "email", "email_verified")
 	}
+	if s.config.PhoneUserInfo {
+		claims = append(claims, "phone_number", "phone_number_verified")
+	}
 	return oauth.OIDCDiscoveryProjection{JWKSURI: s.config.JWKSURI, UserInfoEndpoint: s.config.UserInfoEndpoint, SubjectTypesSupported: subjectTypes, IDTokenSigningAlgValuesSupported: []string{"ES256"}, ClaimsSupported: claims}, nil
 }
 
@@ -366,10 +381,14 @@ func (s *Service) JWKS(ctx context.Context) (JWKS, error) {
 // claims. EmailVerified is nil when email is omitted and non-nil for actual
 // pending(false)/verified(true) custody. JSON is intentional RP disclosure;
 // diagnostics redact. No field is an authentication credential or identity key.
+// PhoneNumberVerified is present and true only with a native verified canonical
+// number; this conservative profile omits pending/revoked phone contacts.
 type UserInfo struct {
-	Subject       string `json:"sub"`
-	Email         string `json:"email,omitempty"`
-	EmailVerified *bool  `json:"email_verified,omitempty"`
+	Subject             string `json:"sub"`
+	Email               string `json:"email,omitempty"`
+	EmailVerified       *bool  `json:"email_verified,omitempty"`
+	PhoneNumber         string `json:"phone_number,omitempty"`
+	PhoneNumberVerified *bool  `json:"phone_number_verified,omitempty"`
 }
 
 func (UserInfo) Format(f fmt.State, _ rune) { _, _ = f.Write([]byte("oidc.UserInfo(redacted)")) }
@@ -395,6 +414,13 @@ func (s *Service) UserInfo(ctx context.Context, request oauth.UserInfoRequest) (
 			return UserInfo{}, err
 		}
 		info.Subject = claims.Subject
+	}
+	if slices.Contains(source.Scopes, "phone") {
+		phone, err := s.phoneClaims(ctx, source)
+		if err != nil {
+			return UserInfo{}, err
+		}
+		info.PhoneNumber, info.PhoneNumberVerified = phone.PhoneNumber, phone.PhoneNumberVerified
 	}
 	if err := ctx.Err(); err != nil {
 		return UserInfo{}, err

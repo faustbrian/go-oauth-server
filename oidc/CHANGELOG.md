@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Opt into consented phone UserInfo with canonical `phone_number` and Boolean
+  `phone_number_verified:true` from actual verified primary custody. Prefer the
+  owner's verified primary, otherwise lowest IdentifierID; omit pending/revoked
+  contacts. ID tokens and default scopes remain unchanged.
+
 - Select exact `prompt=none` through the existing four-method extension. Require
   actual current authentication and original maximum-age bounds without login
   interaction or consent authority; native explicit approval remains mandatory.

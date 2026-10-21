@@ -138,7 +138,7 @@ func (s *Service) selected(scopes []string) bool {
 }
 
 // ValidateAuthorization admits only the code/S256 request already selected by
-// core and genuine session custody. It projects selected login/max_age policy,
+// core and genuine session custody. It projects selected login/none/max_age policy,
 // but never creates authentication, consent or a native continuation. Other
 // prompt variants and identity-claim scopes are unavailable.
 func (s *Service) ValidateAuthorization(ctx context.Context, in oauth.OIDCAuthorizationInput) (oauth.OIDCAuthorizationProjection, error) {
@@ -147,7 +147,16 @@ func (s *Service) ValidateAuthorization(ctx context.Context, in oauth.OIDCAuthor
 		return oauth.OIDCAuthorizationProjection{}, err
 	}
 	defer stop()
-	if !s.selected(in.Request.Scopes) || len(in.Request.Nonce) > 256 || in.Session.ValidateAt(s.config.Clock.Now()) != nil {
+	if !s.selected(in.Request.Scopes) || len(in.Request.Nonce) > 256 {
+		return oauth.OIDCAuthorizationProjection{}, oauth.ErrAccessDenied
+	}
+	if in.Request.Prompt == "none" && in.Reauthentication != nil {
+		return oauth.OIDCAuthorizationProjection{}, oauth.ErrInvalidRequest
+	}
+	if in.Session.ValidateAt(s.config.Clock.Now()) != nil {
+		if in.Request.Prompt == "none" {
+			return oauth.OIDCAuthorizationProjection{}, oauth.ErrLoginRequired
+		}
 		return oauth.OIDCAuthorizationProjection{}, oauth.ErrAccessDenied
 	}
 	if err := ctx.Err(); err != nil {
@@ -155,7 +164,7 @@ func (s *Service) ValidateAuthorization(ctx context.Context, in oauth.OIDCAuthor
 	}
 	out := oauth.OIDCAuthorizationProjection{Accepted: true}
 	if in.Request.Prompt != "" || in.Request.MaxAge != nil {
-		if in.Request.Prompt != "" && in.Request.Prompt != "login" {
+		if in.Request.Prompt != "" && in.Request.Prompt != "login" && in.Request.Prompt != "none" {
 			return oauth.OIDCAuthorizationProjection{}, oauth.ErrInvalidRequest
 		}
 		bindings, err := in.Session.Session.Bindings()
@@ -182,6 +191,15 @@ func (s *Service) ValidateAuthorization(ctx context.Context, in oauth.OIDCAuthor
 			} else if out.Authentication == oauth.OIDCAuthenticationCurrent {
 				out.AuthenticationUntil = until
 			}
+		}
+		if in.Request.Prompt == "none" {
+			// OIDC Core1.0 errata2 §§3.1.2.1/3.1.2.3 forbids interactive
+			// reauthentication for none, including unmet max_age. Native OAuth
+			// still independently admits exact pre-existing bounded consent.
+			if out.Authentication == oauth.OIDCAuthenticationFresh {
+				return oauth.OIDCAuthorizationProjection{}, oauth.ErrLoginRequired
+			}
+			out.Authentication = oauth.OIDCAuthenticationSilent
 		}
 	}
 	if in.Client.SubjectRegistration != nil {

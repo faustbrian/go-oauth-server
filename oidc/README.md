@@ -86,6 +86,14 @@ submit it with the new current session and its synchronizer. A timestamp or
 refreshed old session is not proof; the native owner fences both sources and
 the child evaluates freshness. See the [selected profile](../docs/selected-oidc-profile.md#original-authorization-and-fresh-login).
 
+Exact `prompt=none` instead requires current genuine session custody, satisfied
+`max_age` and native original unexpired explicit approval. It returns a fresh
+one-use code without interaction or consent mutation, or a validated
+`login_required`/`consent_required` redirect; invalid redirects stay local. Select
+the native forward expiry history and `ConsentReuseTTL` explicitly before use.
+The child supplies authentication policy, never consent permission. Silent
+requests cannot be completed through `Continue` or combined with other prompts.
+
 Other prompt variants,
 profile/address/phone/offline scopes, logout, private session JWT exchange,
 shared-issuer access-JWT/delegation, HTTP/reference integration and complete

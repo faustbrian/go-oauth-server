@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Select exact `prompt=none` through the existing four-method extension. Require
+  actual current authentication and original maximum-age bounds without login
+  interaction or consent authority; native explicit approval remains mandatory.
+
 - Select patched Go 1.27.3 for verification of GO-2026-6809 in `crypto/x509`.
   Consumers must also build with a patched toolchain; the API minimum is unchanged.
 

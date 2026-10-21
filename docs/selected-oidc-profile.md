@@ -256,8 +256,8 @@ operations remain broader unverified-goal work.
 require `prompt=none` to avoid authentication/consent UI, forbid combinations,
 and define `login_required`/`consent_required`. Select the matching native
 `ConsentExpiryMigrationSource` and explicitly configure `ConsentReuseTTL`
-(1s..24h) after replacing old accepting writers. Zero selects preactivation legacy
-writers only: after activation every accepting writer must retain positive TTL;
+(1s..24h) after replacing old accepting writers. Zero selects legacy writers
+only before activation; afterward every accepting writer must retain positive TTL;
 mixed/zero-writer rollback is unsupported and migration history is not reversible.
 Revoke consent to withdraw reuse. OIDC specifies
 existing consent, not its lifetime; this conservative owner policy requires

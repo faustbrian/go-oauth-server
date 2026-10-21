@@ -70,8 +70,14 @@ bind an immutable platform, tenant, service account, resource and access ceiling
 they create no human, session or consent and cannot request refresh. Their
 directory and workload authorization epochs remain current-primary checks.
 See the [selected workload policy](selected-profile.md#configured-workload-client-credentials)
-and install its typed forward migration before enabling it. Client management,
-signing-key administration, trusted/dynamic
+and install its typed forward migration before enabling it. Client management
+outside the separately selected finite platform-owned profile is unsupported.
+That [native profile](../postgres/README.md#optional-bounded-secret-rotation)
+supports one bounded predecessor only for new-version grants: rotation advances
+actual client authority and invalidates all older grants/consent. It retains
+original matching-slot/deadline custody through waits, never an error-only
+preflight or a renewed snapshot as late authentication authority.
+Signing-key administration, trusted/dynamic
 consent, OIDC, device and delegation/exchange remain unsupported, not aliases.
 
 Independent review, public dependency/consumer verification and applicable

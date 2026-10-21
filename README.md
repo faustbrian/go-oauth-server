@@ -71,6 +71,14 @@ replacement authentication engine.
   call; terminal deletion denies all descendants without token fanout.
   Selected OAuth discovery includes the managed human-web/Basic capability,
   including when no static confidential registration exists.
+- `Service.ClientRotateSecret` optionally rotates that confidential class using
+  the same exact manager/CSRF authority and keyed original recovery. Explicit
+  overlap is 0..24h at microsecond precision; the successor is revealed once.
+  Rotation advances actual client authority and invalidates every earlier
+  code/access/refresh/grant/consent. New explicit authorization is required even
+  during overlap; only the immediately preceding Basic secret can authenticate
+  those new grants, until its original exclusive expiry. Static clients are
+  unchanged. See the native forward-migration and fleet adoption requirements.
 - `Service.DiscoveryOauth` returns OAuth-only RFC8414 metadata when explicitly
   selected by `Config.Discovery`. Trusted issuer-origin endpoint configuration
   and actual configured clients determine grants, authentication methods, S256,

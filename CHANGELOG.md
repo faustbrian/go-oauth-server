@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add optional managed confidential-client secret rotation with explicit 0..24h
+  overlap and reveal-once successor. Rotation advances client authority: old
+  code/access/refresh/grants/consent are denied and require new explicit approval.
+  Predecessor Basic works only for new-version grants until its original exact
+  exclusive deadline; static clients and existing Store interfaces are unchanged.
+
 - Add optional authenticated platform-owned confidential-client creation and
   terminal deletion, leaving existing Store implementations and static clients
   unchanged. Managed IDs occupy an exclusive server-owned namespace; selected

@@ -61,6 +61,10 @@ type Config struct {
 	// and the kernel's request-key preparation history must already be installed.
 	// Existing read/delete-only compositions leave this false.
 	ConsentNarrowing bool
+	// ClientSecretRotation enables bounded managed confidential-secret overlap.
+	// Install ClientRotationMigrationSource and retire non-rotation instances
+	// before enabling; every secret change advances actual client authority.
+	ClientSecretRotation bool
 }
 
 // Format redacts keys, correlated deployment scopes and policy dependencies.
@@ -121,6 +125,9 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	if protocol.ManagedClients != nil && !c.ConsentManagement {
 		return nil, oauth.ErrInvalidRequest
 	}
+	if c.ClientSecretRotation && protocol.ManagedClients == nil {
+		return nil, oauth.ErrInvalidRequest
+	}
 	// Privileged's native counters supply exactly velocity. The upstream
 	// protected-provider admission API is CredentialMutation-only; accepting
 	// another mandatory signal here would silently omit its owning provider.
@@ -133,6 +140,9 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	}
 	if protocol.ManagedClients != nil {
 		operations = append(operations, operation("identity.oauth-server.client-create"), operation("identity.oauth-server.client-delete"))
+	}
+	if c.ClientSecretRotation {
+		operations = append(operations, operation("identity.oauth-server.client-rotate-secret"))
 	}
 	for _, operation := range operations {
 		admitted, err := c.Counters.CommandCounters.Policy.Admit(risk.Action(operation.OperationID))

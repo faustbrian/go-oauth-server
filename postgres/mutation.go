@@ -201,7 +201,7 @@ func (p *phase) RecoverParticipant(ctx context.Context, w kernel.RecoveryWork) (
 		return kernel.RecoveryUnknown, identity.ForbiddenError{}
 	}
 	ownerColumn := "grant_id"
-	if b.OperationID == "identity.oauth-server.client-create" || b.OperationID == "identity.oauth-server.client-delete" {
+	if b.OperationID == "identity.oauth-server.client-create" || b.OperationID == "identity.oauth-server.client-delete" || b.OperationID == "identity.oauth-server.client-rotate-secret" {
 		ownerColumn = "client_id"
 	}
 	if b.OperationID == "identity.oauth-server.consent-delete" || b.OperationID == "identity.oauth-server.consent-update" {
@@ -230,7 +230,7 @@ func (p *phase) RecoverParticipant(ctx context.Context, w kernel.RecoveryWork) (
 	if (b.OperationID == "identity.oauth-server.consent-delete" || b.OperationID == "identity.oauth-server.consent-update") && grant != b.RecordID {
 		return kernel.RecoveryUnknown, identity.UnavailableError{}
 	}
-	if (b.OperationID == "identity.oauth-server.client-create" || b.OperationID == "identity.oauth-server.client-delete") && grant != oauth.ManagedClientPrefix+b.RecordID {
+	if (b.OperationID == "identity.oauth-server.client-create" || b.OperationID == "identity.oauth-server.client-delete" || b.OperationID == "identity.oauth-server.client-rotate-secret") && grant != oauth.ManagedClientPrefix+b.RecordID {
 		return kernel.RecoveryUnknown, identity.UnavailableError{}
 	}
 	return kernel.RecoveryCommitted, nil
@@ -238,7 +238,7 @@ func (p *phase) RecoverParticipant(ctx context.Context, w kernel.RecoveryWork) (
 
 func oauthLifecycle(event string) bool {
 	switch event {
-	case "grant.created.v1", "grant.authorized.v1", "grant.scope_changed.v1", "grant.code_exchanged.v1", "grant.refresh_rotated.v1", "grant.revoked.v1", "oauth_access.revoked.v1", "consent.revoked.v1", "consent.scope_changed.v1", "oauth_client.created.v1", "oauth_client.revoked.v1":
+	case "grant.created.v1", "grant.authorized.v1", "grant.scope_changed.v1", "grant.code_exchanged.v1", "grant.refresh_rotated.v1", "grant.revoked.v1", "oauth_access.revoked.v1", "consent.revoked.v1", "consent.scope_changed.v1", "oauth_client.created.v1", "oauth_client.revoked.v1", "oauth_client.secret_rotated.v1":
 		return true
 	default:
 		return false

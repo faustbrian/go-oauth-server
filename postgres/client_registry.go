@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	identity "github.com/faustbrian/go-identity"
 	kernel "github.com/faustbrian/go-identity/postgres"
@@ -16,10 +17,15 @@ import (
 var _ oauth.CurrentClientRegistry = (*Store)(nil)
 
 type managedClientRecord struct {
-	Client  oauth.Client
-	Digest  []byte
-	State   string
-	Version uint64
+	Client          oauth.Client
+	Digest          []byte
+	State           string
+	Version         uint64
+	SecretVersion   uint64
+	PreviousVersion uint64
+	PreviousExpiry  time.Time
+	PreviousDigest  []byte
+	DatabaseNow     time.Time
 }
 
 // Owner intentionally has no generic JSON representation. Native registration
@@ -86,7 +92,15 @@ func (s *Store) readManagedClient(ctx context.Context, id string) (managedClient
 	var r managedClientRecord
 	var wire []byte
 	var version string
-	err := s.pool.Raw().QueryRow(ctx, `SELECT registration,secret_digest,state,version::text FROM `+s.schema+`.managed_clients WHERE client_id=$1 AND issuer=$2 AND environment=$3 AND platform_owner=$4 AND tenant_id=$5`, id, s.config.Protocol.Issuer.String(), s.config.Protocol.Environment, s.config.Protocol.ManagedClients.Owner.PlatformID(), string(s.config.Protocol.ManagedClients.TenantID)).Scan(&wire, &r.Digest, &r.State, &version)
+	query := `SELECT registration,secret_digest,state,version::text`
+	targets := []any{&wire, &r.Digest, &r.State, &version}
+	var secretVersion, previousVersion string
+	var previousExpiry *time.Time
+	if s.config.ClientSecretRotation {
+		query += `,secret_version::text,COALESCE(previous_secret_version::text,''),previous_secret_digest,previous_secret_expires_at,clock_timestamp()`
+		targets = append(targets, &secretVersion, &previousVersion, &r.PreviousDigest, &previousExpiry, &r.DatabaseNow)
+	}
+	err := s.pool.Raw().QueryRow(ctx, query+` FROM `+s.schema+`.managed_clients WHERE client_id=$1 AND issuer=$2 AND environment=$3 AND platform_owner=$4 AND tenant_id=$5`, id, s.config.Protocol.Issuer.String(), s.config.Protocol.Environment, s.config.Protocol.ManagedClients.Owner.PlatformID(), string(s.config.Protocol.ManagedClients.TenantID)).Scan(targets...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return r, oauth.ErrInvalidClient
 	}
@@ -99,6 +113,22 @@ func (s *Store) readManagedClient(ctx context.Context, id string) (managedClient
 	r.Version, err = strconv.ParseUint(version, 10, 64)
 	if err != nil || r.Version == 0 || len(r.Digest) != 32 || !s.managedMetadata(r.Client) || r.Client.ID != id || r.State != "active" && r.State != "deleted" || r.State == "active" && r.Client.Version != r.Version {
 		return managedClientRecord{}, oauth.ErrUnavailable
+	}
+	r.SecretVersion = r.Client.Version
+	if s.config.ClientSecretRotation {
+		r.SecretVersion, err = strconv.ParseUint(secretVersion, 10, 64)
+		if err != nil || r.SecretVersion != r.Client.Version {
+			return managedClientRecord{}, oauth.ErrUnavailable
+		}
+		if previousVersion != "" {
+			r.PreviousVersion, err = strconv.ParseUint(previousVersion, 10, 64)
+			if err != nil || r.PreviousVersion == 0 || r.PreviousVersion+1 != r.SecretVersion || len(r.PreviousDigest) != 32 || previousExpiry == nil || previousExpiry.IsZero() {
+				return managedClientRecord{}, oauth.ErrUnavailable
+			}
+			r.PreviousExpiry = *previousExpiry
+		} else if previousExpiry != nil || len(r.PreviousDigest) != 0 {
+			return managedClientRecord{}, oauth.ErrUnavailable
+		}
 	}
 	return r, nil
 }
@@ -129,16 +159,8 @@ func (s *Store) AuthenticateCurrentClient(ctx context.Context, c oauth.Client, a
 	if !s.managedID(c.ID) {
 		return s.config.Protocol.AuthenticateClient(ctx, c.ID, a)
 	}
-	r, err := s.readManagedClient(ctx, c.ID)
-	if err != nil {
-		return err
-	}
-	if r.State != "active" || clientFingerprint(r.Client) != clientFingerprint(c) {
-		return oauth.ErrInvalidClient
-	}
-	var digest oauth.ClientSecretDigest
-	copy(digest[:], r.Digest)
-	return a.VerifySecretDigest(c.ID, c.Version, digest)
+	_, err = s.authenticateClientSnapshot(ctx, c, a)
+	return err
 }
 func (s *Store) checkedClient(ctx context.Context, c oauth.Client) (oauth.Client, error) {
 	if !s.managedID(c.ID) {
@@ -166,7 +188,15 @@ func (p *phase) requireManagedClient(ctx context.Context, w kernel.Work) error {
 	}
 	var version, state string
 	var wire []byte
-	rows, err := w.Query(ctx, `SELECT version::text,state,registration FROM `+p.store.schema+`.managed_clients WHERE client_id=$1 AND issuer=$2 AND environment=$3 AND platform_owner=$4 AND tenant_id=$5 FOR SHARE`, p.client.ID, p.store.config.Protocol.Issuer.String(), p.store.config.Protocol.Environment, p.store.config.Protocol.ManagedClients.Owner.PlatformID(), string(p.store.config.Protocol.ManagedClients.TenantID))
+	query := `SELECT version::text,state,registration`
+	var secretVersion, previousVersion string
+	var previousExpiry *time.Time
+	targets := []any{&version, &state, &wire}
+	if p.input.ClientAuthentication != nil {
+		query += `,secret_version::text,COALESCE(previous_secret_version::text,''),previous_secret_expires_at`
+		targets = append(targets, &secretVersion, &previousVersion, &previousExpiry)
+	}
+	rows, err := w.Query(ctx, query+` FROM `+p.store.schema+`.managed_clients WHERE client_id=$1 AND issuer=$2 AND environment=$3 AND platform_owner=$4 AND tenant_id=$5 FOR SHARE`, p.client.ID, p.store.config.Protocol.Issuer.String(), p.store.config.Protocol.Environment, p.store.config.Protocol.ManagedClients.Owner.PlatformID(), string(p.store.config.Protocol.ManagedClients.TenantID))
 	if err != nil {
 		return err
 	}
@@ -174,12 +204,17 @@ func (p *phase) requireManagedClient(ctx context.Context, w kernel.Work) error {
 	if !rows.Next() {
 		return identity.ForbiddenError{}
 	}
-	if rows.Scan(&version, &state, &wire) != nil || rows.Next() || rows.Err() != nil {
+	if rows.Scan(targets...) != nil || rows.Next() || rows.Err() != nil {
 		return identity.UnavailableError{}
 	}
 	c, decodeErr := decodeRegistration(wire)
 	if decodeErr != nil || state != "active" || version != strconv.FormatUint(p.client.Version, 10) || clientFingerprint(c) != clientFingerprint(p.client) {
 		return identity.ForbiddenError{}
+	}
+	if a := p.input.ClientAuthentication; a != nil {
+		if !p.store.config.ClientSecretRotation || !a.matches(secretVersion, previousVersion, previousExpiry) {
+			return identity.ForbiddenError{}
+		}
 	}
 	return nil
 }

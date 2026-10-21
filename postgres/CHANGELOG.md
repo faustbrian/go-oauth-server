@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Verify native adapters using patched Go 1.27.3 for GO-2026-6809 in
+  `crypto/x509`. Consumers must also use a patched Go build toolchain.
+
+- Add optional bounded confidential-secret rotation through existing manager,
+  prepared-key, encrypted input, sole Work, audit/outbox and recovery owners.
+  Install forward `ClientRotationMigrationSource` and replace old accepting
+  instances before enabling `ClientSecretRotation`. Every rotation advances
+  actual client authority, invalidating old grants/consent; overlap authenticates
+  only new-version authorization and keeps at most one predecessor. Original
+  matching-slot/deadline fences survive waits and final delivery; retries and
+  recovery never reveal the successor. Emit `oauth_client.secret_rotated.v1`.
+
 - Add selected platform-owned confidential-client creation/terminal deletion
   using existing authenticated human/session/CSRF, exact platform policy,
   prepared request keys, encrypted preparation, coordinator, audit and outbox.

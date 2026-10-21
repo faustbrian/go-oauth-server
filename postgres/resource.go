@@ -36,7 +36,7 @@ func NewResourceVerifier(pool *database.Pool, c Config, keys *keyring.Provider, 
 	}
 	if s.managedID(policy.ClientID) {
 		p := s.config.Protocol.ManagedClients
-		if policy.TenantID != p.TenantID || policy.ClientVersion != 1 || policy.Resource != s.config.Protocol.Resource || !scopeSubset(policy.Scopes.Scopes(), p.Scopes.Scopes()) {
+		if policy.TenantID != p.TenantID || policy.ClientVersion == 0 || policy.Resource != s.config.Protocol.Resource || !scopeSubset(policy.Scopes.Scopes(), p.Scopes.Scopes()) {
 			return nil, oauth.ErrInvalidRequest
 		}
 		// Construction selects immutable trust policy without reading a possibly

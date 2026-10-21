@@ -106,6 +106,9 @@ func (p *phase) FeatureOperations() []identity.FeatureOperation {
 	if p.store != nil && p.store.config.Protocol.ManagedClients != nil {
 		operations = append(operations, operation("identity.oauth-server.client-create"), operation("identity.oauth-server.client-delete"))
 	}
+	if p.store != nil && p.store.config.ClientSecretRotation {
+		operations = append(operations, operation("identity.oauth-server.client-rotate-secret"))
+	}
 	return operations
 }
 func (p *phase) registration() kernel.FeatureRegistration {
@@ -121,6 +124,8 @@ func (p *phase) auditActions() []string {
 		return []string{"identity.oauth_server.create_client"}
 	case deleteManagedClient:
 		return []string{"identity.oauth_server.delete_client"}
+	case rotateManagedSecret:
+		return []string{"identity.oauth_server.rotate_client_secret"}
 	case deleteConsent, narrowConsent:
 		return []string{"identity.oauth_server.revoke_consent"}
 	case createInteraction, createWorkload:
@@ -160,6 +165,9 @@ func (p *phase) lifecycle() kernel.LifecyclePlan {
 	case deleteManagedClient:
 		before = p.input.ClientChange.Version
 		event = "oauth_client.revoked.v1"
+	case rotateManagedSecret:
+		before = p.input.ClientChange.Version
+		event = "oauth_client.secret_rotated.v1"
 	case deleteConsent:
 		before = p.input.Deletion.Version
 		event = "consent.revoked.v1"
@@ -295,10 +303,17 @@ func (p *phase) buildCommand() error {
 		return oauth.ErrInvalidRequest
 	}
 	if i.ClientChange != nil {
-		if (i.Transition != createManagedClient && i.Transition != deleteManagedClient) || !p.store.managedMetadata(i.ClientChange.Client) || i.ClientChange.Client.ID != oauth.ManagedClientPrefix+b.RecordID || clientFingerprint(i.ClientChange.Client) != clientFingerprint(p.client) || i.Transition == createManagedClient && i.ClientChange.Version != 0 || i.Transition == deleteManagedClient && i.ClientChange.Version != 1 {
+		if (i.Transition != createManagedClient && i.Transition != deleteManagedClient && i.Transition != rotateManagedSecret) || !p.store.managedMetadata(i.ClientChange.Client) || i.ClientChange.Client.ID != oauth.ManagedClientPrefix+b.RecordID || clientFingerprint(i.ClientChange.Client) != clientFingerprint(p.client) || i.Transition == createManagedClient && i.ClientChange.Version != 0 || i.Transition != createManagedClient && (i.ClientChange.Version == 0 || i.ClientChange.Version == math.MaxUint64 || i.ClientChange.Version != p.client.Version) {
 			return oauth.ErrInvalidRequest
 		}
-	} else if i.Transition == createManagedClient || i.Transition == deleteManagedClient {
+		if i.Transition == rotateManagedSecret {
+			if !p.store.config.ClientSecretRotation || i.ClientChange.Overlap < 0 || i.ClientChange.Overlap > 24*time.Hour || i.ClientChange.Overlap%time.Microsecond != 0 {
+				return oauth.ErrInvalidRequest
+			}
+		} else if i.ClientChange.Overlap != 0 {
+			return oauth.ErrInvalidRequest
+		}
+	} else if i.Transition == createManagedClient || i.Transition == deleteManagedClient || i.Transition == rotateManagedSecret {
 		return oauth.ErrInvalidRequest
 	}
 	// This fixed native codec commits every nonsecret typed input, including
@@ -814,7 +829,7 @@ func (p *phase) GenerateFeaturePreparation(ctx context.Context, c identity.Comma
 		}
 	}
 	out := preparedOutput{Schema: 1, Generation: generation, Input: i}
-	if i.Transition == createManagedClient {
+	if i.Transition == createManagedClient || i.Transition == rotateManagedSecret {
 		token, err := oauth.NewToken()
 		if err != nil {
 			return nil, err
@@ -823,7 +838,11 @@ func (p *phase) GenerateFeaturePreparation(ctx context.Context, c identity.Comma
 		if err != nil {
 			return nil, err
 		}
-		digest, err := oauth.DigestClientSecret(p.client.ID, 1, out.ClientSecret)
+		version := p.client.Version
+		if i.Transition == rotateManagedSecret {
+			version++
+		}
+		digest, err := oauth.DigestClientSecret(p.client.ID, version, out.ClientSecret)
 		if err != nil {
 			return nil, err
 		}
@@ -1015,8 +1034,12 @@ func (p *phase) restore(ctx context.Context, generation uint64, wire []byte, ini
 	if len(out.Artifacts) != want {
 		return oauth.ErrUnavailable
 	}
-	if out.Input.Transition == createManagedClient {
-		digest, err := oauth.DigestClientSecret(p.client.ID, 1, out.ClientSecret)
+	if out.Input.Transition == createManagedClient || out.Input.Transition == rotateManagedSecret {
+		version := p.client.Version
+		if out.Input.Transition == rotateManagedSecret {
+			version++
+		}
+		digest, err := oauth.DigestClientSecret(p.client.ID, version, out.ClientSecret)
 		if err != nil || !slices.Equal(digest[:], out.ClientDigest) {
 			return oauth.ErrUnavailable
 		}
@@ -1138,6 +1161,9 @@ func (p *phase) checkArtifactExpiry(ctx context.Context, w kernel.Work) error {
 		return identity.ForbiddenError{}
 	}
 	if p.input.ClientChange != nil && (p.clientManagement == nil || p.clientManagement.ValidateAt(now) != nil || !now.Before(p.input.ObservationUntil)) {
+		return identity.ForbiddenError{}
+	}
+	if p.input.ClientAuthentication != nil && !p.input.ClientAuthentication.validAt(p.store.now(), now) {
 		return identity.ForbiddenError{}
 	}
 	if p.input.Authentication != nil && !p.input.Authentication.Until.IsZero() && !now.Before(p.input.Authentication.Until) {

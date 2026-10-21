@@ -30,9 +30,9 @@ permission-revocation mechanism.
 Creation allocates one server-random reserved ID/version1 and random 32-byte
 Basic secret. Only its digest persists in the client registry; secret custody
 in existing encrypted preparation is never redelivered by retry or recovery.
-Delete requires the exact original client/version and writes a version2 terminal
-tombstone. Registrations cannot edit redirects/scopes/owner, reactivate, or rotate
-secrets. Warm services and direct native readers repeatedly resolve current
+Delete requires the exact current client/version and advances it to a terminal
+tombstone. Registrations cannot edit redirects/scopes/owner or reactivate.
+Warm services and direct native readers repeatedly resolve current
 registry status. Mutating protocol paths take the client SHARE fence before
 grant/consent locks; deletion takes UPDATE, avoiding unbounded artifact fanout.
 Lifecycle topics are exactly `oauth_client.created.v1` and
@@ -46,8 +46,41 @@ alone determines durability. Pending/Unknown is not rollback, and terminal
 NotCommitted can retain its original classified error. No recovery returns
 secret material, tokens, or new management permission. Retain original policy,
 keys and history while recovery remains supported. This profile is not dynamic
-registration transport, user/org ownership, overlap rotation, workload or OIDC
+registration transport, user/org ownership, workload or OIDC
 client management, nor complete M30 support.
+
+### Optional bounded secret rotation
+
+Append `ClientRotationMigrationSource{Base: installedClientHistory, Schema: ...,
+Version: nextVersion}` without rewriting prior bytes. Stop serving, install the
+forward history, replace every old accepting instance, then set
+`Config.ClientSecretRotation=true`. Managed clients/consent management are
+prerequisites. Constructors do not install or inspect schema.
+
+`ClientRotateSecret` requires the exact current client/version, original fresh
+password-session/manager policy, origin/CSRF and native request key. `Overlap`
+is explicit 0..24h at microsecond precision. The registry retains only digest
+verification and at most one predecessor. The successor is immediately valid;
+the predecessor expires exclusively at the original stored timestamp. Zero
+overlap withdraws it immediately; a second rotation drops any older predecessor.
+Deletion withdraws both. No positive authentication cache or outage fallback
+exists. All Basic consumers retain the original matched slot and earliest
+<=20s read/predecessor deadline through SQL waits and final delivery fences.
+
+Every rotation advances actual client authority. **All pre-rotation grants,
+codes, access/refresh tokens and consent are invalid, including during overlap.**
+The application must request and explicitly approve a new authorization at the
+new version; old Basic can only authenticate those new-version grants while its
+overlap remains live. A resource verifier's trusted selected client version must
+likewise be advanced explicitly; it never retargets itself.
+
+`identity.oauth-server.client-rotate-secret` uses original encrypted request-key
+preparation and the same sole Work, required audit and outbox owners. Its event
+is `oauth_client.secret_rotated.v1`. Only the fresh known-committed invocation
+reveals the successor; keyed retries, unknown COMMIT and metadata-only `Recover`
+never disclose it or repeat the version change. Recover uses the original
+CommandID/ClientID/TenantID/current original manager Session, without Token or
+client authentication, including after deletion.
 
 The optional [selected OIDC profile](../docs/selected-oidc-profile.md) adds native
 encrypted ID-token preparation, subject-bound UserInfo and public signing-key

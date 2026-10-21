@@ -88,7 +88,7 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 	if _, err := identity.ParseCommandID(string(request.CommandID)); err != nil || len(request.ClientID) == 0 || len(request.ClientID) > 128 {
 		return out, oauth.ErrInvalidRequest
 	}
-	if request.OperationID == "identity.oauth-server.client-create" || request.OperationID == "identity.oauth-server.client-delete" {
+	if request.OperationID == "identity.oauth-server.client-create" || request.OperationID == "identity.oauth-server.client-delete" || request.OperationID == "identity.oauth-server.client-rotate-secret" {
 		return s.recoverClientManagement(ctx, request)
 	}
 	client, lookupErr := s.CurrentClient(ctx, request.ClientID)
@@ -103,6 +103,15 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 	}
 	var p *phase
 	var observed session.GetResult
+	var clientProof *clientAuthenticationSnapshot
+	defer func() {
+		if err == nil {
+			if fence := s.finishClientAuthentication(ctx, client, clientProof); fence != nil {
+				out = RecoveryResult{}
+				err = fence
+			}
+		}
+	}()
 	authenticationContinuation := false
 	if request.OperationID != "identity.oauth-server.consent-delete" && request.OperationID != "identity.oauth-server.consent-update" && request.ConsentID != "" {
 		return out, oauth.ErrInvalidRequest
@@ -187,7 +196,8 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 			p.metadataRecovery = authenticationContinuation
 		}
 	case "identity.oauth-server.token", "identity.oauth-server.revoke":
-		if err := s.AuthenticateCurrentClient(ctx, client, request.ClientAuthentication); err != nil {
+		clientProof, err = s.authenticateClientSnapshot(ctx, client, request.ClientAuthentication)
+		if err != nil {
 			return out, err
 		}
 		if request.TenantID != "" || request.Session.Token() != "" {

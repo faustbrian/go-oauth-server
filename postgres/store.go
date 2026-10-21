@@ -43,6 +43,7 @@ const (
 	narrowConsent
 	createManagedClient
 	deleteManagedClient
+	rotateManagedSecret
 )
 
 type grantRecord struct {
@@ -97,13 +98,14 @@ type phaseInput struct {
 	Intent                      [32]byte
 	Network                     string
 	Consent                     consentMutation
-	Deletion                    *consentDeletion            `json:",omitempty"`
-	Narrowing                   *consentDeletion            `json:",omitempty"`
-	ClientChange                *clientMutation             `json:",omitempty"`
-	SubjectCandidate            *oauth.OIDCSubjectCandidate `json:",omitempty"`
-	Authentication              *authenticationSelection    `json:",omitempty"`
-	PreviousSource              []identity.FeatureField     `json:",omitempty"`
-	ContinuationPrevious        identity.CommandID          `json:",omitempty"`
+	Deletion                    *consentDeletion              `json:",omitempty"`
+	Narrowing                   *consentDeletion              `json:",omitempty"`
+	ClientChange                *clientMutation               `json:",omitempty"`
+	ClientAuthentication        *clientAuthenticationSnapshot `json:",omitempty"`
+	SubjectCandidate            *oauth.OIDCSubjectCandidate   `json:",omitempty"`
+	Authentication              *authenticationSelection      `json:",omitempty"`
+	PreviousSource              []identity.FeatureField       `json:",omitempty"`
+	ContinuationPrevious        identity.CommandID            `json:",omitempty"`
 }
 
 type consentMutation struct {
@@ -405,7 +407,7 @@ func (s *Store) Continue(ctx context.Context, c oauth.ContinuationCommand) (oaut
 // root credential/policy epochs are loaded only from the original native grant;
 // no browser cookie, request actor or token claim can replace them. A correct
 // proof replay revokes only its related grant/family and returns invalid_grant.
-func (s *Store) Token(ctx context.Context, c oauth.TokenCommand) (oauth.TokenResult, error) {
+func (s *Store) Token(ctx context.Context, c oauth.TokenCommand) (out oauth.TokenResult, err error) {
 	ctx, stop, err := s.bounded(ctx)
 	if err != nil {
 		return oauth.TokenResult{}, err
@@ -424,9 +426,23 @@ func (s *Store) Token(ctx context.Context, c oauth.TokenCommand) (oauth.TokenRes
 		return oauth.TokenResult{}, err
 	}
 	r := c.Request
-	if err := s.AuthenticateCurrentClient(ctx, client, r.ClientAuthentication); err != nil {
+	proof, err := s.authenticateClientSnapshot(ctx, client, r.ClientAuthentication)
+	if err != nil {
 		return oauth.TokenResult{}, err
 	}
+	var executing *phase
+	defer func() {
+		if err == nil {
+			var retained *clientAuthenticationSnapshot
+			if executing != nil {
+				retained = executing.input.ClientAuthentication
+			}
+			if fence := s.finishClientAuthentication(ctx, client, proof, retained); fence != nil {
+				out = oauth.TokenResult{Outcome: out.Outcome, CommandID: out.CommandID, Replayed: out.Replayed}
+				err = fence
+			}
+		}
+	}()
 	if r.ClientID != client.ID || r.Resource != "" && r.Resource != client.Resource {
 		return oauth.TokenResult{}, oauth.ErrInvalidRequest
 	}
@@ -484,12 +500,14 @@ func (s *Store) Token(ctx context.Context, c oauth.TokenCommand) (oauth.TokenRes
 		return oauth.TokenResult{}, oauth.ErrInvalidGrant
 	}
 	p := s.targetPhase(target, client, operation, "identity.oauth-server.token", id, s.intent("token", string(r.GrantType), wire, r.RedirectURI, r.CodeVerifier, strings.Join(selected, " "), r.Resource, r.Network), r.Network)
+	executing = p
 	p.input.Scopes = slices.Clone(selected)
+	p.input.ClientAuthentication = proof
 	if r.GrantType == oauth.AuthorizationCodeGrant {
 		p.oidc = c.OIDC
 	}
 	result, err := p.execute(ctx)
-	out := oauth.TokenResult{Outcome: result.Outcome, CommandID: id, Replayed: !p.applied}
+	out = oauth.TokenResult{Outcome: result.Outcome, CommandID: id, Replayed: !p.applied}
 	if err != nil {
 		return out, publicError(ctx, err, oauth.ErrInvalidGrant)
 	}
@@ -507,6 +525,7 @@ func (s *Store) Token(ctx context.Context, c oauth.TokenCommand) (oauth.TokenRes
 		}
 		replay := s.targetPhase(current, client, rejectReplay, "identity.oauth-server.token", current.Replay, s.intent("token", string(r.GrantType), wire, r.RedirectURI, r.CodeVerifier, strings.Join(selected, " "), r.Resource, r.Network), r.Network)
 		replay.input.Scopes = slices.Clone(selected)
+		replay.input.ClientAuthentication = proof
 		revoked, err := replay.execute(ctx)
 		out = oauth.TokenResult{Outcome: revoked.Outcome, CommandID: current.Replay, Replayed: !replay.applied}
 		if err != nil {
@@ -535,7 +554,7 @@ func (s *Store) Token(ctx context.Context, c oauth.TokenCommand) (oauth.TokenRes
 // Unknown and foreign tokens are indistinguishable successful no-ops. Access
 // revocation affects only that access record; refresh revokes its related grant,
 // never another client/root family. The token hint is advisory, not authority.
-func (s *Store) Revoke(ctx context.Context, c oauth.RevocationCommand) (oauth.RevokeResult, error) {
+func (s *Store) Revoke(ctx context.Context, c oauth.RevocationCommand) (out oauth.RevokeResult, err error) {
 	ctx, stop, err := s.bounded(ctx)
 	if err != nil {
 		return oauth.RevokeResult{}, err
@@ -548,9 +567,23 @@ func (s *Store) Revoke(ctx context.Context, c oauth.RevocationCommand) (oauth.Re
 	if err != nil {
 		return oauth.RevokeResult{}, err
 	}
-	if err := s.AuthenticateCurrentClient(ctx, client, c.Request.ClientAuthentication); err != nil {
+	proof, err := s.authenticateClientSnapshot(ctx, client, c.Request.ClientAuthentication)
+	if err != nil {
 		return oauth.RevokeResult{}, err
 	}
+	var executing *phase
+	defer func() {
+		if err == nil {
+			var retained *clientAuthenticationSnapshot
+			if executing != nil {
+				retained = executing.input.ClientAuthentication
+			}
+			if fence := s.finishClientAuthentication(ctx, client, proof, retained); fence != nil {
+				out = oauth.RevokeResult{Outcome: out.Outcome, CommandID: out.CommandID}
+				err = fence
+			}
+		}
+	}()
 	if c.Request.ClientID != client.ID || c.Request.Hint != 0 && c.Request.Hint != oauth.TokenAccess && c.Request.Hint != oauth.TokenRefresh {
 		return oauth.RevokeResult{}, oauth.ErrInvalidRequest
 	}
@@ -569,6 +602,8 @@ func (s *Store) Revoke(ctx context.Context, c oauth.RevocationCommand) (oauth.Re
 		operation = revokeFamily
 	}
 	p := s.targetPhase(target, client, operation, "identity.oauth-server.revoke", target.Replay, s.intent("revoke", c.Request.Token, c.Request.Network), c.Request.Network)
+	executing = p
+	p.input.ClientAuthentication = proof
 	result, err := p.execute(ctx)
 	var conflict identity.ConflictError
 	if errors.As(err, &conflict) && result.Outcome == identity.CommitOutcomeConflict && ctx.Err() == nil {

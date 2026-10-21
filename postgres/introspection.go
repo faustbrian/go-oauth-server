@@ -42,9 +42,18 @@ func (s *Store) Introspect(ctx context.Context, c oauth.IntrospectionCommand) (o
 	if err != nil || client.Public || c.Request.ClientAuthentication.Method() != "client_secret_basic" || c.Request.ClientID != client.ID {
 		return out, oauth.ErrInvalidClient
 	}
-	if err := s.AuthenticateCurrentClient(ctx, client, c.Request.ClientAuthentication); err != nil {
+	proof, err := s.authenticateClientSnapshot(ctx, client, c.Request.ClientAuthentication)
+	if err != nil {
 		return out, err
 	}
+	defer func() {
+		if err == nil {
+			if fence := s.finishClientAuthentication(ctx, client, proof); fence != nil {
+				out = oauth.IntrospectResult{}
+				err = fence
+			}
+		}
+	}()
 	if !boundedText(c.Request.Token, 2048) || c.Request.Hint != 0 && c.Request.Hint != oauth.TokenAccess && c.Request.Hint != oauth.TokenRefresh {
 		return out, oauth.ErrInvalidRequest
 	}

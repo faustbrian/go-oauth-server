@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add separately composed access-only resource verification with immutable
+  trusted tenant/client/version/issuer/environment/resource/scope policy and an
+  opaque scope-bound result. Preserve the earliest original read, token and
+  credential expiry without renewal, cache or caller-created principal; use the
+  matching native profile rather than treating introspection metadata as access
+  authority. Existing OAuth services and Store interfaces are unchanged.
+
 - Add optional authenticated own-consent strict scope narrowing with exact
   consent/client versions, immutable resource, original sensitive-session
   freshness, same-browser CSRF and native request-key custody. Existing

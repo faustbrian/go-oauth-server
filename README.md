@@ -45,6 +45,11 @@ replacement authentication engine.
   `OwningClientIntrospection` selects separately authenticated confidential
   clients inspecting only their own actual opaque access/refresh tokens.
   Public client ID or inspected-token possession alone never authorizes lookup.
+- `ResourceVerifier.Verify` separately admits only opaque human access tokens
+  for one trusted configured tenant/client/version/issuer/resource/scope policy.
+  Its opaque result's `RequireScope` checks the demanded OAuth scope and original
+  deadline before a selected resource read; it is not business authorization or
+  an RFC7662 `Active` wrapper. Use the matching native `NewResourceVerifier`.
 - `Service.ConsentGet/List/Delete` use genuine current own-session custody.
   Deletion additionally requires recent original authentication, issuer origin
   and same-browser CSRF; native consent-root withdrawal denies associated
@@ -112,8 +117,10 @@ never authentication. See the native adoption and recovery requirements before
 enabling this separate profile.
 Client administration, OIDC,
 device flow, organization delegation, API-key exchange and
-resource-server verification/cache composition remain
-unsupported. No vendor authorization engine is embedded.
+general resource-server policy and positive-cache composition remain
+unsupported. The separately selected [direct access-only resource profile](docs/selected-resource-profile.md)
+adds no transport, JWT or remote introspection endpoint. No vendor authorization
+engine is embedded.
 
 See the [selected contract](docs/selected-profile.md),
 [security model](docs/security.md) and [changelog](CHANGELOG.md).

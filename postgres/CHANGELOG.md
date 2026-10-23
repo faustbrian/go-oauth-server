@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add optional native unbound device authorization over existing client,
+  session, consent, grant and token owners, with atomic required effects and
+  original-command metadata recovery. Select the device factory and append its
+  forward history only for the ordinary OAuth/consent profile; replace unaware
+  writers before activation. Base construction requires no device schema or
+  child import. Mixed workload/silent-OIDC histories remain unsupported by this
+  first profile.
+
 - Preserve original prepared token issuance across logout activation without
   regenerating signed output or adding logout authority to older tokens.
 

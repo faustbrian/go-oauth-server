@@ -40,7 +40,7 @@ func (c *oauthFaultConn) Write(p []byte) (int, error) {
 	if c.fault.beforeWrite != nil {
 		c.fault.beforeWrite(p)
 	}
-	if c.fault.armed.Load() && bytes.Contains(p, []byte(`INSERT INTO "oauth_store".effects(`)) {
+	if c.fault.armed.Load() && (bytes.Contains(p, []byte(`INSERT INTO "oauth_store".effects(`)) || bytes.Contains(p, []byte(`INSERT INTO "oauth_store".device_effects(`))) {
 		c.mutation.Store(true)
 	}
 	if c.fault.before && c.mutation.Load() && len(p) >= 5 && p[0] == 'Q' && bytes.EqualFold(p[5:], []byte("commit\x00")) && c.fault.hit.CompareAndSwap(false, true) {

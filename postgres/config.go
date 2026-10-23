@@ -316,6 +316,7 @@ type clientPolicy struct {
 	Workload                       *workloadPolicy                `json:",omitempty"`
 	SubjectRegistration            *oauth.OIDCSubjectRegistration `json:",omitempty"`
 	PostLogoutRedirects            []string                       `json:",omitempty"`
+	DeviceAuthorization            bool                           `json:",omitempty"`
 }
 type workloadPolicy struct {
 	Tenant, ID string
@@ -325,7 +326,7 @@ type workloadPolicy struct {
 func clientPolicies(clients []oauth.Client) []clientPolicy {
 	out := make([]clientPolicy, len(clients))
 	for i, c := range clients {
-		out[i] = clientPolicy{ID: c.ID, Method: c.AuthenticationMethod, Resource: c.Resource, Platform: c.Owner.PlatformID(), Version: c.Version, Public: c.Public, Redirects: c.Redirects, Scopes: c.Scopes, PostLogoutRedirects: c.PostLogoutRedirects}
+		out[i] = clientPolicy{ID: c.ID, Method: c.AuthenticationMethod, Resource: c.Resource, Platform: c.Owner.PlatformID(), Version: c.Version, Public: c.Public, Redirects: c.Redirects, Scopes: c.Scopes, PostLogoutRedirects: c.PostLogoutRedirects, DeviceAuthorization: c.DeviceAuthorization}
 		if c.Workload != nil {
 			out[i].Workload = &workloadPolicy{Tenant: string(c.Workload.TenantID()), ID: c.Workload.ID(), AccessTTL: c.Workload.AccessTTL()}
 		}

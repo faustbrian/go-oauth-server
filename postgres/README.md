@@ -505,3 +505,29 @@ withdraws that source's refresh/UserInfo/resource authority. No grant fanout or
 private session/revocation engine is introduced. See the [selected logout
 profile](../docs/selected-oidc-profile.md#native-rp-initiated-logout) for hint
 association, historical recovery, redirect registration and rollback constraints.
+
+## Optional native device authorization
+
+`Store.DeviceStore(DeviceConfig)` explicitly selects the unbound OAuth-only
+RFC 8628 consumer documented in the [`device` module](../device/README.md).
+The factory uses this existing store/coordinator and root-owned typed
+projections; the production PostgreSQL package imports no device child.
+Ordinary `NewStore`/`NewService` perform no device bootstrap and need no device
+policy, lookup keys or schema. The child remains a test-only dependency of the
+native integration consumer, not a mandatory production module.
+
+Before selecting this profile, install the existing rate-limit owner migration
+and append `DeviceMigrationSource` after ordinary OAuth/consent history. This
+first forward history excludes installed workload and silent-OIDC artifact
+variants. Stop writers for the schema change, replace unaware writers before
+activation, and retain the original shared coordinator/recovery and lookup-key
+versions. There is no down migration or automatic background cleanup. Device
+expiry and terminal recovery records must not be deleted while original
+command recovery can still reference them.
+
+The registered client's `DeviceAuthorization` flag defaults to false and enters
+the actual native authority fingerprint when selected. Public and Basic client
+authentication remain independent of actual reviewing-session/CSRF admission.
+The native owner retains the original approved human source separately from
+the polling client actor and fences current authority before the sole atomic
+root-owned token winner. A complete verification URI is not approval.

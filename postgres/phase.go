@@ -45,6 +45,7 @@ type preparedOutput struct {
 	ClientSecret      string             `json:",omitempty"`
 	ClientDigest      []byte             `json:",omitempty"`
 	EndSessionCommand identity.CommandID `json:",omitempty"`
+	DeviceCodes       *devicePreparation `json:",omitempty"`
 }
 
 // Generated credentials exist only in invocation memory or the existing
@@ -75,6 +76,8 @@ type phase struct {
 	applied           bool
 	metadataRecovery  bool
 	oidc              func(context.Context, oauth.OIDCClaimsInput) (oauth.OIDCClaimsProjection, error)
+	device            *DeviceStore
+	deviceCodes       *devicePreparation
 }
 
 var _ kernel.FeaturePreparationContributor = (*phase)(nil)
@@ -91,6 +94,9 @@ func workloadOperation(name string) identity.FeatureOperation {
 	return identity.FeatureOperation{Owner: "oauth-server", OperationID: name, SchemaID: name + ".configured-workload-v1", SchemaVersion: 1, RecordRequirement: identity.FeatureRecordRequired, SubjectRequirement: identity.FeatureSubjectAnonymousFlow}
 }
 func (p *phase) operation(name string) identity.FeatureOperation {
+	if deviceOperationName(name) {
+		return deviceOperation(name)
+	}
 	if name == "identity.oauth-server.end-session" {
 		return endSessionOperation()
 	}
@@ -119,6 +125,9 @@ func (p *phase) FeatureOperations() []identity.FeatureOperation {
 	if p.store != nil && p.store.config.RPInitiatedLogout {
 		operations = append(operations, endSessionOperation())
 	}
+	if p.device != nil {
+		operations = append(operations, deviceOperations()...)
+	}
 	return operations
 }
 func (p *phase) registration() kernel.FeatureRegistration {
@@ -129,6 +138,9 @@ func (p *phase) registration() kernel.FeatureRegistration {
 // closed taxonomy is SECURITY_EVENTS.md's OAuth server row; consent approval
 // and replay revocation each declare their distinct composed actions once.
 func (p *phase) auditActions() []string {
+	if p.input.Device != nil {
+		return []string{p.deviceAuditAction()}
+	}
 	switch p.input.Transition {
 	case endSession:
 		return []string{"identity.oauth_server.end_session"}
@@ -168,6 +180,9 @@ func (p *phase) auditPlans(digest [32]byte) []kernel.AuditPlan {
 	return plans
 }
 func (p *phase) lifecycle() kernel.LifecyclePlan {
+	if p.input.Device != nil {
+		return p.deviceLifecycle()
+	}
 	before := p.input.Grant.Version
 	event := "grant.revoked.v1"
 	switch p.input.Transition {
@@ -214,6 +229,9 @@ func (p *phase) lifecycle() kernel.LifecyclePlan {
 }
 
 func (p *phase) subjectType() string {
+	if p.input.Device != nil && p.input.Device.Action != oauth.DeviceApprove && p.input.Device.Condition != oauth.DeviceSucceeded {
+		return "oauth_device"
+	}
 	if p.input.Transition == endSession {
 		return "session"
 	}
@@ -312,7 +330,7 @@ func (p *phase) buildCommand() error {
 	if i.PreviousSource != nil && (i.Transition != approveInteraction || i.Authentication == nil || i.Authentication.Requirement != oauth.OIDCAuthenticationCurrent) {
 		return oauth.ErrInvalidRequest
 	}
-	if i.Transition == approveInteraction {
+	if i.Transition == approveInteraction || i.Transition == approveDevice {
 		if i.Consent.ExpiresAt != nil && (!i.Consent.ExpiresAt.After(i.CreatedAt) || i.Consent.ExpiresAt.After(i.CreatedAt.Add(24*time.Hour))) {
 			return oauth.ErrInvalidRequest
 		}
@@ -415,13 +433,16 @@ func (p *phase) buildCommand() error {
 		identity.FeatureField{Name: "oauth.client", Value: identity.FeatureValue{Kind: identity.FeatureText, Text: i.Grant.ClientID}},
 		versionField,
 	)
-	if i.Transition == approveInteraction {
+	if i.Transition == approveInteraction || i.Transition == approveDevice {
 		fields = append(fields,
 			identity.FeatureField{Name: "oauth.consent-id", Value: identity.FeatureValue{Kind: identity.FeatureText, Text: i.Consent.ID}},
 			identity.FeatureField{Name: "oauth.consent-before-version", Value: identity.FeatureValue{Kind: identity.FeatureUint64, Uint64: i.Consent.BeforeVersion}},
 			identity.FeatureField{Name: "oauth.consent-after-version", Value: identity.FeatureValue{Kind: identity.FeatureUint64, Uint64: i.Consent.AfterVersion}},
 			identity.FeatureField{Name: "oauth.consent-created", Value: identity.FeatureValue{Kind: identity.FeatureBool, Bool: i.Consent.Created}},
 		)
+	}
+	if i.Device != nil && i.Grant.User != "" {
+		fields = append(fields, identity.FeatureField{Name: "oauth.device-source-user", Value: identity.FeatureValue{Kind: identity.FeatureText, Text: string(i.Grant.User)}})
 	}
 	spec := identity.FeatureCommandSpec{Binding: b, Operation: p.operation(b.OperationID), Fields: fields}
 	var command identity.Command
@@ -447,7 +468,7 @@ func (p *phase) buildCommand() error {
 		return err
 	}
 	actorKind := audit.ActorHuman
-	if i.Grant.Workload != nil {
+	if i.Grant.Workload != nil || i.Device != nil && b.AnonymousFlowID != "" {
 		actorKind = audit.ActorService
 	}
 	seed, err := builder.Build(audit.RecordInput{OccurredAt: i.CreatedAt, Action: p.auditActions()[0], Outcome: audit.OutcomeSucceeded, Actor: audit.ActorInput{Kind: actorKind, ID: string(b.ActorID)}, Subject: audit.SubjectInput{Type: p.subjectType(), ID: b.RecordID}, Context: audit.ContextInput{TenantID: string(b.TenantID), CorrelationID: b.CorrelationID}, Policy: audit.PolicyMetadata{PolicyID: b.PolicyID, Version: strconv.FormatUint(b.PolicyVersion, 10)}, Changes: audit.ChangeSetInput{Redacted: true}, Attributes: map[string]string{"command.id": string(b.CommandID), "aggregate.type": p.subjectType(), "aggregate.id": b.RecordID, "aggregate.before_version": strconv.FormatUint(life.BeforeVersion, 10), "aggregate.after_version": strconv.FormatUint(life.AfterVersion, 10), "retention.class": "protected"}})
@@ -479,11 +500,12 @@ func (p *phase) ValidateFeatureCommand(c identity.Command, plan kernel.CommandPl
 // No declaration alone records consent: mutate must report its actual successful
 // SQL receipt to the same Work before the kernel may stage the secondary event.
 func (p *phase) ValidateOAuthConsent(c identity.Command) error {
-	if p == nil || c != p.command || p.input.Transition != approveInteraction || p.input.Binding.OperationID != "identity.oauth-server.continue" || p.input.Consent.ID == p.input.Grant.ID || p.input.Grant.ClientID != p.client.ID {
+	device := p != nil && p.input.Device != nil && p.input.Device.Action == oauth.DeviceApprove && p.input.Binding.OperationID == "identity.oauth-server.device-approve"
+	if p == nil || c != p.command || !device && (p.input.Transition != approveInteraction || p.input.Binding.OperationID != "identity.oauth-server.continue") || p.input.Consent.ID == p.input.Grant.ID || p.input.Grant.ClientID != p.client.ID {
 		return identity.ForbiddenError{}
 	}
 	s, ok := c.Feature()
-	if !ok || s.Binding != p.input.Binding || s.Operation != operation("identity.oauth-server.continue") {
+	if !ok || s.Binding != p.input.Binding || s.Operation != p.operation(p.input.Binding.OperationID) {
 		return identity.ForbiddenError{}
 	}
 	consent := p.input.Consent
@@ -540,16 +562,19 @@ func (p *phase) AdmitFeaturePreparation(ctx context.Context, w kernel.Work, c id
 	return p.checkArtifactExpiry(ctx, w)
 }
 func (p *phase) browserRequired() bool {
-	return p.input.ClientChange != nil || p.input.Transition == endSession || p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == denyInteraction || p.input.Transition == deleteConsent || p.input.Transition == narrowConsent
+	return p.input.ClientChange != nil || p.input.Transition == endSession || p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == denyInteraction || p.input.Transition == deleteConsent || p.input.Transition == narrowConsent || p.input.Transition == approveDevice || p.input.Transition == denyDevice
 }
 func (p *phase) issuing() bool {
-	return p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == exchangeCode || p.input.Transition == rotateRefresh || p.input.Transition == createWorkload
+	return p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == exchangeCode || p.input.Transition == rotateRefresh || p.input.Transition == createWorkload || p.input.Transition == createDevice || p.input.Transition == approveDevice || p.input.Device != nil && p.input.Device.Condition == oauth.DeviceSucceeded
 }
 
 func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 	b, feature, life, err := w.FeatureScope(p)
 	if err != nil || b != p.input.Binding || feature != p.registration() || life != p.lifecycle() {
 		return identity.ForbiddenError{}
+	}
+	if p.input.Device != nil {
+		return p.checkDevice(ctx, w, final)
 	}
 	i := p.input
 	g := i.Grant
@@ -904,6 +929,13 @@ func (p *phase) GenerateFeaturePreparation(ctx context.Context, c identity.Comma
 		}
 	}
 	out := preparedOutput{Schema: 1, Generation: generation, Input: i}
+	if i.Device != nil && i.Device.Action == oauth.DeviceIssue {
+		if p.deviceCodes == nil || p.device == nil {
+			return nil, identity.ForbiddenError{}
+		}
+		owned := *p.deviceCodes
+		out.DeviceCodes = &owned
+	}
 	if i.Transition == createManagedClient || i.Transition == rotateManagedSecret {
 		token, err := oauth.NewToken()
 		if err != nil {
@@ -939,6 +971,10 @@ func (p *phase) GenerateFeaturePreparation(ctx context.Context, c identity.Comma
 		kinds = []oauth.TokenKind{oauth.TokenAccess, oauth.TokenRefresh}
 	case createWorkload:
 		kinds = []oauth.TokenKind{oauth.TokenAccess}
+	case pollDevice:
+		if i.Device != nil && i.Device.Condition == oauth.DeviceSucceeded {
+			kinds = []oauth.TokenKind{oauth.TokenAccess, oauth.TokenRefresh}
+		}
 	}
 	for _, kind := range kinds {
 		id, err := identity.NewSubjectID()
@@ -1115,8 +1151,31 @@ func (p *phase) restore(ctx context.Context, generation uint64, wire []byte, ini
 		want = 1
 	case exchangeCode, rotateRefresh:
 		want = 2
+	case pollDevice:
+		if out.Input.Device != nil && out.Input.Device.Condition == oauth.DeviceSucceeded {
+			want = 2
+		}
 	}
 	if len(out.Artifacts) != want {
+		return oauth.ErrUnavailable
+	}
+	if out.Input.Device != nil && out.Input.Device.Action == oauth.DeviceIssue {
+		if out.DeviceCodes == nil || p.device == nil {
+			return oauth.ErrUnavailable
+		}
+		matched := false
+		for _, key := range p.device.config.LookupKeys {
+			device, err := p.device.digest(key, out.DeviceCodes.Wire, p.client.ID, false)
+			user, userErr := p.device.digest(key, out.DeviceCodes.UserCode, "", true)
+			r := out.Input.Device.After
+			if err == nil && userErr == nil && device.KeyVersion == r.LookupVersion && device.Sum == r.DeviceDigest && user.Sum == r.UserDigest {
+				matched = true
+			}
+		}
+		if !matched {
+			return oauth.ErrUnavailable
+		}
+	} else if out.DeviceCodes != nil {
 		return oauth.ErrUnavailable
 	}
 	// Selection belongs to the authenticated original preparation. Schema-1
@@ -1158,7 +1217,7 @@ func (p *phase) restore(ctx context.Context, generation uint64, wire []byte, ini
 			expected = oauth.TokenCode
 		case createWorkload:
 			expected = oauth.TokenAccess
-		case exchangeCode, rotateRefresh:
+		case exchangeCode, rotateRefresh, pollDevice:
 			expected = oauth.TokenAccess
 			if index == 1 {
 				expected = oauth.TokenRefresh
@@ -1264,6 +1323,12 @@ func (p *phase) checkArtifactExpiry(ctx context.Context, w kernel.Work) error {
 	}
 	if p.input.ClientChange != nil && (p.clientManagement == nil || p.clientManagement.ValidateAt(now) != nil || !now.Before(p.input.ObservationUntil)) {
 		return identity.ForbiddenError{}
+	}
+	if p.input.Device != nil && (p.input.Device.Action == oauth.DeviceApprove || p.input.Device.Action == oauth.DeviceDeny) {
+		review := oauth.DeviceSessionProjection{Request: oauth.DeviceSessionSourceRequest{TenantID: p.input.Grant.Tenant, Session: p.browser}, Session: p.observation}
+		if review.ValidateAt(now) != nil || review.ValidateAt(p.store.now()) != nil || !now.Before(p.input.ObservationUntil) {
+			return identity.ForbiddenError{}
+		}
 	}
 	if p.input.ClientAuthentication != nil && !p.input.ClientAuthentication.validAt(p.store.now(), now) {
 		return identity.ForbiddenError{}

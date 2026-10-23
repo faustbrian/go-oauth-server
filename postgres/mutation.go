@@ -14,6 +14,13 @@ import (
 )
 
 func (p *phase) mutate(ctx context.Context, w kernel.Work) error {
+	if p.input.Device != nil {
+		return p.mutateDevice(ctx, w)
+	}
+	return p.mutateOAuth(ctx, w)
+}
+
+func (p *phase) mutateOAuth(ctx context.Context, w kernel.Work) error {
 	if p.input.Transition == endSession {
 		return p.mutateEndSession(ctx, w)
 	}
@@ -98,7 +105,7 @@ func (p *phase) mutate(ctx context.Context, w kernel.Work) error {
 			return identity.ConflictError{}
 		}
 	}
-	if i.Transition == approveInteraction || i.Transition == denyInteraction || i.Transition == exchangeCode || i.Transition == rotateRefresh {
+	if i.Device == nil && (i.Transition == approveInteraction || i.Transition == denyInteraction || i.Transition == exchangeCode || i.Transition == rotateRefresh) {
 		n, err := w.Exec(ctx, `UPDATE `+s+`.artifacts SET state='consumed',consumed_by=$4 WHERE digest_version=$1 AND digest=$2 AND kind=$3 AND state='active'`, i.Target.KeyVersion, i.Target.Sum[:], int16(i.TargetKind), string(i.Binding.CommandID))
 		if err != nil {
 			return err
@@ -199,6 +206,11 @@ func (p *phase) mutate(ctx context.Context, w kernel.Work) error {
 			values += ",$" + strconv.Itoa(len(args)+1)
 			args = append(args, true)
 		}
+		if i.Device != nil && i.Device.Condition == oauth.DeviceSucceeded {
+			columns += ",device_root"
+			values += ",$" + strconv.Itoa(len(args)+1)
+			args = append(args, true)
+		}
 		n, err := w.Exec(ctx, `INSERT INTO `+s+`.artifacts(artifact_id,digest_version,digest,kind,client_id,grant_id,created_at,expires_at,state,transition_command,replay_command,payload,parent_artifact_id,issued_by`+columns+`) VALUES($11,$1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10::jsonb,$12::text,$13`+values+`)`, args...)
 		if err != nil {
 			return err
@@ -237,6 +249,13 @@ func effectDigest(b identity.CommandBinding, f kernel.FeatureRegistration, l ker
 // command transition. Today's grant/artifact state never manufactures a receipt;
 // the sole coordinator separately reconciles its journal, audit and lifecycle.
 func (p *phase) RecoverParticipant(ctx context.Context, w kernel.RecoveryWork) (kernel.RecoveryStatus, error) {
+	if deviceOperationName(p.input.Binding.OperationID) {
+		return p.recoverDeviceParticipant(ctx, w)
+	}
+	return p.recoverOAuthParticipant(ctx, w)
+}
+
+func (p *phase) recoverOAuthParticipant(ctx context.Context, w kernel.RecoveryWork) (kernel.RecoveryStatus, error) {
 	b, f, life, err := w.FeatureScope(p)
 	if err != nil || f.Contributor != p.Descriptor() || f.Operation != p.operation(b.OperationID) || !oauthLifecycle(life.EventType) || life.AfterVersion != life.BeforeVersion+1 {
 		return kernel.RecoveryUnknown, identity.ForbiddenError{}

@@ -46,6 +46,10 @@ const (
 	rotateManagedSecret
 	updateManagedClient
 	endSession
+	createDevice
+	approveDevice
+	denyDevice
+	pollDevice
 )
 
 type grantRecord struct {
@@ -110,6 +114,7 @@ type phaseInput struct {
 	ContinuationPrevious        identity.CommandID            `json:",omitempty"`
 	SilentConsent               *silentConsent                `json:",omitempty"`
 	Logout                      *logoutIntent                 `json:",omitempty"`
+	Device                      *deviceMutation               `json:",omitempty"`
 }
 
 type consentMutation struct {
@@ -666,6 +671,7 @@ func (p *phase) bind(id identity.CommandID, operation, record string) {
 		p.input.Binding.ActorKind = authorization.SubjectServiceAccount
 		p.input.Binding.SchemaID = operation + ".configured-workload-v1"
 	}
+	p.deviceBinding()
 }
 func (p *phase) query() identity.RecoveryQuery {
 	b := p.input.Binding
@@ -673,7 +679,7 @@ func (p *phase) query() identity.RecoveryQuery {
 }
 func (p *phase) caller() authorization.DecisionContext {
 	b := p.input.Binding
-	if p.input.Grant.Workload != nil {
+	if b.AnonymousFlowID != "" {
 		// Coordinator admission/recovery authorizes the exact server-owned flow,
 		// not a second workload resource alias (kernel CommandQueryPolicy).
 		return authorization.DecisionContext{PolicyRevision: authorization.Revision(b.PolicyVersion), CorrelationID: b.CorrelationID, Request: authorization.Request{Tenant: authorization.TenantID(b.TenantID), Subject: authorization.Subject{Kind: b.ActorKind, ID: authorization.SubjectID(b.ActorID)}, Action: authorization.Action(b.OperationID), Resource: authorization.Resource{Type: "identity.anonymous-flow", ID: authorization.ResourceID(b.AnonymousFlowID)}}}

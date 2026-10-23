@@ -74,7 +74,8 @@ func (s *Store) managementPolicy() [32]byte {
 		Tenant              identity.TenantID
 		Redirects, Scopes   []string
 		PostLogoutRedirects []string `json:",omitempty"`
-	}{s.identity, p.Owner.PlatformID(), p.TenantID, p.Redirects, p.Scopes.Scopes(), p.PostLogoutRedirects})
+		DeviceAuthorization bool     `json:",omitempty"`
+	}{s.identity, p.Owner.PlatformID(), p.TenantID, p.Redirects, p.Scopes.Scopes(), p.PostLogoutRedirects, p.DeviceAuthorization})
 	defer clear(wire)
 	return sha256.Sum256(wire)
 }
@@ -199,7 +200,7 @@ func (s *Store) ManageClient(ctx context.Context, c oauth.ClientManagementExecut
 }
 func (s *Store) clientManagementPhase(ctx context.Context, c oauth.ClientManagementExecution, action string) (*phase, error) {
 	r := c.Request
-	client := oauth.Client{ID: oauth.ManagedClientPrefix + "pending", Owner: s.config.Protocol.ManagedClients.Owner, Version: 1, Resource: s.config.Protocol.Resource, AuthenticationMethod: "client_secret_basic", Redirects: r.Redirects, PostLogoutRedirects: r.PostLogoutRedirects, Scopes: r.Scopes}
+	client := oauth.Client{ID: oauth.ManagedClientPrefix + "pending", Owner: s.config.Protocol.ManagedClients.Owner, Version: 1, Resource: s.config.Protocol.Resource, AuthenticationMethod: "client_secret_basic", Redirects: r.Redirects, PostLogoutRedirects: r.PostLogoutRedirects, Scopes: r.Scopes, DeviceAuthorization: r.DeviceAuthorization}
 	version := uint64(0)
 	secretVersion := uint64(0)
 	if s.config.ClientMetadataUpdates {
@@ -242,7 +243,8 @@ func (p *phase) clientIntent(r oauth.ClientManagementRequest) (identity.RequestI
 		RotationOverlap     *time.Duration     `json:",omitempty"`
 		Replacement         *clientReplacement `json:",omitempty"`
 		PostLogoutRedirects []string           `json:",omitempty"`
-	}{p.store.managementPolicy(), p.input.Transition == deleteManagedClient, r.ClientID, r.Version, r.Redirects, r.Scopes, r.Origin, r.Network, p.input.Grant.Source, p.rotationOverlap(), p.input.ClientChange.Replacement, r.PostLogoutRedirects})
+		DeviceAuthorization bool               `json:",omitempty"`
+	}{p.store.managementPolicy(), p.input.Transition == deleteManagedClient, r.ClientID, r.Version, r.Redirects, r.Scopes, r.Origin, r.Network, p.input.Grant.Source, p.rotationOverlap(), p.input.ClientChange.Replacement, r.PostLogoutRedirects, r.DeviceAuthorization})
 	if err != nil {
 		return identity.RequestIntent{}, err
 	}

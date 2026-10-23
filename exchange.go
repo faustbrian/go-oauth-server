@@ -19,6 +19,34 @@ type WorkloadExchangePolicy struct {
 	ClockUncertainty time.Duration
 }
 
+// HumanCodeExchangePolicy explicitly selects owning-client delegation of opaque
+// access issued through the existing password-session/S256 authorization-code
+// profile. Clients must independently opt in with Client.HumanCodeExchange.
+// It grants no workload, refresh-source, device, API-key, organization, JWT or
+// private-session exchange authority. Zero MaximumDepth means four exchanges;
+// an explicit value may only lower that ceiling. ClockUncertainty and the
+// configured MaximumDuration share the profile's ten-second uncertainty budget.
+// The native adapter requires its real consent owner and forward lineage history.
+type HumanCodeExchangePolicy struct {
+	MaximumDepth     uint8
+	ClockUncertainty time.Duration
+}
+
+func (p HumanCodeExchangePolicy) validated(c Config) (HumanCodeExchangePolicy, error) {
+	if p.MaximumDepth == 0 {
+		p.MaximumDepth = 4
+	}
+	if p.MaximumDepth > 4 || p.ClockUncertainty < 0 || p.ClockUncertainty > 10*time.Second-c.MaximumDuration {
+		return HumanCodeExchangePolicy{}, ErrInvalidRequest
+	}
+	for _, client := range c.Clients {
+		if client.HumanCodeExchange {
+			return p, nil
+		}
+	}
+	return HumanCodeExchangePolicy{}, ErrInvalidRequest
+}
+
 func (p WorkloadExchangePolicy) validated(c Config) (WorkloadExchangePolicy, error) {
 	if p.MaximumDepth == 0 {
 		p.MaximumDepth = 4
@@ -42,7 +70,7 @@ func validExchangeRequest(r TokenRequest, client Client) bool {
 			return false
 		}
 	}
-	return client.Workload != nil && !client.Public && r.GrantType == TokenExchangeGrant && opaque32(r.SubjectToken) && r.SubjectTokenType == AccessTokenType && (r.RequestedTokenType == "" || r.RequestedTokenType == AccessTokenType) && (r.Resource == "") != (r.Audience == "") && (r.Resource == client.Resource || r.Audience == client.Resource) && r.Code == "" && r.CodeVerifier == "" && r.RedirectURI == "" && r.RefreshToken == ""
+	return (client.Workload != nil || client.HumanCodeExchange) && !client.Public && r.GrantType == TokenExchangeGrant && opaque32(r.SubjectToken) && r.SubjectTokenType == AccessTokenType && (r.RequestedTokenType == "" || r.RequestedTokenType == AccessTokenType) && (r.Resource == "") != (r.Audience == "") && (r.Resource == client.Resource || r.Audience == client.Resource) && r.Code == "" && r.CodeVerifier == "" && r.RedirectURI == "" && r.RefreshToken == ""
 }
 
 func exchangeFieldsPresent(r TokenRequest) bool {

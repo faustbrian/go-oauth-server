@@ -7,6 +7,8 @@ platform-owned public or configured confidential client a narrow resource author
 consent, S256 code exchange, refresh rotation and revocation.
 An additional explicit startup workload policy selects confidential
 client-credentials access without a human/session/consent substitute.
+The separately selected [human code-access exchange](human-code-exchange.md)
+preserves that existing human grant rather than manufacturing a workload.
 
 The optional [OIDC profile](selected-oidc-profile.md) adds only the finite
 public-subject ES256 code-flow consumer. Statements below that describe OIDC as

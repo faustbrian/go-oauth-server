@@ -138,7 +138,7 @@ func (s *Service) DiscoveryOauth(ctx context.Context, _ DiscoveryOauthRequest) (
 	if workload {
 		m.GrantTypesSupported = append(m.GrantTypesSupported, "client_credentials")
 	}
-	if c.WorkloadExchange != nil {
+	if c.WorkloadExchange != nil || c.HumanCodeExchange != nil {
 		m.GrantTypesSupported = append(m.GrantTypesSupported, string(TokenExchangeGrant))
 	}
 	slices.Sort(m.GrantTypesSupported)

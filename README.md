@@ -10,6 +10,11 @@ The optional [restricted workload exchange profile](docs/workload-exchange.md)
 uses the standard RFC 8693 grant at `Service.Token`. It is distinct from private
 session exchange and does not enable customer, API-key or organization delegation.
 
+The separate [human code-access exchange profile](docs/human-code-exchange.md)
+lets an explicitly selected configured Basic web client narrow its genuine
+password-session/S256 access source. It preserves existing human/consent authority
+and adds no API-key, organization, JWT/cache or HTTP composition profile.
+
 The optional [OIDC child](oidc/README.md) selects public or registered pairwise
 subjects (single-host or validated HTTPS sector URI) for ES256 code flow
 through the same native password-session/consent authority. Its

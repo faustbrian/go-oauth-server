@@ -66,6 +66,9 @@ type Config struct {
 	OwningClientIntrospection bool
 	// WorkloadExchange is an explicit opt-in; nil preserves all existing grants.
 	WorkloadExchange *WorkloadExchangePolicy
+	// HumanCodeExchange is a separate opt-in for explicitly selected confidential
+	// web clients. Nil preserves the existing workload-only exchange boundary.
+	HumanCodeExchange *HumanCodeExchangePolicy `json:",omitempty"`
 	// Discovery explicitly selects OAuth authorization-server metadata using
 	// trusted endpoint locations. Zero preserves the unadvertised legacy profile.
 	Discovery                                                        DiscoveryConfig
@@ -136,6 +139,13 @@ func (c Config) Validated() (Config, error) {
 			return Config{}, err
 		}
 		c.WorkloadExchange = &owned
+	}
+	if c.HumanCodeExchange != nil {
+		owned, err := c.HumanCodeExchange.validated(c)
+		if err != nil {
+			return Config{}, err
+		}
+		c.HumanCodeExchange = &owned
 	}
 	c.Scopes.values = slices.Clone(c.Scopes.values)
 	c.OIDCScopes.values = slices.Clone(c.OIDCScopes.values)
@@ -681,12 +691,12 @@ func (s *Service) Token(ctx context.Context, request TokenRequest) (out TokenRes
 	if request.GrantType != TokenExchangeGrant && exchangeFieldsPresent(request) {
 		return out, ErrInvalidRequest
 	}
-	if client.Workload != nil && request.GrantType != ClientCredentialsGrant && request.GrantType != TokenExchangeGrant || client.Workload == nil && (request.GrantType == ClientCredentialsGrant || request.GrantType == TokenExchangeGrant) {
+	if client.Workload != nil && request.GrantType != ClientCredentialsGrant && request.GrantType != TokenExchangeGrant || client.Workload == nil && (request.GrantType == ClientCredentialsGrant || request.GrantType == TokenExchangeGrant && !client.HumanCodeExchange) {
 		return out, ErrUnsupportedGrant
 	}
 	switch request.GrantType {
 	case TokenExchangeGrant:
-		if s.config.WorkloadExchange == nil {
+		if client.Workload != nil && s.config.WorkloadExchange == nil || client.Workload == nil && s.config.HumanCodeExchange == nil {
 			return out, ErrUnsupportedGrant
 		}
 		if !validExchangeRequest(request, client) {
@@ -753,6 +763,9 @@ func (s *Service) Token(ctx context.Context, request TokenRequest) (out TokenRes
 	}
 	now := s.config.Clock.Now()
 	accessTTL := s.config.AccessTTL
+	if request.GrantType == TokenExchangeGrant && out.RefreshToken.state != nil {
+		return TokenResult{Outcome: identity.CommitOutcomeCommitted, CommandID: out.CommandID}, ErrUnavailable
+	}
 	if client.Workload != nil {
 		accessTTL = client.Workload.AccessTTL()
 		if out.RefreshToken.state != nil {

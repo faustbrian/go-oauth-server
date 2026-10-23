@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add a separate opt-in human authorization-code access-source exchange for
+  owning configured Basic web clients. Opaque descendants preserve original
+  human/session/consent authority, scopes and lifetime across refresh and
+  ordinary browser logout. Workload-only exchange remains unchanged; selecting
+  human delegation requires matching native history and explicit client bootstrap.
+
 - Add opt-in restricted RFC 8693 exchange for an owning Basic workload client,
   narrowing its original or delegated opaque access token without refresh,
   actor overrides or customer delegation. Native adoption requires matching

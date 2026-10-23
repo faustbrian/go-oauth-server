@@ -97,7 +97,12 @@ type Client struct {
 	// client. Zero preserves browser-only permission. The optional device child
 	// and native composition must still be selected; this is not authentication.
 	DeviceAuthorization bool `json:",omitempty"`
-	Redirects, Scopes   []string
+	// HumanCodeExchange selects the separate configured code-access delegation
+	// operation for this confidential web client. It does not replace Basic
+	// authentication or alter existing registration/grant identity. False retains
+	// the existing profile; the global/native selection is also required.
+	HumanCodeExchange bool `json:",omitempty"`
+	Redirects, Scopes []string
 	// PostLogoutRedirects independently registers exact RP logout targets.
 	// Empty selects local-only logout, never an authorization-redirect fallback.
 	PostLogoutRedirects []string `json:",omitempty"`
@@ -114,6 +119,9 @@ type Client struct {
 // the supported runtime profile must additionally supply the selected class's
 // actual authentication implementation before advertising or issuing for it.
 func ValidateClient(input Client) (Client, error) {
+	if input.HumanCodeExchange && (input.Public || input.Workload != nil) {
+		return Client{}, ErrInvalidRequest
+	}
 	if !identifier(input.ID) || !identifier(input.Owner.platform) || input.Version == 0 || !validOrigin(input.Resource) || input.Public && input.AuthenticationMethod != "none" || !input.Public && input.AuthenticationMethod != "client_secret_basic" {
 		return Client{}, ErrInvalidRequest
 	}

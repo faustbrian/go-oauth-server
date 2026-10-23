@@ -352,7 +352,7 @@ Each newly prepared selected **actually committed** ID token gets an immutable d
 to its original issuer/environment, tenant/client/subject, signing key/source
 session and original command locator, atomically with issuance. Existing minimized claims stay
 unchanged; no `sid`, subject-equality heuristic or caller-selected session is used.
-Preactivation hints have no association and deny; no history is backfilled.
+Hints issued before activation have no association and deny; no history is backfilled.
 An authenticated token response prepared before activation can complete its
 original pending execution while its original admission remains valid. Its
 signed bytes, expiry and preparation generation stay unchanged; it gains no
@@ -406,7 +406,7 @@ original command and cannot resume execution or redeliver a callback.
 
 Static public/confidential human clients and registered public/pairwise subjects
 remain distinct selected variants. Front/back-channel notifications, provider
-orchestration, hintless UI, device/private exchange and generic HTTP/reference
+orchestration, UI without a hint, device/private exchange and generic HTTP/reference
 integration remain separate unselected work.
 
 ## Protocol and evidence scope

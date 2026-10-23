@@ -154,7 +154,7 @@ func (p *phase) auditActions() []string {
 		return []string{"identity.oauth_server.update_client"}
 	case deleteConsent, narrowConsent:
 		return []string{"identity.oauth_server.revoke_consent"}
-	case createInteraction, createWorkload, exchangeWorkload:
+	case createInteraction, createWorkload, exchangeWorkload, exchangeHumanCode:
 		return []string{"identity.oauth_server.authorize"}
 	case approveInteraction:
 		return []string{"identity.oauth_server.grant_consent", "identity.oauth_server.authorize"}
@@ -224,7 +224,7 @@ func (p *phase) lifecycle() kernel.LifecyclePlan {
 	case revokeAccess:
 		before = 0
 		event = "oauth_access.revoked.v1"
-	case exchangeWorkload:
+	case exchangeWorkload, exchangeHumanCode:
 		before = 0
 		event = "oauth_access.exchanged.v1"
 	}
@@ -244,7 +244,7 @@ func (p *phase) subjectType() string {
 	if p.input.Transition == deleteConsent || p.input.Transition == narrowConsent {
 		return "oauth_consent"
 	}
-	if p.input.Transition == revokeAccess || p.input.Transition == exchangeWorkload {
+	if p.input.Transition == revokeAccess || p.exchanging() {
 		return "oauth_token"
 	}
 	return "oauth_grant"
@@ -295,7 +295,7 @@ func (p *phase) execute(ctx context.Context) (result identity.CommandResult, exe
 		// A terminal result is historical metadata, never an instruction to
 		// decrypt/redeliver output or reconstruct today's aggregate as success.
 		terminal := admission.Record.Outcome != identity.CommitOutcomeInProgress || p.input.Transition == endSession
-		if terminal && p.input.Transition != exchangeWorkload {
+		if terminal && !p.exchanging() {
 			return p.coordinator.RecoverFeatureCommand(ctx, p.query(), p.caller())
 		}
 		wire, generation, err := p.coordinator.QueryFeaturePreparation(ctx, p.query(), p.caller(), p.registration(), p)
@@ -306,7 +306,7 @@ func (p *phase) execute(ctx context.Context) (result identity.CommandResult, exe
 		if err := p.restore(ctx, generation, wire, true); err != nil {
 			return identity.CommandResult{}, err
 		}
-		if p.input.Transition == exchangeWorkload && !terminal {
+		if p.exchanging() && !terminal {
 			// The coordinator can take over an expired pending lease before
 			// protected Work runs. An expired original exchange observation is
 			// recovery-only: do not re-enter issuing execution merely to discover
@@ -342,7 +342,14 @@ func (p *phase) buildCommand() error {
 		if !p.store.validExchangeLineage(i.Exchange, i.Grant) || i.ExchangeObservation == nil || i.TargetKind != oauth.TokenAccess || i.Exchange.ParentID != i.TargetID {
 			return oauth.ErrInvalidRequest
 		}
-	} else if i.Exchange != nil || i.ExchangeObservation != nil {
+		if i.HumanExchange != nil {
+			return oauth.ErrInvalidRequest
+		}
+	} else if i.Transition == exchangeHumanCode {
+		if !p.store.validHumanExchangeLineage(i.HumanExchange, i.Grant, p.client) || i.ExchangeObservation == nil || i.TargetKind != oauth.TokenAccess || i.HumanExchange.ParentID != i.TargetID || i.Exchange != nil {
+			return oauth.ErrInvalidRequest
+		}
+	} else if i.Exchange != nil || i.HumanExchange != nil || i.ExchangeObservation != nil {
 		return oauth.ErrInvalidRequest
 	}
 	if i.Schema != 1 || i.Configuration != p.store.identity || b.ValidateFor(p.operation(b.OperationID)) != nil || i.Grant.Version == math.MaxUint64 || i.Grant.ClientFingerprint != clientFingerprint(p.client) || i.Grant.ClientID != p.client.ID || i.Intent == ([32]byte{}) || i.CreatedAt.IsZero() || i.CreatedAt.Nanosecond()%1000 != 0 || !scopeSubset(i.Scopes, i.Grant.Scopes) {
@@ -598,7 +605,11 @@ func (p *phase) browserRequired() bool {
 	return p.input.ClientChange != nil || p.input.Transition == endSession || p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == denyInteraction || p.input.Transition == deleteConsent || p.input.Transition == narrowConsent || p.input.Transition == approveDevice || p.input.Transition == denyDevice
 }
 func (p *phase) issuing() bool {
-	return p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == exchangeCode || p.input.Transition == rotateRefresh || p.input.Transition == createWorkload || p.input.Transition == exchangeWorkload || p.input.Transition == createDevice || p.input.Transition == approveDevice || p.input.Device != nil && p.input.Device.Condition == oauth.DeviceSucceeded
+	return p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == exchangeCode || p.input.Transition == rotateRefresh || p.input.Transition == createWorkload || p.exchanging() || p.input.Transition == createDevice || p.input.Transition == approveDevice || p.input.Device != nil && p.input.Device.Condition == oauth.DeviceSucceeded
+}
+
+func (p *phase) exchanging() bool {
+	return p.input.Transition == exchangeWorkload || p.input.Transition == exchangeHumanCode
 }
 
 func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
@@ -637,7 +648,7 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 	// Public-client revocation is authorized by exact client-bound token
 	// possession, not by an active end-user browser. Disabling an account must
 	// not prevent revoking its old grant. Issuance always checks current epochs.
-	if p.browserRequired() || i.Transition == exchangeCode || i.Transition == rotateRefresh {
+	if p.browserRequired() || i.Transition == exchangeCode || i.Transition == rotateRefresh || i.Transition == exchangeHumanCode {
 		original, err := sessionpg.OriginalSessionFromFields(g.Tenant, g.User, g.Source)
 		if err != nil {
 			return identity.ForbiddenError{}
@@ -655,7 +666,7 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 		if err := w.RequireActiveActorAuthorization(ctx, p, authorization); err != nil {
 			return err
 		}
-		if p.store.config.RPInitiatedLogout && (i.Transition == exchangeCode || i.Transition == rotateRefresh) {
+		if p.store.config.RPInitiatedLogout && (i.Transition == exchangeCode || i.Transition == rotateRefresh || i.Transition == exchangeHumanCode) {
 			if err := p.store.endSession.RequireNotRevoked(ctx, w, p, original); err != nil {
 				return err
 			}
@@ -760,7 +771,7 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 		return identity.UnavailableError{}
 	}
 	expectedVersion := g.Version
-	if final && p.applied && i.Transition != revokeAccess && i.Transition != exchangeWorkload {
+	if final && p.applied && i.Transition != revokeAccess && !p.exchanging() {
 		expectedVersion++
 	}
 	if version != strconv.FormatUint(expectedVersion, 10) || clientVersion != strconv.FormatUint(g.ClientVersion, 10) || subtle.ConstantTimeCompare(fingerprint, g.ClientFingerprint[:]) != 1 || resource != g.Resource || !expires.Equal(g.ExpiresAt) {
@@ -801,6 +812,9 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 		return err
 	}
 	if err := p.checkExchangeLineage(ctx, w, now); err != nil {
+		return err
+	}
+	if err := p.checkHumanExchange(ctx, w, now); err != nil {
 		return err
 	}
 	return p.checkConsent(ctx, w, final)
@@ -1005,7 +1019,7 @@ func (p *phase) GenerateFeaturePreparation(ctx context.Context, c identity.Comma
 		kinds = []oauth.TokenKind{oauth.TokenCode}
 	case exchangeCode, rotateRefresh:
 		kinds = []oauth.TokenKind{oauth.TokenAccess, oauth.TokenRefresh}
-	case createWorkload, exchangeWorkload:
+	case createWorkload, exchangeWorkload, exchangeHumanCode:
 		kinds = []oauth.TokenKind{oauth.TokenAccess}
 	case pollDevice:
 		if i.Device != nil && i.Device.Condition == oauth.DeviceSucceeded {
@@ -1048,7 +1062,7 @@ func (p *phase) GenerateFeaturePreparation(ctx context.Context, c identity.Comma
 			}
 		case oauth.TokenAccess:
 			expires = minTime(expires, i.CreatedAt.Add(p.store.config.Protocol.AccessTTL))
-			if i.Transition == exchangeWorkload {
+			if p.exchanging() {
 				expires = minTime(expires, i.TargetExpires)
 				expires = minTime(expires, i.CreatedAt.Add(5*time.Minute))
 			}
@@ -1163,9 +1177,9 @@ func (p *phase) restore(ctx context.Context, generation uint64, wire []byte, ini
 		// Recovery has no proposed consent/network intent. The owning
 		// preparation authenticates that original intent, but never authorizes
 		// execution or redelivery. Keep exact continuation/client/source scope.
-		transitionMatches = p.input.Transition == approveInteraction && (out.Input.Transition == approveInteraction || out.Input.Transition == denyInteraction) || p.input.Transition == endSession && out.Input.Transition == endSession || p.input.Transition == exchangeWorkload && out.Input.Transition == exchangeWorkload
+		transitionMatches = p.input.Transition == approveInteraction && (out.Input.Transition == approveInteraction || out.Input.Transition == denyInteraction) || p.input.Transition == endSession && out.Input.Transition == endSession || p.exchanging() && out.Input.Transition == p.input.Transition
 		targetKind := oauth.TokenContinuation
-		if p.input.Transition == exchangeWorkload {
+		if p.exchanging() {
 			targetKind = oauth.TokenAccess
 		}
 		if p.input.Transition != endSession && (out.Input.Target != p.input.Target || out.Input.TargetID != p.input.TargetID || out.Input.TargetKind != targetKind || !out.Input.TargetExpires.Equal(p.input.TargetExpires) || !sameJSON(out.Input.TargetPayload, p.input.TargetPayload)) {
@@ -1191,7 +1205,7 @@ func (p *phase) restore(ctx context.Context, generation uint64, wire []byte, ini
 	}
 	want := 0
 	switch out.Input.Transition {
-	case createInteraction, approveInteraction, createWorkload, exchangeWorkload:
+	case createInteraction, approveInteraction, createWorkload, exchangeWorkload, exchangeHumanCode:
 		want = 1
 	case exchangeCode, rotateRefresh:
 		want = 2
@@ -1259,7 +1273,7 @@ func (p *phase) restore(ctx context.Context, generation uint64, wire []byte, ini
 		switch out.Input.Transition {
 		case approveInteraction:
 			expected = oauth.TokenCode
-		case createWorkload, exchangeWorkload:
+		case createWorkload, exchangeWorkload, exchangeHumanCode:
 			expected = oauth.TokenAccess
 		case exchangeCode, rotateRefresh, pollDevice:
 			expected = oauth.TokenAccess

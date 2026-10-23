@@ -57,12 +57,17 @@ func addConfiguredConfidentialClient(t *testing.T, f *authenticatedPasswordFixtu
 
 func confidentialCode(t *testing.T, f authenticatedPasswordFixture, service *oauth.Service, client oauth.Client) (string, string) {
 	t.Helper()
+	return confidentialCodeScopes(t, f, service, client, []string{"identity:read"})
+}
+
+func confidentialCodeScopes(t *testing.T, f authenticatedPasswordFixture, service *oauth.Service, client oauth.Client, scopes []string) (string, string) {
+	t.Helper()
 	verifier := strings.Repeat("a", 43)
 	challenge, err := oauth.S256Challenge(verifier)
 	if err != nil {
 		t.Fatal(err)
 	}
-	begin, err := service.Authorize(f.ctx, oauth.AuthorizeRequest{TenantID: f.tenant, Session: f.browser, Network: "192.0.2.1", Request: oauth.AuthorizationRequest{ClientID: client.ID, RedirectURI: client.Redirects[0], CodeChallenge: challenge, Resource: client.Resource, Scopes: []string{"identity:read"}, State: "confidential-original-state"}})
+	begin, err := service.Authorize(f.ctx, oauth.AuthorizeRequest{TenantID: f.tenant, Session: f.browser, Network: "192.0.2.1", Request: oauth.AuthorizationRequest{ClientID: client.ID, RedirectURI: client.Redirects[0], CodeChallenge: challenge, Resource: client.Resource, Scopes: scopes, State: "confidential-original-state"}})
 	if err != nil || begin.Outcome != oauth.ConsentRequired {
 		t.Fatal("genuine user did not reach confidential-client explicit consent", err)
 	}
@@ -70,7 +75,7 @@ func confidentialCode(t *testing.T, f authenticatedPasswordFixture, service *oau
 	if err != nil {
 		t.Fatal(err)
 	}
-	approved, err := service.Continue(f.ctx, oauth.ContinueRequest{TenantID: f.tenant, Session: f.browser, CSRF: f.csrf, ClientID: client.ID, Continuation: wire, Origin: f.oauth.Protocol.Issuer.String(), Network: "192.0.2.1", Approve: true, Scopes: []string{"identity:read"}})
+	approved, err := service.Continue(f.ctx, oauth.ContinueRequest{TenantID: f.tenant, Session: f.browser, CSRF: f.csrf, ClientID: client.ID, Continuation: wire, Origin: f.oauth.Protocol.Issuer.String(), Network: "192.0.2.1", Approve: true, Scopes: scopes})
 	if err != nil || approved.Outcome != oauth.AuthorizationRedirect {
 		t.Fatal("confidential client consent did not issue S256 code", err)
 	}

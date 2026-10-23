@@ -110,6 +110,9 @@ func (r *resourceAccessReader) ReadResourceAccess(ctx context.Context, token str
 	if err != nil {
 		return out, resourceAccessError(ctx, err)
 	}
+	if err := s.humanDelegationAuthority(ctx, a, r.client, now); err != nil {
+		return out, resourceAccessError(ctx, err)
+	}
 	current, err := s.lookup(ctx, token, r.client, []oauth.TokenKind{oauth.TokenAccess})
 	if err != nil {
 		return out, resourceAccessError(ctx, err)
@@ -126,6 +129,9 @@ func (r *resourceAccessReader) ReadResourceAccess(ctx context.Context, token str
 	// fence actual token/consent generation again before returning any identity.
 	currentCredentialExpiry, err := s.introspectionAuthority(ctx, a.Grant, now)
 	if err != nil {
+		return out, resourceAccessError(ctx, err)
+	}
+	if err := s.humanDelegationAuthority(ctx, a, r.client, now); err != nil {
 		return out, resourceAccessError(ctx, err)
 	}
 	current, err = s.lookup(ctx, token, r.client, []oauth.TokenKind{oauth.TokenAccess})

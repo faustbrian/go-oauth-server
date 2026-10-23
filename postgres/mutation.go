@@ -78,7 +78,7 @@ func (p *phase) mutateOAuth(ctx context.Context, w kernel.Work) error {
 		if n != 1 {
 			return identity.ConflictError{}
 		}
-	} else if i.Transition != revokeAccess && i.Transition != exchangeWorkload {
+	} else if i.Transition != revokeAccess && !p.exchanging() {
 		state := "active"
 		if i.Transition == denyInteraction || i.Transition == rejectReplay || i.Transition == revokeFamily {
 			state = "revoked"
@@ -181,7 +181,7 @@ func (p *phase) mutateOAuth(ctx context.Context, w kernel.Work) error {
 			return err
 		}
 	}
-	payload, err := json.Marshal(artifactPayload{Schema: 1, Request: i.Request, Scopes: i.Scopes, Subject: p.output.Subject, SigningKeyID: p.output.SigningKeyID, Exchange: i.Exchange})
+	payload, err := json.Marshal(artifactPayload{Schema: 1, Request: i.Request, Scopes: i.Scopes, Subject: p.output.Subject, SigningKeyID: p.output.SigningKeyID, Exchange: i.Exchange, HumanExchange: i.HumanExchange})
 	if err != nil {
 		return identity.UnavailableError{}
 	}
@@ -200,6 +200,11 @@ func (p *phase) mutateOAuth(ctx context.Context, w kernel.Work) error {
 		}
 		if i.Transition == exchangeWorkload {
 			columns += ",workload_exchange"
+			values += ",$" + strconv.Itoa(len(args)+1)
+			args = append(args, true)
+		}
+		if i.Transition == exchangeHumanCode {
+			columns += ",human_code_exchange"
 			values += ",$" + strconv.Itoa(len(args)+1)
 			args = append(args, true)
 		}

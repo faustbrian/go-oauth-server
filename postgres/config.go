@@ -59,6 +59,12 @@ type Config struct {
 	// It must differ from WorkloadAuthority.PolicyNamespace. No request creates
 	// or adopts an authority row; absent/stale/unavailable authority denies.
 	WorkloadExchangeClientNamespace string
+	// HumanCodeExchangeClientNamespace is an independent public authorization
+	// namespace for deterministic per-registration subjects. Explicit native
+	// bootstrap initializes epoch1; exchange never creates or repairs authority.
+	// It must differ from session, workload principal and workload client policy
+	// namespaces: the public authority owner has no separate subject-kind key.
+	HumanCodeExchangeClientNamespace string
 	// ConsentManagement enables own-consent reads/withdrawal and mandatory
 	// consent-generation fences for every human token. Install the forward
 	// ConsentMigrationSource and retire all old/unselected serving instances
@@ -155,6 +161,13 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	if c.ConsentManagement && !web {
 		return nil, oauth.ErrInvalidRequest
 	}
+	if protocol.HumanCodeExchange != nil {
+		if !c.ConsentManagement || c.HumanCodeExchangeClientNamespace == c.WorkloadAuthority.PolicyNamespace || c.HumanCodeExchangeClientNamespace == c.WorkloadExchangeClientNamespace || c.HumanCodeExchangeClientNamespace == c.Session.Profile.PolicyNamespace || (authority.AuthorityScope{TenantID: "scope-validation", PolicyNamespace: c.HumanCodeExchangeClientNamespace, SubjectID: "scope-validation"}).Validate() != nil {
+			return nil, oauth.ErrInvalidRequest
+		}
+	} else if c.HumanCodeExchangeClientNamespace != "" {
+		return nil, oauth.ErrInvalidRequest
+	}
 	if c.ConsentNarrowing && !c.ConsentManagement {
 		return nil, oauth.ErrInvalidRequest
 	}
@@ -247,7 +260,7 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	if s.domain, err = kernel.NewRepository(pool, kernel.Config{MaximumDuration: protocol.MaximumDuration}); err != nil {
 		return nil, oauth.ErrInvalidRequest
 	}
-	if protocol.OwningClientIntrospection || workloadSelected(protocol.Clients) || len(protocol.OIDCScopes.Scopes()) > 0 || protocol.ManagedClients != nil {
+	if protocol.OwningClientIntrospection || protocol.HumanCodeExchange != nil || workloadSelected(protocol.Clients) || len(protocol.OIDCScopes.Scopes()) > 0 || protocol.ManagedClients != nil {
 		if s.policy, err = authority.NewAuthorityStore(pool.Raw(), protocol.MaximumDuration); err != nil {
 			return nil, oauth.ErrInvalidRequest
 		}

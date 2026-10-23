@@ -83,6 +83,9 @@ func (s *Store) Introspect(ctx context.Context, c oauth.IntrospectionCommand) (o
 		}
 	} else {
 		credentialExpiry, err = s.introspectionAuthority(ctx, target.Grant, now)
+		if err == nil {
+			err = s.humanDelegationAuthority(ctx, target, client, now)
+		}
 	}
 	if err != nil {
 		return out, introspectionError(ctx, err)
@@ -123,6 +126,28 @@ func (s *Store) Introspect(ctx context.Context, c oauth.IntrospectionCommand) (o
 			return out, err
 		}
 		if !activeIntrospectionArtifact(target, now) {
+			return out, nil
+		}
+		if finished := s.now(); finished.Before(start) || !finished.Before(start.Add(20*time.Second)) {
+			return out, oauth.ErrUnavailable
+		}
+	}
+	if target.Payload.HumanExchange != nil {
+		currentExpiry, err := s.introspectionAuthority(ctx, target.Grant, now)
+		if err != nil {
+			return out, introspectionError(ctx, err)
+		}
+		if !currentExpiry.IsZero() && (credentialExpiry.IsZero() || currentExpiry.Before(credentialExpiry)) {
+			credentialExpiry = currentExpiry
+		}
+		if err := s.humanDelegationAuthority(ctx, target, client, now); err != nil {
+			return out, introspectionError(ctx, err)
+		}
+		now, err = s.introspectionTime(ctx)
+		if err != nil {
+			return out, err
+		}
+		if !activeIntrospectionArtifact(target, now) || !credentialExpiry.IsZero() && !now.Before(credentialExpiry) {
 			return out, nil
 		}
 		if finished := s.now(); finished.Before(start) || !finished.Before(start.Add(20*time.Second)) {

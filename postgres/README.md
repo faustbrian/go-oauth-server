@@ -3,6 +3,18 @@
 Experimental persistence and public service composition for the
 [selected authorization-code profile](../docs/selected-profile.md).
 
+## Optional human code-access delegation
+
+Select the separate [human code-access exchange profile](../docs/human-code-exchange.md)
+only with real consent management, the final forward
+`HumanCodeExchangeMigrationSource` and explicit source-bound native client
+bootstrap. `BootstrapHumanCodeExchangeClient` and
+`HumanCodeExchangeClientAuthority` derive actual tenant/registration scope from
+a genuine code-issued root and owning Basic credentials, never a caller's
+asserted epoch. The public authorization owner remains the sole lifecycle owner.
+Turning selection off denies derived tokens without altering ordinary roots.
+
+
 ## Optional platform-owned confidential client management
 
 Select `Config.Protocol.ManagedClients` with one exact platform owner, tenant,

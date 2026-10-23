@@ -376,6 +376,7 @@ func TestNativeRestrictedExchangePopulatedSilentHistoryAndSubsequentBothProfiles
 	if current, err := selected.Introspect(f.ctx, oauth.IntrospectRequest{ClientID: machine.ID, ClientAuthentication: credential, Token: derivedWire}); err != nil || !current.Active {
 		t.Fatal("mixed history delegated access was not usable", err)
 	}
+	proveHumanExchangeAfterMixedHistory(t, &f, source, selected, machine, credential, rootWire, derivedWire)
 }
 
 func TestNativeRestrictedExchangeLaterConsentExpiryRejectedBeforeMutation(t *testing.T) {

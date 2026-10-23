@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Add explicit human code-issued opaque access exchange with separate bounded
+  delegation ancestry, preserved consumed-code history, current human/consent
+  and per-registration client epochs, and metadata-only retry/recovery. Append
+  `HumanCodeExchangeMigrationSource` after the complete installed history,
+  retire unaware writers and explicitly bootstrap actual source-bound client
+  authority before activation. Preactivation higher-version registrations are
+  supported without rewriting grants; disabling selection denies children while
+  preserving ordinary roots. Public authority discovery supports withdrawal
+  through the existing authorization owner without duplicating private key derivation.
+  Keep human, session and workload authority namespaces distinct; required
+  token audit, lifecycle and effect subjects identify the actual source access.
+
 - Add selected workload-only RFC 8693 access exchange with durable bounded
   root/parent lineage, non-expanding authority, independent live client epochs,
   protected current-owner fences and metadata-only original-command recovery.

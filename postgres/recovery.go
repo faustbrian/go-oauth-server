@@ -220,6 +220,9 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 			}
 			kinds = []oauth.TokenKind{oauth.TokenAccess}
 		}
+		if request.OperationID == "identity.oauth-server.token" && s.humanExchangeSelected(client) {
+			kinds = append(kinds, oauth.TokenAccess)
+		}
 		if request.OperationID == "identity.oauth-server.revoke" {
 			kinds = []oauth.TokenKind{oauth.TokenAccess, oauth.TokenRefresh}
 		}
@@ -244,6 +247,28 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 				return out, publicError(ctx, err, oauth.ErrAccessDenied)
 			}
 		}
+		if request.OperationID == "identity.oauth-server.token" && target.Kind == oauth.TokenAccess && target.Grant.Workload == nil {
+			if !s.humanExchangeSelected(client) {
+				return out, oauth.ErrAccessDenied
+			}
+			transition = exchangeHumanCode
+			now, err := s.introspectionTime(ctx)
+			if err != nil {
+				return out, err
+			}
+			if !activeIntrospectionArtifact(target, now) {
+				return out, oauth.ErrAccessDenied
+			}
+			if _, err := s.introspectionAuthority(ctx, target.Grant, now); err != nil {
+				return out, publicError(ctx, err, oauth.ErrAccessDenied)
+			}
+			if err := s.humanExchangeAuthority(ctx, target.Grant, client); err != nil {
+				return out, publicError(ctx, err, oauth.ErrAccessDenied)
+			}
+			if err := s.readHumanExchangeLineage(ctx, target, client, now); err != nil {
+				return out, publicError(ctx, err, oauth.ErrAccessDenied)
+			}
+		}
 		if request.OperationID == "identity.oauth-server.revoke" {
 			if request.CommandID != target.Replay {
 				return out, oauth.ErrAccessDenied
@@ -252,7 +277,7 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 			if target.Kind == oauth.TokenAccess {
 				transition = revokeAccess
 			}
-		} else if transition == exchangeWorkload {
+		} else if transition == exchangeWorkload || transition == exchangeHumanCode {
 			// The exact source/client binding and original intent are owned by
 			// encrypted coordinator preparation, not a source-lifetime command.
 		} else if request.CommandID == target.Replay {
@@ -261,7 +286,7 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 			return out, oauth.ErrAccessDenied
 		}
 		p = s.targetPhase(target, client, transition, request.OperationID, request.CommandID, s.intent("recover"), "")
-		p.metadataRecovery = transition == exchangeWorkload
+		p.metadataRecovery = p.exchanging()
 	default:
 		return out, oauth.ErrInvalidRequest
 	}
@@ -278,7 +303,7 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 			return out, publicError(ctx, err, oauth.ErrAccessDenied)
 		}
 	}
-	if request.OperationID == "identity.oauth-server.authorize" || p.input.Transition == createWorkload || p.input.Transition == exchangeWorkload || p.input.Transition == deleteConsent || p.input.Transition == narrowConsent || authenticationContinuation {
+	if request.OperationID == "identity.oauth-server.authorize" || p.input.Transition == createWorkload || p.exchanging() || p.input.Transition == deleteConsent || p.input.Transition == narrowConsent || authenticationContinuation {
 		wire, generation, err := p.coordinator.QueryFeaturePreparation(ctx, p.query(), p.caller(), p.registration(), p)
 		if err != nil {
 			return out, publicError(ctx, err, oauth.ErrAccessDenied)

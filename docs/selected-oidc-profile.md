@@ -96,7 +96,7 @@ identity owner's prerequisite, not a migration this extension installs.
 [OIDC Core 1.0 errata2 section3.1.2.1](https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest)
 defines `prompt=login` and elapsed authentication age: `max_age=0` is equivalent
 to requesting login, and `auth_time` is required with maximum age. This profile
-selects exact `login` and the optional silent `none` profile below; `consent`,
+selects exact `login`, `consent` and the optional silent `none` profile below;
 `select_account`, empty/duplicate values and combinations deny rather than being
 ignored. `AuthorizationRequest.MaxAge` is optional uint32
 seconds: nil preserves absence, a non-nil zero explicitly requires fresh login.
@@ -122,6 +122,26 @@ Source adoption, consent and one-use code issuance share the existing sole
 transaction. Original client/version/redirect/state/PKCE/nonce, pairwise binding
 and exclusive flow deadline remain fixed; the code cannot renew that deadline.
 Token preparation uses the adopted session owner's authentic `auth_time`.
+
+### Explicit consent
+
+Exact `prompt=consent` requires a new protected approval of the original request,
+even when the same session/client/scopes already have reusable consent. It does
+not itself require a new login: current genuine session custody remains usable
+unless `max_age` requires fresh authentication. `Authorize` returns only the
+opaque consent continuation (or the existing fresh-authentication continuation),
+never a code from cached approval. An unaware/custom Store that skips this
+interaction fails closed at core delivery.
+
+Complete the original continuation through `Continue` with current original
+session/CSRF authority, or the existing permitted same-account fresh-login
+adoption. Explicit approval alone commits consent and a one-use S256 code;
+denial creates no code/token and spends this interaction without revoking prior
+approval. Tenant/client/subject, requested scope ceiling, callback/nonce,
+pairwise binding and original exclusive deadlines stay fixed. Required effects
+commit atomically; unknown or late outcomes and recovery remain metadata-only.
+This selects no prompt lists, account selector, UI or new session/proof engine,
+and needs no additional native schema beyond the selected existing profiles.
 
 Select matching core/child/native versions for this optional profile. An older
 adapter cannot silently drop login or explicit-zero/positive-age intent: known
@@ -302,8 +322,8 @@ missing/expired/revoked/insufficient/stale-client approval returns
 redirect with original state/issuer. Invalid redirects remain local; unknown or
 late commands preserve their durability metadata without code/continuation or
 redirect. Required-effect failure rolls back; original pre/post-COMMIT recovery
-never redelivers code or renews consent. Other prompts and combinations remain
-unselected. Managed client mutations are not OIDC registration support; their
+never redelivers code or renews consent. Other prompt values and all combinations
+remain unselected. Managed client mutations are not OIDC registration support; their
 ordinary-grant controls do not prove an OIDC-management variant.
 
 ## Protocol and evidence scope

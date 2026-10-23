@@ -20,6 +20,7 @@ func TestOIDCAuthenticationWirePresenceAndSelectedGrammar(t *testing.T) {
 		{"", "", nil},
 		{"&prompt=login", "login", nil},
 		{"&prompt=none", "none", nil},
+		{"&prompt=consent", "consent", nil},
 		{"&max_age=0", "", uint32Pointer(0)},
 		{"&max_age=60", "", uint32Pointer(60)},
 		{"&prompt=login&max_age=60", "login", uint32Pointer(60)},
@@ -29,16 +30,39 @@ func TestOIDCAuthenticationWirePresenceAndSelectedGrammar(t *testing.T) {
 			t.Fatal("OIDC authentication presence/value was lost", err)
 		}
 	}
-	for _, suffix := range []string{"&prompt=", "&prompt=consent", "&prompt=select_account", "&prompt=login+none", "&prompt=none+none", "&prompt=login+login", "&prompt=LOGIN", "&prompt=login&prompt=login", "&max_age=", "&max_age=-1", "&max_age=1.5", "&max_age=%2B1", "&max_age=4294967296", "&max_age=0&max_age=1"} {
+	for _, suffix := range []string{"&prompt=", "&prompt=select_account", "&prompt=consent+none", "&prompt=consent+login", "&prompt=consent+consent", "&prompt=login+none", "&prompt=none+none", "&prompt=login+login", "&prompt=LOGIN", "&prompt=CONSENT", "&prompt=login&prompt=login", "&prompt=consent&prompt=consent", "&max_age=", "&max_age=-1", "&max_age=1.5", "&max_age=%2B1", "&max_age=4294967296", "&max_age=0&max_age=1"} {
 		if _, err := oauth.ParseAuthorizationQueryWithOIDC(base + suffix); !errors.Is(err, oauth.ErrInvalidRequest) {
 			t.Fatal("unselected/malformed authentication request admitted", err)
 		}
 	}
-	if _, err := oauth.ParseAuthorizationQuery(base + "&prompt=login"); !errors.Is(err, oauth.ErrInvalidRequest) {
-		t.Fatal("ordinary OAuth parser selected OIDC authentication semantics")
+	for _, prompt := range []string{"login", "none", "consent"} {
+		if _, err := oauth.ParseAuthorizationQuery(base + "&prompt=" + prompt); !errors.Is(err, oauth.ErrInvalidRequest) {
+			t.Fatal("ordinary OAuth parser selected OIDC authentication semantics")
+		}
 	}
 	if oauth.FreshAuthenticationRequired == oauth.LoginRequired || oauth.FreshAuthenticationRequired == oauth.ConsentRequired {
 		t.Fatal("fresh authentication continuation collapsed into an unbound login or consent outcome")
+	}
+}
+
+func TestOIDCConsentCannotSelectAnUncomposedService(t *testing.T) {
+	sessions, bearer, now, _ := coreSessionFixture(t)
+	config := coreConfig(t, now)
+	config.OIDCScopes, _ = oauth.NewOIDCScopeCatalog([]string{"openid"})
+	config.Clients[0].Scopes = append(config.Clients[0].Scopes, "openid")
+	store := authorizationStore{call: func(context.Context, oauth.AuthorizationCommand) (oauth.AuthorizeResult, error) {
+		t.Fatal("uncomposed consent reached persistence")
+		return oauth.AuthorizeResult{}, nil
+	}}
+	service, err := oauth.NewService(config, oauth.Dependencies{Sessions: sessions, Store: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := coreAuthorization()
+	request.Prompt, request.Scopes = "consent", append(request.Scopes, "openid")
+	out, err := service.Authorize(context.Background(), oauth.AuthorizeRequest{TenantID: "tenant", Session: bearer, Request: request, Network: "192.0.2.1"})
+	if !errors.Is(err, oauth.ErrInvalidRequest) || out.Outcome != 0 || out.Code != (oauth.Token{}) || out.Continuation != (oauth.Token{}) {
+		t.Fatal("uncomposed service selected consent semantics", err)
 	}
 }
 
@@ -46,12 +70,12 @@ func uint32Pointer(value uint32) *uint32 { return &value }
 
 func FuzzOIDCAuthenticationQuery(f *testing.F) {
 	base := "response_type=code&client_id=public-client&redirect_uri=https%3A%2F%2Fclient.example%2Fcb&scope=openid&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&resource=https%3A%2F%2Fresource.example"
-	for _, suffix := range []string{"", "&prompt=login", "&max_age=0", "&max_age=4294967295", "&max_age=4294967296", "&prompt=none", "&max_age=0&max_age=1", "&max_age=%00"} {
+	for _, suffix := range []string{"", "&prompt=login", "&prompt=consent", "&prompt=consent+none", "&max_age=0", "&max_age=4294967295", "&max_age=4294967296", "&prompt=none", "&max_age=0&max_age=1", "&max_age=%00"} {
 		f.Add(base + suffix)
 	}
 	f.Fuzz(func(t *testing.T, query string) {
 		request, err := oauth.ParseAuthorizationQueryWithOIDC(query)
-		if err == nil && request.Prompt != "" && request.Prompt != "login" && request.Prompt != "none" {
+		if err == nil && request.Prompt != "" && request.Prompt != "login" && request.Prompt != "none" && request.Prompt != "consent" {
 			t.Fatal("unselected prompt admitted")
 		}
 	})
@@ -116,6 +140,9 @@ func TestOIDCAuthenticationCannotBeDowngradedByUnawareAdapter(t *testing.T) {
 		{"old-adapter-explicit-zero", "", uint32Pointer(0), oauth.OIDCAuthenticationFresh, oauth.FreshAuthenticationRequired, false, false, 0},
 		{"selected-login", "login", nil, oauth.OIDCAuthenticationFresh, oauth.FreshAuthenticationRequired, true, true, 0},
 		{"selected-positive-age", "", uint32Pointer(30), oauth.OIDCAuthenticationCurrent, oauth.ConsentRequired, true, true, 0},
+		{"selected-consent", "consent", nil, oauth.OIDCAuthenticationCurrent, oauth.ConsentRequired, true, true, 0},
+		{"old-adapter-consent", "consent", nil, oauth.OIDCAuthenticationCurrent, oauth.ConsentRequired, false, false, 0},
+		{"consent-cannot-skip-interaction", "consent", nil, oauth.OIDCAuthenticationCurrent, oauth.AuthorizationRedirect, true, false, 0},
 		{"late-positive-age", "", uint32Pointer(30), oauth.OIDCAuthenticationCurrent, oauth.ConsentRequired, true, false, 2 * time.Second},
 		{"historical-metadata", "login", nil, oauth.OIDCAuthenticationFresh, oauth.AuthorizationHistorical, false, true, 0},
 	} {
@@ -145,6 +172,9 @@ func TestOIDCAuthenticationCannotBeDowngradedByUnawareAdapter(t *testing.T) {
 				if tc.outcome != oauth.AuthorizationHistorical {
 					out.Continuation, _ = oauth.NewToken()
 					out.ExpiresAt = now.Add(time.Minute)
+					if tc.outcome == oauth.AuthorizationRedirect {
+						out.Code, out.Continuation = out.Continuation, oauth.Token{}
+					}
 				}
 				return out, nil
 			}}
@@ -167,6 +197,9 @@ func TestOIDCAuthenticationCannotBeDowngradedByUnawareAdapter(t *testing.T) {
 				}
 				if _, err := out.Continuation.Reveal(); err == nil {
 					t.Fatal("downgraded adapter delivered a policy-free continuation")
+				}
+				if _, err := out.Code.Reveal(); err == nil {
+					t.Fatal("downgraded adapter delivered a code before requested consent")
 				}
 			}
 		})

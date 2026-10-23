@@ -80,6 +80,11 @@ func (call *oidcAuthorizationCall) check(out AuthorizeResult, request Authorizat
 	if call.mode == OIDCAuthenticationSilent && out.Outcome != AuthorizationRedirect {
 		return ErrUnavailable // No interaction can be substituted for silent policy.
 	}
+	// OIDC Core1.0 errata2 §3.1.2.1 requires consent for this request, not
+	// cached approval. An older/custom Store cannot skip the protected interaction.
+	if initial && request.Prompt == "consent" && out.Outcome != ConsentRequired {
+		return ErrUnavailable
+	}
 	if out.Outcome != FreshAuthenticationRequired && !call.until.IsZero() && !now.Before(call.until) {
 		return ErrLoginRequired
 	}

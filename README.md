@@ -33,6 +33,8 @@ replacement authentication engine.
   consent interaction, never a code before consent. Explicitly selected OIDC
   `prompt=none` can reuse an original unexpired approval for a fresh code without
   an interaction; it cannot create or renew consent.
+  Exact `prompt=consent` forces a new protected approval despite reusable consent;
+  it does not itself force new authentication or renew original deadlines.
 - `Service.Continue` checks the exact original browser, synchronizer, issuer
   origin and non-expanding scopes before a one-use code response or denial.
 - `Service.Token` exchanges an exact client/redirect/S256 code or rotates a

@@ -427,7 +427,7 @@ func (s *Service) client(id string) (Client, error) {
 func (s *Service) validateAuthorization(ctx context.Context, r AuthorizationRequest) (AuthorizationRequest, Client, error) {
 	r = r.snapshot()
 	c, err := s.currentClient(ctx, r.ClientID)
-	if err != nil || !slices.Contains(c.Redirects, r.RedirectURI) || !opaque32(r.CodeChallenge) || r.Resource != c.Resource || !optionalVisible(r.State, 1024) || !optionalVisible(r.Nonce, 256) || r.Prompt != "" && r.Prompt != "login" && r.Prompt != "none" {
+	if err != nil || !slices.Contains(c.Redirects, r.RedirectURI) || !opaque32(r.CodeChallenge) || r.Resource != c.Resource || !optionalVisible(r.State, 1024) || !optionalVisible(r.Nonce, 256) || r.Prompt != "" && r.Prompt != "login" && r.Prompt != "none" && r.Prompt != "consent" {
 		return AuthorizationRequest{}, Client{}, ErrInvalidRequest
 	}
 	scopes, err := validatedScopes(r.Scopes)

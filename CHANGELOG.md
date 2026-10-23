@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Select exact OIDC `prompt=consent` to require a new protected approval despite
+  reusable consent, while retaining current-session/maximum-age policy. Fail
+  closed when custom adapters skip the initial interaction; denial and unknown
+  recovery never disclose code/token material. Use matching child/native versions.
+
 - Select OIDC `prompt=none` with typed login/consent-required redirects and no
   interactive fallback. Matching native bounded explicit approval is required;
   silent issuance preserves original authority deadlines and metadata-only

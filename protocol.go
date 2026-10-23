@@ -43,7 +43,7 @@ type AuthorizationRequest struct {
 	// explicitly composed OIDC extension may authorize its semantics.
 	Nonce string `json:",omitempty"`
 	// Prompt preserves absence as empty. The selected extension profile accepts
-	// exactly login or none, never empty-present, duplicates or combinations.
+	// exactly login, none or consent, never empty-present, duplicates or combinations.
 	Prompt string `json:",omitempty"`
 	// MaxAge is optional elapsed authentication age in uint32 seconds; nil is
 	// absent and a nonnil zero requires real fresh login (OIDC Core3.1.2.1).
@@ -192,7 +192,7 @@ func parseAuthorizationQuery(raw string, oidc bool) (AuthorizationRequest, error
 		r.Nonce = values.Get("nonce")
 	}
 	if hasField(values, "prompt") {
-		if values.Get("prompt") != "login" && values.Get("prompt") != "none" {
+		if values.Get("prompt") != "login" && values.Get("prompt") != "none" && values.Get("prompt") != "consent" {
 			return AuthorizationRequest{}, ErrInvalidRequest
 		}
 		r.Prompt = values.Get("prompt")

@@ -150,9 +150,9 @@ func (s *Service) selected(scopes []string) bool {
 }
 
 // ValidateAuthorization admits only the code/S256 request already selected by
-// core and genuine session custody. It projects selected login/none/max_age policy,
-// but never creates authentication, consent or a native continuation. Other
-// prompt variants and identity-claim scopes are unavailable.
+// core and genuine session custody. It projects selected login/none/consent and
+// max_age policy, but never creates authentication, consent or a continuation.
+// Unselected prompt variants and identity-claim scopes are unavailable.
 func (s *Service) ValidateAuthorization(ctx context.Context, in oauth.OIDCAuthorizationInput) (oauth.OIDCAuthorizationProjection, error) {
 	ctx, stop, err := s.bounded(ctx)
 	if err != nil {
@@ -176,7 +176,7 @@ func (s *Service) ValidateAuthorization(ctx context.Context, in oauth.OIDCAuthor
 	}
 	out := oauth.OIDCAuthorizationProjection{Accepted: true}
 	if in.Request.Prompt != "" || in.Request.MaxAge != nil {
-		if in.Request.Prompt != "" && in.Request.Prompt != "login" && in.Request.Prompt != "none" {
+		if in.Request.Prompt != "" && in.Request.Prompt != "login" && in.Request.Prompt != "none" && in.Request.Prompt != "consent" {
 			return oauth.OIDCAuthorizationProjection{}, oauth.ErrInvalidRequest
 		}
 		bindings, err := in.Session.Session.Bindings()

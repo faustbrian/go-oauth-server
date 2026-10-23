@@ -6,7 +6,7 @@ require (
 	github.com/faustbrian/go-authentication/v2 v2.0.2-0.20261015052822-d9f5132c7f68
 	github.com/faustbrian/go-identity v0.0.0-20261016003032-9785b1c5a551
 	github.com/faustbrian/go-identity/session v0.0.0-20261016125355-af740fb7fb76
-	github.com/faustbrian/go-oauth-server v0.0.0-20261021090141-9f0f023f86e5
+	github.com/faustbrian/go-oauth-server v0.0.0-20261023011714-dff2a904791a
 	github.com/faustbrian/go-secret-envelope/v2 v2.0.1
 )
 

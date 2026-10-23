@@ -20,6 +20,8 @@ github.com/faustbrian/go-jsonrpc v1.1.1 h1:vxUzoj5o2CvlXtQDRKbyb8aP9FXvE+j937jEW
 github.com/faustbrian/go-jsonrpc v1.1.1/go.mod h1:thOSBE3KGGNbPHY/OcreIcDPwusQ273v61n6TlmJdxE=
 github.com/faustbrian/go-oauth-server v0.0.0-20261021090141-9f0f023f86e5 h1:7e8M7kFPrZ4Y7JXVMZgNMzXS8vg/GuZpNDNTgZKDI1c=
 github.com/faustbrian/go-oauth-server v0.0.0-20261021090141-9f0f023f86e5/go.mod h1:lrXvMsoOYfeRBDLXNbsZy5+YTUhybwAcKILe4tSRKIU=
+github.com/faustbrian/go-oauth-server v0.0.0-20261023011714-dff2a904791a h1:LDOd6U4kN1MtAU3v6QmyD2kO36xbV18PCXVg2gMXlH4=
+github.com/faustbrian/go-oauth-server v0.0.0-20261023011714-dff2a904791a/go.mod h1:lrXvMsoOYfeRBDLXNbsZy5+YTUhybwAcKILe4tSRKIU=
 github.com/faustbrian/go-password/v2 v2.0.2-0.20261015050515-4eb0fefa60ff h1:8BIB469appqyn79T6j/sJQAS3dN6+budadfpPLwtqIg=
 github.com/faustbrian/go-password/v2 v2.0.2-0.20261015050515-4eb0fefa60ff/go.mod h1:Tqc83xc8RVAsi6JAW3dkKM1OFVos7cfayeNHBbWstsA=
 github.com/faustbrian/go-secret-envelope/v2 v2.0.1 h1:1GHj2WZhKZihdhlbsU12o7T5kaA9z7IOy/1RQGu3RhA=

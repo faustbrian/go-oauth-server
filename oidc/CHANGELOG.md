@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Select exact `prompt=consent` without conflating approval with fresh login.
+  Preserve original maximum-age policy through the existing native interaction;
+  prompt combinations and account selection remain unsupported.
+
 - Opt into consented phone UserInfo with canonical `phone_number` and Boolean
   `phone_number_verified:true` from actual verified primary custody. Prefer the
   owner's verified primary, otherwise lowest IdentifierID; omit pending/revoked

@@ -117,6 +117,13 @@ the native forward expiry history and `ConsentReuseTTL` explicitly before use.
 The child supplies authentication policy, never consent permission. Silent
 requests cannot be completed through `Continue` or combined with other prompts.
 
+Exact `prompt=consent` instead forces a new protected approval even when native
+approval is reusable. It keeps current genuine authentication unless `max_age`
+requires fresh login; authentication alone is not approval. Complete the existing
+native continuation with current session/CSRF custody. Denial issues no code or
+token and does not revoke prior consent. Use matching core/child/native versions;
+no additional schema or extension method is introduced.
+
 Other prompt variants,
 profile/address/offline scopes, logout, private session JWT exchange,
 shared-issuer access-JWT/delegation, HTTP/reference integration and complete

@@ -54,7 +54,7 @@ Registration version and authority epoch are deliberately separate. The public
 authorization baseline initializes only epoch1, so a domain-separated bounded
 digest of actual client ID/version selects each registration's authority subject.
 Canonical client ID/version remain explicit lineage fields. This permits a
-preactivation version7 registration without invented SQL or advancing epochs
+version7 registration created before activation, without invented SQL or advancing epochs
 in a loop. Consumers must not reproduce that internal derivation. Obtain the
 actual owner record instead:
 
@@ -64,7 +64,7 @@ if err != nil {
     return err
 }
 // In the existing authorized lifecycle transaction, with its required audit:
-_, err = authorizationpostgres.AdvanceAuthority(
+_, err = authority.AdvanceAuthority(
     ctx, tx, current.Scope, current.Version, maximumDuration,
 )
 ```

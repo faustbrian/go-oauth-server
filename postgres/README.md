@@ -318,6 +318,60 @@ Retain original configuration/keys and retire old instances on configured-secret
 changes as for web clients. Owning introspection reads workload epochs instead
 of human/session authority; its subject is the configured service account.
 
+## Optional workload access exchange
+
+The [finite restricted profile](../docs/workload-exchange.md) uses existing
+`Store.Token`/`NewService` and `Store.Recover`. Append
+`WorkloadExchangeMigrationSource` after `WorkloadMigrationSource` during an
+exclusive schema window. Existing rows remain intact and ordinary unselected
+services retain their history. Replace unaware accepting writers before
+selecting `Protocol.WorkloadExchange`; mixed or off-profile rollback is unsafe.
+
+Set `WorkloadExchangeClientNamespace` to a separate authorization namespace,
+different from `WorkloadAuthority.PolicyNamespace`. An authorized consumer
+lifecycle explicitly initializes each real public authorization `AuthorityScope`
+at `(tenant, namespace, client.ID)` to the registration's exact `client.Version`.
+Requests never create rows or adopt whatever current version happens to exist.
+`AdvanceAuthority` withdraws that client's roots/descendants **and new issuance
+from its unchanged registration**, without withdrawing another client sharing
+the service account. Reactivation needs explicit newer matching registration/
+secret adoption; old lineage never revives. Preactivation roots lacking the
+original client epoch cannot be adopted by selected exchange: reissue explicitly.
+
+Each root and immediate parent link refers to its stored `metadata_version`,
+not the mutable grant version. The forward migration records existing rows as
+known original metadata revision one, without asserting their past active state.
+This revision owns immutable token identity, purpose, payload, parent and expiry;
+legitimate native transitions never replace them. Mutable active/revoked state
+remains a separate actual primary read and protected fence for every ancestor.
+
+Every exchange/introspection checks actual current client/workload/directory and
+root/ancestor state. Missing, stale or unavailable required authority denies.
+Original source-observation provenance remains unchanged; a genuine subsequent
+primary read creates a separate bounded current observation, not a longer token
+expiry. No positive cache or invalidation message is introduced.
+
+Active sources remain reusable for independent exchanges. Zero trusted
+`TokenRequest.CommandID` creates a fresh command; an explicit original ID retries
+only the retained source/client/scope/target intent. No nonstandard form or header
+is required or accepted. Lost COMMIT acknowledgement, exact retry and
+`Store.Recover` reconcile that original command with source token and Basic
+client; changed intent conflicts. Metadata recovery never reveals the generated child. Child, required
+service audit, `oauth_access.exchanged.v1` lifecycle and native effect commit
+atomically. The source token and original grant are not consumed or widened.
+
+Compose any selected `ConsentExpiryMigrationSource` before the final exchange
+suffix. Existing populated parentless silent codes remain valid, and both silent
+and delegated workload issuance continue afterward. Loading consent-expiry
+history after exchange is rejected before database mutation; historical migration
+SQL and checksums are unchanged.
+
+The standard request adds `SubjectToken`, `SubjectTokenType`,
+`RequestedTokenType` and exclusive `Audience`/`Resource`, as required by the
+shared-issuer amendment over the historical three-grant planning row. API-key,
+actor, organization, human, private-session, JWT, device and HTTP/reference
+exchange variants remain unselected; this is not full M33/unit closure.
+
 ## Optional own-consent profile installation
 
 The separately selected [direct resource verification profile](../docs/selected-resource-profile.md)

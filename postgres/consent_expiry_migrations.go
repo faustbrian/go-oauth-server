@@ -38,6 +38,12 @@ func (s ConsentExpiryMigrationSource) Load(ctx context.Context) ([]migrations.Mi
 		return nil, identity.InvalidInputError{Field: "oauth_consent_expiry_migration"}
 	}
 	for _, step := range history {
+		// The published expiry SQL predates delegated workload children and
+		// restores its historical root predicate. Preserve those SQL/checksum
+		// bytes; compose selected expiry before the newer exchange suffix.
+		if step.Name() == "oauth_workload_exchange" {
+			return nil, identity.InvalidInputError{Field: "oauth_consent_expiry_migration_order"}
+		}
 		if step.Version() >= s.Version {
 			return nil, identity.InvalidInputError{Field: "oauth_consent_expiry_migration"}
 		}

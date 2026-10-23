@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Add selected workload-only RFC 8693 access exchange with durable bounded
+  root/parent lineage, non-expanding authority, independent live client epochs,
+  protected current-owner fences and metadata-only original-command recovery.
+  Append `WorkloadExchangeMigrationSource` after workload history, initialize a
+  distinct client authority namespace at each registration version and replace
+  unaware writers before activation. Preactivation roots cannot silently acquire
+  the new client epoch; issue new roots through the selected registration.
+  Preserve populated silent-code roots by composing selected consent-expiry
+  history before the final exchange suffix; later reverse ordering fails before
+  mutation. Reusable sources support independent commands, exact intent-bound
+  retries and metadata-only recovery of pre-COMMIT rollback after lease expiry.
+
 - Add optional native unbound device authorization over existing client,
   session, consent, grant and token owners, with atomic required effects and
   original-command metadata recovery. Select the device factory and append its

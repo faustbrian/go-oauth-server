@@ -154,7 +154,7 @@ func (p *phase) auditActions() []string {
 		return []string{"identity.oauth_server.update_client"}
 	case deleteConsent, narrowConsent:
 		return []string{"identity.oauth_server.revoke_consent"}
-	case createInteraction, createWorkload:
+	case createInteraction, createWorkload, exchangeWorkload:
 		return []string{"identity.oauth_server.authorize"}
 	case approveInteraction:
 		return []string{"identity.oauth_server.grant_consent", "identity.oauth_server.authorize"}
@@ -224,6 +224,9 @@ func (p *phase) lifecycle() kernel.LifecyclePlan {
 	case revokeAccess:
 		before = 0
 		event = "oauth_access.revoked.v1"
+	case exchangeWorkload:
+		before = 0
+		event = "oauth_access.exchanged.v1"
 	}
 	return kernel.LifecyclePlan{EventType: event, BeforeVersion: before, AfterVersion: before + 1}
 }
@@ -241,7 +244,7 @@ func (p *phase) subjectType() string {
 	if p.input.Transition == deleteConsent || p.input.Transition == narrowConsent {
 		return "oauth_consent"
 	}
-	if p.input.Transition == revokeAccess {
+	if p.input.Transition == revokeAccess || p.input.Transition == exchangeWorkload {
 		return "oauth_token"
 	}
 	return "oauth_grant"
@@ -291,7 +294,8 @@ func (p *phase) execute(ctx context.Context) (result identity.CommandResult, exe
 	if !handoff && !admission.Absent {
 		// A terminal result is historical metadata, never an instruction to
 		// decrypt/redeliver output or reconstruct today's aggregate as success.
-		if admission.Record.Outcome != identity.CommitOutcomeInProgress || p.input.Transition == endSession {
+		terminal := admission.Record.Outcome != identity.CommitOutcomeInProgress || p.input.Transition == endSession
+		if terminal && p.input.Transition != exchangeWorkload {
 			return p.coordinator.RecoverFeatureCommand(ctx, p.query(), p.caller())
 		}
 		wire, generation, err := p.coordinator.QueryFeaturePreparation(ctx, p.query(), p.caller(), p.registration(), p)
@@ -301,6 +305,28 @@ func (p *phase) execute(ctx context.Context) (result identity.CommandResult, exe
 		defer clear(wire)
 		if err := p.restore(ctx, generation, wire, true); err != nil {
 			return identity.CommandResult{}, err
+		}
+		if p.input.Transition == exchangeWorkload && !terminal {
+			// The coordinator can take over an expired pending lease before
+			// protected Work runs. An expired original exchange observation is
+			// recovery-only: do not re-enter issuing execution merely to discover
+			// the same expiry later inside Work. Metadata reconciliation retains
+			// its own existing generation/lease fence for proving noncommit.
+			now, err := p.store.introspectionTime(ctx)
+			if err != nil {
+				return identity.CommandResult{}, err
+			}
+			observation := p.input.ExchangeObservation
+			if observation == nil {
+				return identity.CommandResult{}, identity.ForbiddenError{}
+			}
+			terminal = !now.Before(observation.ValidUntil) || !p.store.now().Before(observation.ValidUntil)
+		}
+		if terminal {
+			// A command ID is correlation, not proof that today's scope/target
+			// was committed. Authenticate the original exact intent first.
+			p.output = preparedOutput{}
+			return p.coordinator.RecoverFeatureCommand(ctx, p.query(), p.caller())
 		}
 	}
 	if err := p.buildCommand(); err != nil {
@@ -312,6 +338,13 @@ func (p *phase) execute(ctx context.Context) (result identity.CommandResult, exe
 func (p *phase) buildCommand() error {
 	i := p.input
 	b := i.Binding
+	if i.Transition == exchangeWorkload {
+		if !p.store.validExchangeLineage(i.Exchange, i.Grant) || i.ExchangeObservation == nil || i.TargetKind != oauth.TokenAccess || i.Exchange.ParentID != i.TargetID {
+			return oauth.ErrInvalidRequest
+		}
+	} else if i.Exchange != nil || i.ExchangeObservation != nil {
+		return oauth.ErrInvalidRequest
+	}
 	if i.Schema != 1 || i.Configuration != p.store.identity || b.ValidateFor(p.operation(b.OperationID)) != nil || i.Grant.Version == math.MaxUint64 || i.Grant.ClientFingerprint != clientFingerprint(p.client) || i.Grant.ClientID != p.client.ID || i.Intent == ([32]byte{}) || i.CreatedAt.IsZero() || i.CreatedAt.Nanosecond()%1000 != 0 || !scopeSubset(i.Scopes, i.Grant.Scopes) {
 		return oauth.ErrInvalidRequest
 	}
@@ -565,7 +598,7 @@ func (p *phase) browserRequired() bool {
 	return p.input.ClientChange != nil || p.input.Transition == endSession || p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == denyInteraction || p.input.Transition == deleteConsent || p.input.Transition == narrowConsent || p.input.Transition == approveDevice || p.input.Transition == denyDevice
 }
 func (p *phase) issuing() bool {
-	return p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == exchangeCode || p.input.Transition == rotateRefresh || p.input.Transition == createWorkload || p.input.Transition == createDevice || p.input.Transition == approveDevice || p.input.Device != nil && p.input.Device.Condition == oauth.DeviceSucceeded
+	return p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == exchangeCode || p.input.Transition == rotateRefresh || p.input.Transition == createWorkload || p.input.Transition == exchangeWorkload || p.input.Transition == createDevice || p.input.Transition == approveDevice || p.input.Device != nil && p.input.Device.Condition == oauth.DeviceSucceeded
 }
 
 func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
@@ -727,7 +760,7 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 		return identity.UnavailableError{}
 	}
 	expectedVersion := g.Version
-	if final && p.applied && i.Transition != revokeAccess {
+	if final && p.applied && i.Transition != revokeAccess && i.Transition != exchangeWorkload {
 		expectedVersion++
 	}
 	if version != strconv.FormatUint(expectedVersion, 10) || clientVersion != strconv.FormatUint(g.ClientVersion, 10) || subtle.ConstantTimeCompare(fingerprint, g.ClientFingerprint[:]) != 1 || resource != g.Resource || !expires.Equal(g.ExpiresAt) {
@@ -765,6 +798,9 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 		return identity.ForbiddenError{}
 	}
 	if err := p.checkTarget(ctx, w, now, final); err != nil {
+		return err
+	}
+	if err := p.checkExchangeLineage(ctx, w, now); err != nil {
 		return err
 	}
 	return p.checkConsent(ctx, w, final)
@@ -969,7 +1005,7 @@ func (p *phase) GenerateFeaturePreparation(ctx context.Context, c identity.Comma
 		kinds = []oauth.TokenKind{oauth.TokenCode}
 	case exchangeCode, rotateRefresh:
 		kinds = []oauth.TokenKind{oauth.TokenAccess, oauth.TokenRefresh}
-	case createWorkload:
+	case createWorkload, exchangeWorkload:
 		kinds = []oauth.TokenKind{oauth.TokenAccess}
 	case pollDevice:
 		if i.Device != nil && i.Device.Condition == oauth.DeviceSucceeded {
@@ -1012,6 +1048,10 @@ func (p *phase) GenerateFeaturePreparation(ctx context.Context, c identity.Comma
 			}
 		case oauth.TokenAccess:
 			expires = minTime(expires, i.CreatedAt.Add(p.store.config.Protocol.AccessTTL))
+			if i.Transition == exchangeWorkload {
+				expires = minTime(expires, i.TargetExpires)
+				expires = minTime(expires, i.CreatedAt.Add(5*time.Minute))
+			}
 		}
 		out.Artifacts = append(out.Artifacts, generatedArtifact{ID: string(id), Kind: kind, Wire: wire, Digest: digest, ExpiresAt: expires, Transition: next, Replay: replay})
 	}
@@ -1123,8 +1163,12 @@ func (p *phase) restore(ctx context.Context, generation uint64, wire []byte, ini
 		// Recovery has no proposed consent/network intent. The owning
 		// preparation authenticates that original intent, but never authorizes
 		// execution or redelivery. Keep exact continuation/client/source scope.
-		transitionMatches = p.input.Transition == approveInteraction && (out.Input.Transition == approveInteraction || out.Input.Transition == denyInteraction) || p.input.Transition == endSession && out.Input.Transition == endSession
-		if p.input.Transition != endSession && (out.Input.Target != p.input.Target || out.Input.TargetID != p.input.TargetID || out.Input.TargetKind != oauth.TokenContinuation || !out.Input.TargetExpires.Equal(p.input.TargetExpires) || !sameJSON(out.Input.TargetPayload, p.input.TargetPayload)) {
+		transitionMatches = p.input.Transition == approveInteraction && (out.Input.Transition == approveInteraction || out.Input.Transition == denyInteraction) || p.input.Transition == endSession && out.Input.Transition == endSession || p.input.Transition == exchangeWorkload && out.Input.Transition == exchangeWorkload
+		targetKind := oauth.TokenContinuation
+		if p.input.Transition == exchangeWorkload {
+			targetKind = oauth.TokenAccess
+		}
+		if p.input.Transition != endSession && (out.Input.Target != p.input.Target || out.Input.TargetID != p.input.TargetID || out.Input.TargetKind != targetKind || !out.Input.TargetExpires.Equal(p.input.TargetExpires) || !sameJSON(out.Input.TargetPayload, p.input.TargetPayload)) {
 			return identity.ForbiddenError{}
 		}
 	}
@@ -1147,7 +1191,7 @@ func (p *phase) restore(ctx context.Context, generation uint64, wire []byte, ini
 	}
 	want := 0
 	switch out.Input.Transition {
-	case createInteraction, approveInteraction, createWorkload:
+	case createInteraction, approveInteraction, createWorkload, exchangeWorkload:
 		want = 1
 	case exchangeCode, rotateRefresh:
 		want = 2
@@ -1215,7 +1259,7 @@ func (p *phase) restore(ctx context.Context, generation uint64, wire []byte, ini
 		switch out.Input.Transition {
 		case approveInteraction:
 			expected = oauth.TokenCode
-		case createWorkload:
+		case createWorkload, exchangeWorkload:
 			expected = oauth.TokenAccess
 		case exchangeCode, rotateRefresh, pollDevice:
 			expected = oauth.TokenAccess
@@ -1332,6 +1376,12 @@ func (p *phase) checkArtifactExpiry(ctx context.Context, w kernel.Work) error {
 	}
 	if p.input.ClientAuthentication != nil && !p.input.ClientAuthentication.validAt(p.store.now(), now) {
 		return identity.ForbiddenError{}
+	}
+	if o := p.input.ExchangeObservation; o != nil {
+		local := p.store.now()
+		if o.ReadStartedAt.IsZero() || !o.ValidUntil.After(o.ReadStartedAt) || o.ValidUntil.After(o.ReadStartedAt.Add(20*time.Second)) || now.Before(o.ReadStartedAt) || local.Before(o.ReadStartedAt) || !now.Before(o.ValidUntil) || !local.Before(o.ValidUntil) {
+			return identity.ForbiddenError{}
+		}
 	}
 	if p.input.Authentication != nil && !p.input.Authentication.Until.IsZero() && !now.Before(p.input.Authentication.Until) {
 		return kernel.OAuthReauthenticationRequiredError{}

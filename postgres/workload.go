@@ -21,6 +21,8 @@ type WorkloadAuthorityConfig struct{ GlobalAuthorityID, PolicyNamespace string }
 type workloadSource struct {
 	ID, Platform, GlobalAuthorityID, PolicyNamespace   string
 	GlobalVersion, TenantVersion, AuthorizationVersion uint64
+	ClientPolicyNamespace                              string `json:",omitempty"`
+	ClientAuthorizationVersion                         uint64 `json:",omitempty"`
 }
 
 func workloadSelected(clients []oauth.Client) bool {
@@ -42,7 +44,7 @@ func webSelected(clients []oauth.Client) bool {
 
 func (s *Store) validWorkload(g grantRecord, client oauth.Client) bool {
 	w := g.Workload
-	return w != nil && client.Workload != nil && g.User == "" && len(g.Source) == 0 && g.Tenant == client.Workload.TenantID() && w.ID == client.Workload.ID() && w.Platform == client.Owner.PlatformID() && w.GlobalAuthorityID == s.config.WorkloadAuthority.GlobalAuthorityID && w.PolicyNamespace == s.config.WorkloadAuthority.PolicyNamespace && w.GlobalVersion > 0 && w.TenantVersion > 0 && w.AuthorizationVersion > 0 && !g.ExpiresAt.After(g.CreatedAt.Add(client.Workload.AccessTTL()))
+	return w != nil && client.Workload != nil && s.validExchangeClientSource(g, client) && g.User == "" && len(g.Source) == 0 && g.Tenant == client.Workload.TenantID() && w.ID == client.Workload.ID() && w.Platform == client.Owner.PlatformID() && w.GlobalAuthorityID == s.config.WorkloadAuthority.GlobalAuthorityID && w.PolicyNamespace == s.config.WorkloadAuthority.PolicyNamespace && w.GlobalVersion > 0 && w.TenantVersion > 0 && w.AuthorizationVersion > 0 && !g.ExpiresAt.After(g.CreatedAt.Add(client.Workload.AccessTTL()))
 }
 func workloadScope(g grantRecord) authority.AuthorityScope {
 	return authority.AuthorityScope{TenantID: authorization.TenantID(g.Tenant), PolicyNamespace: g.Workload.PolicyNamespace, SubjectID: authorization.SubjectID(g.Workload.ID)}
@@ -63,6 +65,17 @@ func (s *Store) workloadGrant(ctx context.Context, client oauth.Client, id ident
 		return grantRecord{}, workloadError(ctx, err)
 	}
 	g.Workload.AuthorizationVersion = current.Version
+	if s.config.Protocol.WorkloadExchange != nil {
+		g.Workload.ClientPolicyNamespace = s.config.WorkloadExchangeClientNamespace
+		g.Workload.ClientAuthorizationVersion = client.Version
+		current, err := s.policy.Get(ctx, exchangeClientScope(g))
+		if err != nil {
+			return grantRecord{}, workloadError(ctx, err)
+		}
+		if current.Version != client.Version {
+			return grantRecord{}, oauth.ErrAccessDenied
+		}
+	}
 	return g, nil
 }
 
@@ -116,6 +129,11 @@ func (p *phase) checkWorkload(ctx context.Context, w kernel.Work) error {
 	if err := authority.RequireAuthority(ctx, w, workloadScope(g), g.Workload.AuthorizationVersion, p.store.config.Protocol.MaximumDuration); err != nil {
 		return workloadError(ctx, err)
 	}
+	if g.Workload.ClientAuthorizationVersion != 0 {
+		if err := authority.RequireAuthority(ctx, w, exchangeClientScope(g), g.Workload.ClientAuthorizationVersion, p.store.config.Protocol.MaximumDuration); err != nil {
+			return workloadError(ctx, err)
+		}
+	}
 	return nil
 }
 
@@ -143,6 +161,15 @@ func (s *Store) workloadIntrospectionAuthority(ctx context.Context, g grantRecor
 	}
 	if !directory.Enabled || directory.GlobalVersion != g.Workload.GlobalVersion || directory.TenantVersion != g.Workload.TenantVersion || current.Version != g.Workload.AuthorizationVersion {
 		return time.Time{}, oauth.ErrInvalidGrant
+	}
+	if g.Workload.ClientAuthorizationVersion != 0 {
+		current, err := s.policy.Get(ctx, exchangeClientScope(g))
+		if err != nil {
+			return time.Time{}, err
+		}
+		if current.Version != g.Workload.ClientAuthorizationVersion {
+			return time.Time{}, oauth.ErrInvalidGrant
+		}
 	}
 	return time.Time{}, nil
 }

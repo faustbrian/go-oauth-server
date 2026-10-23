@@ -52,6 +52,13 @@ type Config struct {
 	// WorkloadAuthority binds configured machine clients to existing primary
 	// directory and service-account authorization owners, never user substitutes.
 	WorkloadAuthority WorkloadAuthorityConfig
+	// WorkloadExchangeClientNamespace selects a distinct real authorization
+	// namespace keyed by tenant and client ID. Initialize its epoch to the
+	// immutable registration Version before selecting WorkloadExchange. Advance
+	// withdraws lineage AND new issuance from that unchanged registration.
+	// It must differ from WorkloadAuthority.PolicyNamespace. No request creates
+	// or adopts an authority row; absent/stale/unavailable authority denies.
+	WorkloadExchangeClientNamespace string
 	// ConsentManagement enables own-consent reads/withdrawal and mandatory
 	// consent-generation fences for every human token. Install the forward
 	// ConsentMigrationSource and retire all old/unselected serving instances
@@ -131,6 +138,18 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 			}
 		}
 	} else if c.WorkloadAuthority != (WorkloadAuthorityConfig{}) {
+		return nil, oauth.ErrInvalidRequest
+	}
+	if protocol.WorkloadExchange != nil {
+		if c.WorkloadExchangeClientNamespace == c.WorkloadAuthority.PolicyNamespace {
+			return nil, oauth.ErrInvalidRequest
+		}
+		for _, client := range protocol.Clients {
+			if client.Workload != nil && (authority.AuthorityScope{TenantID: authorization.TenantID(client.Workload.TenantID()), PolicyNamespace: c.WorkloadExchangeClientNamespace, SubjectID: authorization.SubjectID(client.ID)}).Validate() != nil {
+				return nil, oauth.ErrInvalidRequest
+			}
+		}
+	} else if c.WorkloadExchangeClientNamespace != "" {
 		return nil, oauth.ErrInvalidRequest
 	}
 	if c.ConsentManagement && !web {

@@ -22,6 +22,8 @@ import (
 // Initial configured-workload token issuance has no incoming bearer: Token must
 // be empty and the original command is authenticated against retained encrypted
 // preparation using the owning client's Basic custody and trusted configuration.
+// Workload exchange additionally requires its original source access token;
+// encrypted preparation binds the original independent command and exact intent.
 // No user, actor, scope, timestamp, redirect or command override is accepted.
 // Session, Token and ClientAuthentication are borrowed secret custody; never
 // log or serialize them.
@@ -206,15 +208,18 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 		if request.TenantID != "" || request.Session.Token() != "" {
 			return out, oauth.ErrInvalidRequest
 		}
-		if request.OperationID == "identity.oauth-server.token" && client.Workload != nil {
-			if request.Token != "" {
-				return out, oauth.ErrInvalidRequest
-			}
+		if request.OperationID == "identity.oauth-server.token" && client.Workload != nil && request.Token == "" {
 			p = &phase{store: s, client: client, input: phaseInput{Schema: 1, Configuration: s.identity, Transition: createWorkload, Grant: grantRecord{ID: string(request.CommandID), Tenant: client.Workload.TenantID(), Source: []identity.FeatureField{}, Workload: &workloadSource{ID: client.Workload.ID(), Platform: client.Owner.PlatformID(), GlobalAuthorityID: s.config.WorkloadAuthority.GlobalAuthorityID, PolicyNamespace: s.config.WorkloadAuthority.PolicyNamespace}}, Intent: s.intent("client_credentials", string(request.CommandID))}}
 			p.bind(request.CommandID, request.OperationID, string(request.CommandID))
 			break
 		}
 		kinds := []oauth.TokenKind{oauth.TokenCode, oauth.TokenRefresh}
+		if request.OperationID == "identity.oauth-server.token" && client.Workload != nil {
+			if s.config.Protocol.WorkloadExchange == nil {
+				return out, oauth.ErrInvalidRequest
+			}
+			kinds = []oauth.TokenKind{oauth.TokenAccess}
+		}
 		if request.OperationID == "identity.oauth-server.revoke" {
 			kinds = []oauth.TokenKind{oauth.TokenAccess, oauth.TokenRefresh}
 		}
@@ -223,6 +228,22 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 			return out, publicError(ctx, err, oauth.ErrAccessDenied)
 		}
 		transition := exchangeCode
+		if request.OperationID == "identity.oauth-server.token" && client.Workload != nil {
+			transition = exchangeWorkload
+			now, err := s.introspectionTime(ctx)
+			if err != nil {
+				return out, err
+			}
+			if !activeIntrospectionArtifact(target, now) {
+				return out, oauth.ErrAccessDenied
+			}
+			if _, err := s.workloadIntrospectionAuthority(ctx, target.Grant, client); err != nil {
+				return out, publicError(ctx, err, oauth.ErrAccessDenied)
+			}
+			if err := s.readExchangeLineage(ctx, target, now); err != nil {
+				return out, publicError(ctx, err, oauth.ErrAccessDenied)
+			}
+		}
 		if request.OperationID == "identity.oauth-server.revoke" {
 			if request.CommandID != target.Replay {
 				return out, oauth.ErrAccessDenied
@@ -231,12 +252,16 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 			if target.Kind == oauth.TokenAccess {
 				transition = revokeAccess
 			}
+		} else if transition == exchangeWorkload {
+			// The exact source/client binding and original intent are owned by
+			// encrypted coordinator preparation, not a source-lifetime command.
 		} else if request.CommandID == target.Replay {
 			transition = rejectReplay
 		} else if request.CommandID != target.Transition {
 			return out, oauth.ErrAccessDenied
 		}
 		p = s.targetPhase(target, client, transition, request.OperationID, request.CommandID, s.intent("recover"), "")
+		p.metadataRecovery = transition == exchangeWorkload
 	default:
 		return out, oauth.ErrInvalidRequest
 	}
@@ -253,7 +278,7 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 			return out, publicError(ctx, err, oauth.ErrAccessDenied)
 		}
 	}
-	if request.OperationID == "identity.oauth-server.authorize" || p.input.Transition == createWorkload || p.input.Transition == deleteConsent || p.input.Transition == narrowConsent || authenticationContinuation {
+	if request.OperationID == "identity.oauth-server.authorize" || p.input.Transition == createWorkload || p.input.Transition == exchangeWorkload || p.input.Transition == deleteConsent || p.input.Transition == narrowConsent || authenticationContinuation {
 		wire, generation, err := p.coordinator.QueryFeaturePreparation(ctx, p.query(), p.caller(), p.registration(), p)
 		if err != nil {
 			return out, publicError(ctx, err, oauth.ErrAccessDenied)

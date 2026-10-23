@@ -50,6 +50,7 @@ const (
 	approveDevice
 	denyDevice
 	pollDevice
+	exchangeWorkload
 )
 
 type grantRecord struct {
@@ -73,8 +74,9 @@ type artifactPayload struct {
 	Schema       uint32
 	Request      oauth.AuthorizationRequest
 	Scopes       []string
-	Subject      string `json:",omitempty"`
-	SigningKeyID string `json:",omitempty"`
+	Subject      string           `json:",omitempty"`
+	SigningKeyID string           `json:",omitempty"`
+	Exchange     *exchangeLineage `json:",omitempty"`
 }
 type artifactRecord struct {
 	ID                   string
@@ -86,6 +88,9 @@ type artifactRecord struct {
 	GrantState           string
 	Transition, Replay   identity.CommandID
 	Payload              artifactPayload
+	ParentID             string
+	ExchangeOnly         bool
+	MetadataVersion      uint64
 }
 type phaseInput struct {
 	Schema                      uint32
@@ -98,6 +103,7 @@ type phaseInput struct {
 	TargetKind                  oauth.TokenKind
 	TargetPayload               artifactPayload
 	TargetExpires               time.Time
+	TargetMetadataVersion       uint64 `json:",omitempty"`
 	Request                     oauth.AuthorizationRequest
 	Scopes                      []string
 	CreatedAt, ObservationUntil time.Time
@@ -115,6 +121,8 @@ type phaseInput struct {
 	SilentConsent               *silentConsent                `json:",omitempty"`
 	Logout                      *logoutIntent                 `json:",omitempty"`
 	Device                      *deviceMutation               `json:",omitempty"`
+	Exchange                    *exchangeLineage              `json:",omitempty"`
+	ExchangeObservation         *exchangeObservation          `json:",omitempty"`
 }
 
 type consentMutation struct {
@@ -458,6 +466,9 @@ func (s *Store) Token(ctx context.Context, c oauth.TokenCommand) (out oauth.Toke
 		return oauth.TokenResult{}, err
 	}
 	r := c.Request
+	if r.GrantType != oauth.TokenExchangeGrant && (r.SubjectToken != "" || r.SubjectTokenType != "" || r.RequestedTokenType != "" || r.Audience != "" || r.CommandID != "") {
+		return oauth.TokenResult{}, oauth.ErrInvalidRequest
+	}
 	proof, err := s.authenticateClientSnapshot(ctx, client, r.ClientAuthentication)
 	if err != nil {
 		return oauth.TokenResult{}, err
@@ -477,6 +488,10 @@ func (s *Store) Token(ctx context.Context, c oauth.TokenCommand) (out oauth.Toke
 	}()
 	if r.ClientID != client.ID || r.Resource != "" && r.Resource != client.Resource {
 		return oauth.TokenResult{}, oauth.ErrInvalidRequest
+	}
+	if r.GrantType == oauth.TokenExchangeGrant {
+		out, executing, err = s.exchangeWorkload(ctx, client, r, proof)
+		return out, err
 	}
 	if client.Workload != nil {
 		return s.issueWorkload(ctx, client, r)
@@ -651,9 +666,9 @@ func (s *Store) Revoke(ctx context.Context, c oauth.RevocationCommand) (out oaut
 
 func (s *Store) targetPhase(target artifactRecord, client oauth.Client, t transition, operation string, id identity.CommandID, intent [32]byte, network string) *phase {
 	p := &phase{store: s, client: client}
-	p.input = phaseInput{Schema: 1, Configuration: s.identity, Transition: t, Grant: target.Grant, Target: target.Digest, TargetID: target.ID, TargetKind: target.Kind, TargetPayload: target.Payload, TargetExpires: target.ExpiresAt, Request: target.Payload.Request, Scopes: slices.Clone(target.Payload.Scopes), CreatedAt: s.now(), Intent: intent, Network: network}
+	p.input = phaseInput{Schema: 1, Configuration: s.identity, Transition: t, Grant: target.Grant, Target: target.Digest, TargetID: target.ID, TargetKind: target.Kind, TargetPayload: target.Payload, TargetExpires: target.ExpiresAt, TargetMetadataVersion: target.MetadataVersion, Request: target.Payload.Request, Scopes: slices.Clone(target.Payload.Scopes), CreatedAt: s.now(), Intent: intent, Network: network}
 	p.bind(id, operation, target.Grant.ID)
-	if t == revokeAccess {
+	if t == revokeAccess || t == exchangeWorkload {
 		p.input.Binding.RecordID = target.ID
 	}
 	return p
@@ -709,7 +724,11 @@ func (s *Store) lookup(ctx context.Context, wire string, client oauth.Client, ki
 			if workloadSelected(s.config.Protocol.Clients) {
 				workloadColumn = "g.workload_source"
 			}
-			err = s.pool.Raw().QueryRow(ctx, `SELECT a.artifact_id,a.kind,a.created_at,a.expires_at,a.state,a.transition_command,a.replay_command,a.payload,g.grant_id,g.tenant_id,COALESCE(g.user_id,''),g.client_id,g.client_version::text,g.client_fingerprint,g.source_session,g.scopes,g.resource,g.created_at,g.expires_at,g.version::text,g.state,`+workloadColumn+` FROM `+s.schema+`.artifacts a JOIN `+s.schema+`.grants g USING(grant_id) WHERE a.digest_version=$1 AND a.digest=$2 AND a.kind=$3 AND a.client_id=$4`, digest.KeyVersion, digest.Sum[:], kind, client.ID).Scan(&artifact.ID, &artifact.Kind, &artifact.CreatedAt, &artifact.ExpiresAt, &artifact.State, &artifact.Transition, &artifact.Replay, &payload, &artifact.Grant.ID, &artifact.Grant.Tenant, &artifact.Grant.User, &artifact.Grant.ClientID, &clientVersion, &fingerprint, &source, &scopes, &artifact.Grant.Resource, &artifact.Grant.CreatedAt, &artifact.Grant.ExpiresAt, &grantVersion, &artifact.GrantState, &workload)
+			exchangeColumn := "false,0::bigint"
+			if s.config.Protocol.WorkloadExchange != nil {
+				exchangeColumn = "a.workload_exchange,a.metadata_version"
+			}
+			err = s.pool.Raw().QueryRow(ctx, `SELECT a.artifact_id,a.kind,a.created_at,a.expires_at,a.state,a.transition_command,a.replay_command,a.payload,g.grant_id,g.tenant_id,COALESCE(g.user_id,''),g.client_id,g.client_version::text,g.client_fingerprint,g.source_session,g.scopes,g.resource,g.created_at,g.expires_at,g.version::text,g.state,`+workloadColumn+`,COALESCE(a.parent_artifact_id,''),`+exchangeColumn+` FROM `+s.schema+`.artifacts a JOIN `+s.schema+`.grants g USING(grant_id) WHERE a.digest_version=$1 AND a.digest=$2 AND a.kind=$3 AND a.client_id=$4`, digest.KeyVersion, digest.Sum[:], kind, client.ID).Scan(&artifact.ID, &artifact.Kind, &artifact.CreatedAt, &artifact.ExpiresAt, &artifact.State, &artifact.Transition, &artifact.Replay, &payload, &artifact.Grant.ID, &artifact.Grant.Tenant, &artifact.Grant.User, &artifact.Grant.ClientID, &clientVersion, &fingerprint, &source, &scopes, &artifact.Grant.Resource, &artifact.Grant.CreatedAt, &artifact.Grant.ExpiresAt, &grantVersion, &artifact.GrantState, &workload, &artifact.ParentID, &artifact.ExchangeOnly, &artifact.MetadataVersion)
 			if errors.Is(err, pgx.ErrNoRows) {
 				continue
 			}
@@ -721,6 +740,9 @@ func (s *Store) lookup(ctx context.Context, wire string, client oauth.Client, ki
 				return artifactRecord{}, oauth.ErrUnavailable
 			}
 			copy(artifact.Grant.ClientFingerprint[:], fingerprint)
+			if (artifact.Payload.Exchange != nil) != artifact.ExchangeOnly || artifact.ExchangeOnly && s.config.Protocol.WorkloadExchange == nil {
+				return artifactRecord{}, oauth.ErrInvalidGrant
+			}
 			if s.managedID(client.ID) && artifact.Grant.Tenant != s.config.Protocol.ManagedClients.TenantID {
 				return artifactRecord{}, oauth.ErrInvalidGrant
 			}

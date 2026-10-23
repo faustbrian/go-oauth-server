@@ -42,8 +42,8 @@ database mutation. Configure a distinct native
 authority to its immutable registration version. Advancing that epoch withdraws
 both old lineage and new roots from the unchanged Basic registration. Adoption
 of a newer matching registration/secret is an explicit consumer lifecycle.
-Replace unaware accepting writers first. Preactivation roots lacking this epoch
-cannot acquire it through exchange: selected roots must be newly issued.
+Replace unaware accepting writers first. Roots issued before activation without
+this epoch cannot acquire it through exchange: selected roots must be newly issued.
 Existing unselected roots are not relabeled or copied into a new
 authorization engine. Root/ancestor access withdrawal, directory and workload
 authorization epochs remain the actual authorities. Each exchange/introspection

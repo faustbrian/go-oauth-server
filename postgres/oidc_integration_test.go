@@ -39,7 +39,7 @@ func oidcFixtureWithClock(t *testing.T, f *authenticatedPasswordFixture, childCl
 	return oidcFixtureWithLifecycle(t, f, childClock, nil)
 }
 
-func oidcFixtureWithLifecycle(t *testing.T, f *authenticatedPasswordFixture, childClock oauth.Clock, decorate func(oauth.SigningLifecycle) oauth.SigningLifecycle) (*oauth.Service, *op.Service, *oauth.SigningService, *oauthpostgres.Store, *ecdsa.PrivateKey) {
+func oidcFixtureWithLifecycle(t *testing.T, f *authenticatedPasswordFixture, childClock oauth.Clock, decorate func(oauth.SigningLifecycle) oauth.SigningLifecycle, installed ...migrations.Source) (*oauth.Service, *op.Service, *oauth.SigningService, *oauthpostgres.Store, *ecdsa.PrivateKey) {
 	t.Helper()
 	db := stdlib.OpenDB(*f.pool.Raw().Config().ConnConfig)
 	defer db.Close()
@@ -72,6 +72,9 @@ func oidcFixtureWithLifecycle(t *testing.T, f *authenticatedPasswordFixture, chi
 		}
 		source = oauthpostgres.EndSessionMigrationSource{Base: source, Schema: "oauth_store", Version: 7006}
 	}
+	if len(installed) > 0 {
+		source = installed[0]
+	}
 	runner, err := migrations.NewRunner(source, backend)
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +93,9 @@ func oidcFixtureWithLifecycle(t *testing.T, f *authenticatedPasswordFixture, chi
 	}
 	f.oauth.Protocol.OIDCScopes, _ = oauth.NewOIDCScopeCatalog(selectedScopes)
 	for i := range f.oauth.Protocol.Clients {
-		f.oauth.Protocol.Clients[i].Scopes = append(f.oauth.Protocol.Clients[i].Scopes, selectedScopes...)
+		if f.oauth.Protocol.Clients[i].Workload == nil {
+			f.oauth.Protocol.Clients[i].Scopes = append(f.oauth.Protocol.Clients[i].Scopes, selectedScopes...)
+		}
 	}
 	issuer := f.oauth.Protocol.Issuer.String()
 	f.oauth.Protocol.Discovery = oauth.DiscoveryConfig{Enabled: true, AuthorizationEndpoint: issuer + "/oauth2/authorize", TokenEndpoint: issuer + "/oauth2/token", RevocationEndpoint: issuer + "/oauth2/revoke"}

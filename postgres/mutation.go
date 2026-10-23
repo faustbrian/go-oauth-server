@@ -78,7 +78,7 @@ func (p *phase) mutateOAuth(ctx context.Context, w kernel.Work) error {
 		if n != 1 {
 			return identity.ConflictError{}
 		}
-	} else if i.Transition != revokeAccess {
+	} else if i.Transition != revokeAccess && i.Transition != exchangeWorkload {
 		state := "active"
 		if i.Transition == denyInteraction || i.Transition == rejectReplay || i.Transition == revokeFamily {
 			state = "revoked"
@@ -181,7 +181,7 @@ func (p *phase) mutateOAuth(ctx context.Context, w kernel.Work) error {
 			return err
 		}
 	}
-	payload, err := json.Marshal(artifactPayload{Schema: 1, Request: i.Request, Scopes: i.Scopes, Subject: p.output.Subject, SigningKeyID: p.output.SigningKeyID})
+	payload, err := json.Marshal(artifactPayload{Schema: 1, Request: i.Request, Scopes: i.Scopes, Subject: p.output.Subject, SigningKeyID: p.output.SigningKeyID, Exchange: i.Exchange})
 	if err != nil {
 		return identity.UnavailableError{}
 	}
@@ -197,6 +197,11 @@ func (p *phase) mutateOAuth(ctx context.Context, w kernel.Work) error {
 			columns = ",workload_only"
 			values = ",$14"
 			args = append(args, g.Workload != nil)
+		}
+		if i.Transition == exchangeWorkload {
+			columns += ",workload_exchange"
+			values += ",$" + strconv.Itoa(len(args)+1)
+			args = append(args, true)
 		}
 		if i.SilentConsent != nil {
 			// A silent code is a genuine grant root, not a fabricated consumed
@@ -311,7 +316,7 @@ func (p *phase) recoverOAuthParticipant(ctx context.Context, w kernel.RecoveryWo
 
 func oauthLifecycle(event string) bool {
 	switch event {
-	case "session.revoked.v1", "grant.created.v1", "grant.authorized.v1", "grant.scope_changed.v1", "grant.code_exchanged.v1", "grant.refresh_rotated.v1", "grant.revoked.v1", "oauth_access.revoked.v1", "consent.revoked.v1", "consent.scope_changed.v1", "oauth_client.created.v1", "oauth_client.revoked.v1", "oauth_client.secret_rotated.v1", "oauth_client.configuration_changed.v1":
+	case "session.revoked.v1", "grant.created.v1", "grant.authorized.v1", "grant.scope_changed.v1", "grant.code_exchanged.v1", "grant.refresh_rotated.v1", "grant.revoked.v1", "oauth_access.revoked.v1", "oauth_access.exchanged.v1", "consent.revoked.v1", "consent.scope_changed.v1", "oauth_client.created.v1", "oauth_client.revoked.v1", "oauth_client.secret_rotated.v1", "oauth_client.configuration_changed.v1":
 		return true
 	default:
 		return false

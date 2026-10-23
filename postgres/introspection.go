@@ -78,6 +78,9 @@ func (s *Store) Introspect(ctx context.Context, c oauth.IntrospectionCommand) (o
 	var credentialExpiry time.Time
 	if target.Grant.Workload != nil {
 		credentialExpiry, err = s.workloadIntrospectionAuthority(ctx, target.Grant, client)
+		if err == nil && s.config.Protocol.WorkloadExchange != nil {
+			err = s.readExchangeLineage(ctx, target, now)
+		}
 	} else {
 		credentialExpiry, err = s.introspectionAuthority(ctx, target.Grant, now)
 	}
@@ -107,6 +110,24 @@ func (s *Store) Introspect(ctx context.Context, c oauth.IntrospectionCommand) (o
 	}
 	if !activeIntrospectionArtifact(current, now) || !sameJSON(current, target) || !credentialExpiry.IsZero() && !now.Before(credentialExpiry) {
 		return out, nil
+	}
+	if target.Grant.Workload != nil && s.config.Protocol.WorkloadExchange != nil {
+		if _, err := s.workloadIntrospectionAuthority(ctx, target.Grant, client); err != nil {
+			return out, introspectionError(ctx, err)
+		}
+		if err := s.readExchangeLineage(ctx, target, now); err != nil {
+			return out, introspectionError(ctx, err)
+		}
+		now, err = s.introspectionTime(ctx)
+		if err != nil {
+			return out, err
+		}
+		if !activeIntrospectionArtifact(target, now) {
+			return out, nil
+		}
+		if finished := s.now(); finished.Before(start) || !finished.Before(start.Add(20*time.Second)) {
+			return out, oauth.ErrUnavailable
+		}
 	}
 	subject := string(target.Grant.User)
 	if target.Grant.Workload != nil {

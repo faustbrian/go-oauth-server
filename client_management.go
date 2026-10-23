@@ -33,6 +33,9 @@ type ManagedClientPolicy struct {
 	// PostLogoutRedirects is an independent exact ceiling, never inferred from Redirects.
 	PostLogoutRedirects []string
 	Scopes              ScopeCatalog
+	// DeviceAuthorization is an explicit ceiling for newly managed device
+	// registrations; false preserves the existing browser-only namespace.
+	DeviceAuthorization bool
 }
 
 func (p ManagedClientPolicy) validated(c Config) (ManagedClientPolicy, error) {
@@ -80,6 +83,7 @@ type ClientManagementRequest struct {
 	ClientID            string
 	Version             uint64
 	Public              bool
+	DeviceAuthorization bool
 	Redirects, Scopes   []string
 	PostLogoutRedirects []string
 }
@@ -215,13 +219,16 @@ func ValidateClientManagementRequest(r ClientManagementRequest, remove bool, p M
 		return ClientManagementRequest{}, ErrInvalidRequest
 	}
 	if remove {
-		if !strings.HasPrefix(r.ClientID, ManagedClientPrefix) || !identifier(r.ClientID) || r.Version == 0 || r.Version == ^uint64(0) || len(r.Redirects) != 0 || len(r.Scopes) != 0 || len(r.PostLogoutRedirects) != 0 {
+		if !strings.HasPrefix(r.ClientID, ManagedClientPrefix) || !identifier(r.ClientID) || r.Version == 0 || r.Version == ^uint64(0) || len(r.Redirects) != 0 || len(r.Scopes) != 0 || len(r.PostLogoutRedirects) != 0 || r.DeviceAuthorization {
 			return ClientManagementRequest{}, ErrInvalidRequest
 		}
 		return r, nil
 	}
 	if r.ClientID != "" || r.Version != 0 {
 		return ClientManagementRequest{}, ErrInvalidRequest
+	}
+	if r.DeviceAuthorization && !p.DeviceAuthorization {
+		return ClientManagementRequest{}, ErrAccessDenied
 	}
 	redirects, err := NewRedirectPolicy(r.Redirects)
 	if err != nil {
@@ -262,7 +269,7 @@ func (s *Service) currentClient(ctx context.Context, id string) (Client, error) 
 		return Client{}, err
 	}
 	c, err = ValidateClient(c)
-	if err != nil || c.ID != id || c.Owner != s.config.ManagedClients.Owner || c.Public || c.Workload != nil || c.SubjectRegistration != nil || c.Resource != s.config.Resource || !scopeSubset(c.Scopes, s.config.ManagedClients.Scopes.values) {
+	if err != nil || c.ID != id || c.Owner != s.config.ManagedClients.Owner || c.Public || c.Workload != nil || c.SubjectRegistration != nil || c.Resource != s.config.Resource || !scopeSubset(c.Scopes, s.config.ManagedClients.Scopes.values) || c.DeviceAuthorization && !s.config.ManagedClients.DeviceAuthorization {
 		return Client{}, ErrAccessDenied
 	}
 	for _, redirect := range c.Redirects {

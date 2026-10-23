@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add explicit zero-default device-authorization client permission, managed
+  creation ceiling and optional native device projections for the separately
+  composed RFC 8628 child. Existing mandatory Store methods and legacy default
+  registration fingerprints remain unchanged; adopt matching child/native
+  versions only when selecting this profile.
+
 - Add optional native RP-initiated logout with separately registered exact
   post-logout redirects, read-only retained signing-key verification and closed
   metadata-only unknown/history results. Only the genuine issued hint's exact

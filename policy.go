@@ -93,7 +93,11 @@ type Client struct {
 	Owner                              Owner
 	Version                            uint64
 	Public                             bool
-	Redirects, Scopes                  []string
+	// DeviceAuthorization explicitly permits RFC8628 for this registered human
+	// client. Zero preserves browser-only permission. The optional device child
+	// and native composition must still be selected; this is not authentication.
+	DeviceAuthorization bool `json:",omitempty"`
+	Redirects, Scopes   []string
 	// PostLogoutRedirects independently registers exact RP logout targets.
 	// Empty selects local-only logout, never an authorization-redirect fallback.
 	PostLogoutRedirects []string `json:",omitempty"`
@@ -116,7 +120,7 @@ func ValidateClient(input Client) (Client, error) {
 	var redirects RedirectPolicy
 	var err error
 	if input.Workload != nil {
-		if input.Public || !input.Workload.valid() || len(input.Redirects) != 0 {
+		if input.Public || !input.Workload.valid() || len(input.Redirects) != 0 || input.DeviceAuthorization {
 			return Client{}, ErrInvalidRequest
 		}
 	} else {

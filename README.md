@@ -6,6 +6,10 @@ single-factor user sessions, plus explicitly configured workload client-credenti
 This is not a complete OAuth/OIDC provider or a
 stable released API.
 
+The optional [restricted workload exchange profile](docs/workload-exchange.md)
+uses the standard RFC 8693 grant at `Service.Token`. It is distinct from private
+session exchange and does not enable customer, API-key or organization delegation.
+
 The optional [OIDC child](oidc/README.md) selects public or registered pairwise
 subjects (single-host or validated HTTPS sector URI) for ES256 code flow
 through the same native password-session/consent authority. Its

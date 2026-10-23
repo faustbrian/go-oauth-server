@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add opt-in restricted RFC 8693 exchange for an owning Basic workload client,
+  narrowing its original or delegated opaque access token without refresh,
+  actor overrides or customer delegation. Native adoption requires matching
+  forward lineage history; other exchange source profiles remain unselected.
+  Sources remain reusable; optional trusted command metadata selects exact
+  intent-bound metadata-only retries without adding a wire-protocol parameter.
+
 - Add explicit zero-default device-authorization client permission, managed
   creation ceiling and optional native device projections for the separately
   composed RFC 8628 child. Existing mandatory Store methods and legacy default

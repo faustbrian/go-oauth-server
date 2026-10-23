@@ -64,6 +64,8 @@ type Config struct {
 	// confidential clients inspecting only their own issued opaque tokens.
 	// Merely configuring a confidential client never enables this capability.
 	OwningClientIntrospection bool
+	// WorkloadExchange is an explicit opt-in; nil preserves all existing grants.
+	WorkloadExchange *WorkloadExchangePolicy
 	// Discovery explicitly selects OAuth authorization-server metadata using
 	// trusted endpoint locations. Zero preserves the unadvertised legacy profile.
 	Discovery                                                        DiscoveryConfig
@@ -128,6 +130,13 @@ func (c Config) Validated() (Config, error) {
 		c.ManagedClients = &p
 	}
 	c.ClientSecrets = slices.Clone(c.ClientSecrets)
+	if c.WorkloadExchange != nil {
+		owned, err := c.WorkloadExchange.validated(c)
+		if err != nil {
+			return Config{}, err
+		}
+		c.WorkloadExchange = &owned
+	}
 	c.Scopes.values = slices.Clone(c.Scopes.values)
 	c.OIDCScopes.values = slices.Clone(c.OIDCScopes.values)
 	if err := validateDiscovery(c); err != nil {
@@ -359,6 +368,9 @@ type TokenResult struct {
 	ExpiresAt                 time.Time
 	Resource                  string
 	Scopes                    []string
+	// IssuedTokenType is RFC8693's required output purpose for standard exchange
+	// only. It is absent on ordinary issuance and on metadata-only recovery.
+	IssuedTokenType string
 }
 
 // RevokeRequest borrows a protocol token for client-bound RFC7009 revocation.
@@ -666,10 +678,26 @@ func (s *Service) Token(ctx context.Context, request TokenRequest) (out TokenRes
 	if request.Resource != "" && request.Resource != client.Resource {
 		return out, ErrInvalidRequest
 	}
-	if client.Workload != nil && request.GrantType != ClientCredentialsGrant || client.Workload == nil && request.GrantType == ClientCredentialsGrant {
+	if request.GrantType != TokenExchangeGrant && exchangeFieldsPresent(request) {
+		return out, ErrInvalidRequest
+	}
+	if client.Workload != nil && request.GrantType != ClientCredentialsGrant && request.GrantType != TokenExchangeGrant || client.Workload == nil && (request.GrantType == ClientCredentialsGrant || request.GrantType == TokenExchangeGrant) {
 		return out, ErrUnsupportedGrant
 	}
 	switch request.GrantType {
+	case TokenExchangeGrant:
+		if s.config.WorkloadExchange == nil {
+			return out, ErrUnsupportedGrant
+		}
+		if !validExchangeRequest(request, client) {
+			return out, ErrInvalidRequest
+		}
+		if request.Scopes != nil {
+			request.Scopes, err = validatedScopes(request.Scopes)
+			if err != nil || !scopeSubset(request.Scopes, client.Scopes) {
+				return out, ErrInvalidScope
+			}
+		}
 	case AuthorizationCodeGrant:
 		if !opaque32(request.Code) || !slices.Contains(client.Redirects, request.RedirectURI) || request.RefreshToken != "" || request.Scopes != nil {
 			return out, ErrInvalidRequest
@@ -736,6 +764,9 @@ func (s *Service) Token(ctx context.Context, request TokenRequest) (out TokenRes
 		return TokenResult{Outcome: identity.CommitOutcomeCommitted, CommandID: out.CommandID}, ErrUnavailable
 	}
 	out.Scopes = scopes
+	if request.GrantType == TokenExchangeGrant && out.IssuedTokenType != AccessTokenType || request.GrantType != TokenExchangeGrant && out.IssuedTokenType != "" {
+		return TokenResult{Outcome: identity.CommitOutcomeCommitted, CommandID: out.CommandID}, ErrUnavailable
+	}
 	if out.IDToken.state != nil && (request.GrantType != AuthorizationCodeGrant || !hasExtensionScope(scopes) || nilDependency(s.deps.OIDC)) {
 		return TokenResult{Outcome: identity.CommitOutcomeCommitted, CommandID: out.CommandID}, ErrUnavailable
 	}

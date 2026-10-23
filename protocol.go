@@ -13,6 +13,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	identity "github.com/faustbrian/go-identity"
 )
 
 var (
@@ -30,7 +32,12 @@ const (
 	AuthorizationCodeGrant GrantType = "authorization_code"
 	RefreshTokenGrant      GrantType = "refresh_token"
 	ClientCredentialsGrant GrantType = "client_credentials"
+	// TokenExchangeGrant is RFC8693, distinct from the private session grant.
+	TokenExchangeGrant GrantType = "urn:ietf:params:oauth:grant-type:token-exchange"
 )
+
+// AccessTokenType is the RFC8693 access-token input/output purpose identifier.
+const AccessTokenType = "urn:ietf:params:oauth:token-type:access_token"
 
 // AuthorizationRequest contains a bounded code/S256 OAuth-only request. It
 // conveys no validated redirect, client, subject or consent authority. Scopes
@@ -65,19 +72,26 @@ func (AuthorizationRequest) Format(s fmt.State, _ rune) {
 	_, _ = io.WriteString(s, "oauthserver.AuthorizationRequest(redacted)")
 }
 
-// TokenRequest contains exactly one selected code/refresh grant variant.
-// Code, refresh token, verifier and Basic credential remain secret caller custody;
+// TokenRequest contains exactly one explicitly selected grant variant.
+// Code, subject/refresh token, verifier and Basic credential remain caller custody;
 // transport must never log or serialize this request. Parsing does not validate
 // client status, code ownership, PKCE, replay, current authority or expiry.
 type TokenRequest struct {
 	GrantType                                 GrantType
 	ClientID, Code, RedirectURI, CodeVerifier string
 	RefreshToken, Resource                    string
-	Scopes                                    []string
-	ClientAuthentication                      ClientAuthentication
+	// Exchange fields are accepted only for the explicitly selected workload
+	// profile. Audience and Resource are mutually exclusive exact target selectors.
+	SubjectToken, SubjectTokenType, RequestedTokenType, Audience string
+	Scopes                                                       []string
+	ClientAuthentication                                         ClientAuthentication
 	// Network is trusted transport attribution supplied after parsing. It is
 	// never accepted from the OAuth form and grants no network trust by itself.
 	Network string
+	// CommandID is trusted native exchange retry metadata, never a form/header
+	// field. Zero requests a distinct exchange; retain the returned ID to retry
+	// that exact intent without redelivering a credential. Other grants reject it.
+	CommandID identity.CommandID
 }
 
 // Format redacts every credential channel for all formatting verbs.
@@ -224,11 +238,12 @@ func parseAuthorizationQuery(raw string, oidc bool) (AuthorizationRequest, error
 // ParseTokenForm discriminates a bounded form before credential use. This
 // entrypoint selects public none forms; use ParseTokenFormWithClientAuthentication
 // for exclusive confidential Basic headers. Body secret/assertion channels,
-// client credentials, standard exchange and private session exchange are not
-// advertised or accepted. Scope omission on refresh preserves grant authority;
+// client credentials and standard exchange require that authenticated parser;
+// this public-none parser rejects both. Private session exchange is unselected.
+// Scope omission on refresh preserves grant authority;
 // code requests must not supply scope (selected TRANSACTION/API contract).
 func ParseTokenForm(raw string) (TokenRequest, error) {
-	values, err := parseFields(raw, []string{"grant_type", "client_id", "code", "redirect_uri", "code_verifier", "refresh_token", "scope", "resource"})
+	values, err := parseFields(raw, []string{"grant_type", "client_id", "code", "redirect_uri", "code_verifier", "refresh_token", "scope", "resource", "subject_token", "subject_token_type", "requested_token_type", "audience"})
 	if err != nil {
 		return TokenRequest{}, ErrInvalidRequest
 	}
@@ -243,7 +258,7 @@ func ParseTokenFormWithClientAuthentication(raw string, authorization []string) 
 	if len(authorization) == 0 {
 		return ParseTokenForm(raw)
 	}
-	values, err := parseFields(raw, []string{"grant_type", "client_id", "code", "redirect_uri", "code_verifier", "refresh_token", "scope", "resource"})
+	values, err := parseFields(raw, []string{"grant_type", "client_id", "code", "redirect_uri", "code_verifier", "refresh_token", "scope", "resource", "subject_token", "subject_token_type", "requested_token_type", "audience"})
 	if err != nil || hasField(values, "client_id") {
 		return TokenRequest{}, ErrInvalidRequest
 	}
@@ -261,11 +276,35 @@ func ParseTokenFormWithClientAuthentication(raw string, authorization []string) 
 
 func parseTokenValues(values url.Values, requireClient bool) (TokenRequest, error) {
 	r := TokenRequest{GrantType: GrantType(values.Get("grant_type")), ClientID: values.Get("client_id"), Resource: values.Get("resource")}
+	if r.GrantType != TokenExchangeGrant {
+		for _, name := range []string{"subject_token", "subject_token_type", "requested_token_type", "audience"} {
+			if hasField(values, name) {
+				return TokenRequest{}, ErrInvalidRequest
+			}
+		}
+	}
 	if requireClient && !visible(r.ClientID, 128) || !visible(string(r.GrantType), 128) || r.Resource != "" && !validOrigin(r.Resource) {
 		return TokenRequest{}, ErrInvalidRequest
 	}
 	var err error
 	switch r.GrantType {
+	case TokenExchangeGrant:
+		if requireClient {
+			return TokenRequest{}, ErrUnsupportedGrant
+		}
+		if hasField(values, "code") || hasField(values, "redirect_uri") || hasField(values, "code_verifier") || hasField(values, "refresh_token") || hasField(values, "resource") == hasField(values, "audience") {
+			return TokenRequest{}, ErrInvalidRequest
+		}
+		r.SubjectToken, r.SubjectTokenType, r.RequestedTokenType, r.Audience = values.Get("subject_token"), values.Get("subject_token_type"), values.Get("requested_token_type"), values.Get("audience")
+		if !opaque32(r.SubjectToken) || r.SubjectTokenType != AccessTokenType || hasField(values, "requested_token_type") && r.RequestedTokenType != AccessTokenType || r.Audience != "" && !validOrigin(r.Audience) || r.Resource == "" && r.Audience == "" {
+			return TokenRequest{}, ErrInvalidRequest
+		}
+		if hasField(values, "scope") {
+			r.Scopes, err = parseScopes(values.Get("scope"))
+			if err != nil {
+				return TokenRequest{}, ErrInvalidRequest
+			}
+		}
 	case AuthorizationCodeGrant:
 		if hasField(values, "refresh_token") || hasField(values, "scope") {
 			return TokenRequest{}, ErrInvalidRequest

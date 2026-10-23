@@ -12,7 +12,10 @@ import (
 	oauth "github.com/faustbrian/go-oauth-server"
 )
 
-type clientReplacement struct{ Redirects, Scopes []string }
+type clientReplacement struct {
+	Redirects, Scopes   []string
+	PostLogoutRedirects []string `json:",omitempty"`
+}
 
 // Original encrypted v1 preparation omitted SecretVersion because registration
 // and digest generation were coupled. Its original client version remains the
@@ -31,6 +34,7 @@ func (s *Store) updatedClient(c oauth.Client, r *clientReplacement) (oauth.Clien
 	}
 	c.Version++
 	c.Redirects, c.Scopes = slices.Clone(r.Redirects), slices.Clone(r.Scopes)
+	c.PostLogoutRedirects = slices.Clone(r.PostLogoutRedirects)
 	c, err := oauth.ValidateClient(c)
 	if err != nil || !s.managedMetadata(c) {
 		return oauth.Client{}, oauth.ErrInvalidRequest
@@ -72,7 +76,7 @@ func (s *Store) UpdateClient(ctx context.Context, e oauth.ClientUpdateExecution)
 		return out, err
 	}
 	p.input.Transition = updateManagedClient
-	p.input.ClientChange.Replacement = &clientReplacement{Redirects: r.Redirects, Scopes: r.Scopes}
+	p.input.ClientChange.Replacement = &clientReplacement{Redirects: r.Redirects, Scopes: r.Scopes, PostLogoutRedirects: r.PostLogoutRedirects}
 	if _, err := s.updatedClient(p.client, p.input.ClientChange.Replacement); err != nil {
 		return out, err
 	}

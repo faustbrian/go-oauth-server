@@ -490,7 +490,18 @@ RFC7662 introspection through both Service and Store. It requires the owning
 confidential client's actual Basic secret before any token lookup. Current
 primary OAuth state and original directory/user/identifier/password-credential/
 authorization expectations are checked without copying source-owner SQL or
-opening a private transaction. Browser logout alone does not revoke approved
+opening a private transaction. Ordinary browser signout alone does not revoke approved
 grants. Unknown, inactive, expired, foreign and withdrawn tokens return only
 `Active=false`; unavailable authority and cancellation return zero metadata plus
 a redacted error. No cache, renewable validity evidence or HTTP route is added.
+
+Optional `Config.RPInitiatedLogout` selects a distinct exact-source termination
+through the existing session owner's effect in the same OAuth Work. Append
+`EndSessionMigrationSource` after installed signing history and install the
+session owner's `OIDCEndSessionMigrationSource` after its single-session history.
+Use matching public kernel/session-owner dependencies and replace all unaware
+readers/writers before enabling. This explicit purpose, unlike ordinary signout,
+withdraws that source's refresh/UserInfo/resource authority. No grant fanout or
+private session/revocation engine is introduced. See the [selected logout
+profile](../docs/selected-oidc-profile.md#native-rp-initiated-logout) for hint
+association, historical recovery, redirect registration and rollback constraints.

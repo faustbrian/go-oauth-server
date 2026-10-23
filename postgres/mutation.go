@@ -9,10 +9,14 @@ import (
 
 	identity "github.com/faustbrian/go-identity"
 	kernel "github.com/faustbrian/go-identity/postgres"
+	sessionpg "github.com/faustbrian/go-identity/session/postgres"
 	oauth "github.com/faustbrian/go-oauth-server"
 )
 
 func (p *phase) mutate(ctx context.Context, w kernel.Work) error {
+	if p.input.Transition == endSession {
+		return p.mutateEndSession(ctx, w)
+	}
 	if p.input.ClientChange != nil {
 		return p.mutateClientChange(ctx, w)
 	}
@@ -203,6 +207,9 @@ func (p *phase) mutate(ctx context.Context, w kernel.Work) error {
 			return identity.ConflictError{}
 		}
 	}
+	if err := p.persistIssuedHint(ctx, w); err != nil {
+		return err
+	}
 	life := p.lifecycle()
 	digest := effectDigest(i.Binding, p.registration(), life)
 	n, err := w.Exec(ctx, `INSERT INTO `+s+`.effects(tenant_id,command_id,operation_id,record_id,grant_id,before_version,after_version,binding_digest) VALUES($1,$2,$3,$4,$5,$6::numeric,$7::numeric,$8)`, string(g.Tenant), string(i.Binding.CommandID), i.Binding.OperationID, i.Binding.RecordID, g.ID, strconv.FormatUint(life.BeforeVersion, 10), strconv.FormatUint(life.AfterVersion, 10), digest[:])
@@ -233,6 +240,19 @@ func (p *phase) RecoverParticipant(ctx context.Context, w kernel.RecoveryWork) (
 	b, f, life, err := w.FeatureScope(p)
 	if err != nil || f.Contributor != p.Descriptor() || f.Operation != p.operation(b.OperationID) || !oauthLifecycle(life.EventType) || life.AfterVersion != life.BeforeVersion+1 {
 		return kernel.RecoveryUnknown, identity.ForbiddenError{}
+	}
+	if b.OperationID == "identity.oauth-server.end-session" {
+		if p.input.Logout == nil || p.input.Binding != b {
+			return kernel.RecoveryUnknown, identity.ForbiddenError{}
+		}
+		original, err := sessionpg.OriginalSessionFromFields(p.input.Grant.Tenant, p.input.Grant.User, p.input.Grant.Source)
+		if err != nil {
+			return kernel.RecoveryUnknown, err
+		}
+		status, err := p.store.endSession.Recover(ctx, w, p, original)
+		if err != nil || status != kernel.RecoveryCommitted {
+			return status, err
+		}
 	}
 	ownerColumn := "grant_id"
 	if b.OperationID == "identity.oauth-server.client-create" || b.OperationID == "identity.oauth-server.client-delete" || b.OperationID == "identity.oauth-server.client-rotate-secret" || b.OperationID == "identity.oauth-server.client-update" {
@@ -272,7 +292,7 @@ func (p *phase) RecoverParticipant(ctx context.Context, w kernel.RecoveryWork) (
 
 func oauthLifecycle(event string) bool {
 	switch event {
-	case "grant.created.v1", "grant.authorized.v1", "grant.scope_changed.v1", "grant.code_exchanged.v1", "grant.refresh_rotated.v1", "grant.revoked.v1", "oauth_access.revoked.v1", "consent.revoked.v1", "consent.scope_changed.v1", "oauth_client.created.v1", "oauth_client.revoked.v1", "oauth_client.secret_rotated.v1", "oauth_client.configuration_changed.v1":
+	case "session.revoked.v1", "grant.created.v1", "grant.authorized.v1", "grant.scope_changed.v1", "grant.code_exchanged.v1", "grant.refresh_rotated.v1", "grant.revoked.v1", "oauth_access.revoked.v1", "consent.revoked.v1", "consent.scope_changed.v1", "oauth_client.created.v1", "oauth_client.revoked.v1", "oauth_client.secret_rotated.v1", "oauth_client.configuration_changed.v1":
 		return true
 	default:
 		return false

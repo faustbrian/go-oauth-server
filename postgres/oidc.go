@@ -53,6 +53,9 @@ func (s *Store) UserInfo(ctx context.Context, c oauth.UserInfoCommand) (out oaut
 	if err != nil {
 		return out, err
 	}
+	if err := s.grantEndSessionFence(ctx, a.Grant); err != nil {
+		return out, publicError(ctx, err, oauth.ErrAccessDenied)
+	}
 	finished := s.now()
 	if ctx.Err() != nil {
 		return out, ctx.Err()

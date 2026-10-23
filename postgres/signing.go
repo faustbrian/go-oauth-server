@@ -15,6 +15,32 @@ import (
 )
 
 var _ oauth.SigningLifecycle = (*Store)(nil)
+var _ oauth.SigningVerificationKeys = (*Store)(nil)
+
+// VerificationSigningKey reads retained public verification custody without
+// publishing or activating anything. RP-Initiated Logout permits expired hints;
+// last_expiry therefore does not discard retired material. Registered (never
+// published), compromised, foreign and unavailable material fail closed.
+func (s *Store) VerificationSigningKey(ctx context.Context, kid string) (oauth.PublicSigningKey, error) {
+	ctx, stop, err := s.bounded(ctx)
+	if err != nil {
+		return oauth.PublicSigningKey{}, err
+	}
+	defer stop()
+	if !boundedText(kid, 128) {
+		return oauth.PublicSigningKey{}, oauth.ErrInvalidRequest
+	}
+	var raw []byte
+	err = s.pool.Raw().QueryRow(ctx, `SELECT public_key FROM `+s.schema+`.signing_keys WHERE kid=$1 AND published_at IS NOT NULL AND state IN('published','retired')`, kid).Scan(&raw)
+	if err != nil {
+		return oauth.PublicSigningKey{}, publicError(ctx, err, oauth.ErrAccessDenied)
+	}
+	var key oauth.PublicSigningKey
+	if decodeJSON(raw, &key) != nil || !validPublicSigningKey(key) || key.Kid != kid {
+		return oauth.PublicSigningKey{}, oauth.ErrUnavailable
+	}
+	return key, nil
+}
 
 func validPublicSigningKey(k oauth.PublicSigningKey) bool {
 	if !boundedText(k.Kid, 128) || k.Kty != "EC" || k.Crv != "P-256" || k.Use != "sig" || k.Alg != "ES256" || len(k.X) != 43 || len(k.Y) != 43 {

@@ -55,7 +55,23 @@ func oidcFixtureWithLifecycle(t *testing.T, f *authenticatedPasswordFixture, chi
 	if f.oauth.ConsentManagement {
 		base = oauthpostgres.ConsentMigrationSource{Base: base, Schema: "oauth_store", Version: 7002}
 	}
-	source := oauthpostgres.SigningMigrationSource{Base: base, Schema: "oauth_store", Version: 7003}
+	var source migrations.Source = oauthpostgres.SigningMigrationSource{Base: base, Schema: "oauth_store", Version: 7003}
+	if f.oauth.RPInitiatedLogout {
+		for _, client := range f.oauth.Protocol.Clients {
+			if client.SubjectRegistration != nil {
+				source = oauthpostgres.PairwiseMigrationSource{Base: source, Schema: "oauth_store", Version: 7004}
+				break
+			}
+		}
+	}
+	if f.oauth.RPInitiatedLogout {
+		if f.oauth.ConsentReuseTTL > 0 {
+			// Keep expiry before logout's append-only suffix, including when
+			// pairwise subject history already occupies version 7004.
+			source = oauthpostgres.ConsentExpiryMigrationSource{Base: source, Schema: "oauth_store", Version: 7005}
+		}
+		source = oauthpostgres.EndSessionMigrationSource{Base: source, Schema: "oauth_store", Version: 7006}
+	}
 	runner, err := migrations.NewRunner(source, backend)
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +128,14 @@ func oidcFixtureWithLifecycle(t *testing.T, f *authenticatedPasswordFixture, chi
 	if _, err := rand.Read(subjectKey[:]); err != nil {
 		t.Fatal(err)
 	}
-	child, err := op.NewService(op.Config{Issuer: f.oauth.Protocol.Issuer, JWKSURI: issuer + "/oauth2/jwks", UserInfoEndpoint: issuer + "/oauth2/userinfo", Signing: signer, SubjectKey: subjectKey, Clock: childClock, MaximumDuration: 4 * time.Second, EmailUserInfo: email, PhoneUserInfo: phone}, core)
+	childConfig := op.Config{Issuer: f.oauth.Protocol.Issuer, JWKSURI: issuer + "/oauth2/jwks", UserInfoEndpoint: issuer + "/oauth2/userinfo", Signing: signer, SubjectKey: subjectKey, Clock: childClock, MaximumDuration: 4 * time.Second, EmailUserInfo: email, PhoneUserInfo: phone}
+	if f.oauth.RPInitiatedLogout {
+		childConfig.EndSessionEndpoint = issuer + "/oauth2/logout"
+		// The actual initiating cookie policy is fixtureGraph's sessionCookie;
+		// deletion must retain its name/scope/security, not select another cookie.
+		childConfig.SessionCookie, _ = session.NewCookiePolicy(session.CookieConfig{Name: "__Host-session", SameSite: http.SameSiteStrictMode})
+	}
+	child, err := op.NewService(childConfig, core)
 	if err != nil {
 		t.Fatal(err)
 	}

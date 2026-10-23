@@ -45,6 +45,7 @@ const (
 	deleteManagedClient
 	rotateManagedSecret
 	updateManagedClient
+	endSession
 )
 
 type grantRecord struct {
@@ -108,6 +109,7 @@ type phaseInput struct {
 	PreviousSource              []identity.FeatureField       `json:",omitempty"`
 	ContinuationPrevious        identity.CommandID            `json:",omitempty"`
 	SilentConsent               *silentConsent                `json:",omitempty"`
+	Logout                      *logoutIntent                 `json:",omitempty"`
 }
 
 type consentMutation struct {
@@ -654,6 +656,9 @@ func (s *Store) targetPhase(target artifactRecord, client oauth.Client, t transi
 func (p *phase) bind(id identity.CommandID, operation, record string) {
 	g := p.input.Grant
 	p.input.Binding = identity.CommandBinding{CommandID: id, TenantID: g.Tenant, UserID: g.User, ActorID: identity.ActorID(g.User), ActorKind: authorization.SubjectUser, OperationID: operation, SchemaID: operation + ".public-password-v1", SchemaVersion: 1, PolicyID: p.store.config.PolicyID, PolicyVersion: p.store.config.Coordinator.AdmissionPolicy.PolicyVersion, RecordID: record, CorrelationID: string(id)}
+	if operation == "identity.oauth-server.end-session" {
+		p.input.Binding.SchemaID = endSessionOperation().SchemaID
+	}
 	if g.Workload != nil {
 		p.input.Binding.AnonymousFlowID = g.ID
 		p.input.Binding.UserID = ""

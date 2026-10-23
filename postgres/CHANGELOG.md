@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Preserve original prepared token issuance across logout activation without
+  regenerating signed output or adding logout authority to older tokens.
+
+- Add opt-in `RPInitiatedLogout` through the existing coordinator and session
+  owner's exact-source effect, with atomic protected OIDC audit/session lifecycle
+  and original metadata-only recovery. Append `EndSessionMigrationSource` after
+  signing history and the session owner's logout suffix; replace unaware serving
+  instances before enabling. Explicit RP termination withdraws source grants;
+  ordinary signout retains its prior grant policy. Only newly issued selected
+  hints are associated; old hints are not backfilled. Mixed/off rollback after
+  activation is unsupported. Adopt matching public kernel/session-owner pins.
+
+- Bound optional logout state at the public native `Store.EndSession` boundary
+  before hashing or preparation. Oversized or non-visible state denies without
+  terminating the source session; empty and 1,024-byte visible state retain their
+  exact original bytes.
+
 - Admit exact OIDC `prompt=consent` through existing genuine-session and protected
   approval/denial transitions, even with reusable consent. Preserve original
   authority/deadlines, atomic required effects and metadata-only recovery with

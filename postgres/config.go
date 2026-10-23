@@ -75,6 +75,11 @@ type Config struct {
 	// writer rollback is unsupported. Revoke consent to withdraw reuse. Install
 	// forward history and retire old writers first; legacy NULL is never reusable.
 	ConsentReuseTTL time.Duration
+	// RPInitiatedLogout selects exact issued-hint/source-session termination.
+	// Install both owners' forward logout histories and retire unaware serving
+	// instances before enabling. Only this explicit purpose withdraws existing
+	// OAuth grants; ordinary browser signout retains its existing grant policy.
+	RPInitiatedLogout bool
 }
 
 // Format redacts keys, correlated deployment scopes and policy dependencies.
@@ -92,15 +97,17 @@ func (Config) MarshalText() ([]byte, error) { return nil, oauth.ErrInvalidReques
 // participant and encrypted preparation. Immutable configuration is safe for
 // concurrent callers; requests remain borrowed until their bounded call returns.
 type Store struct {
-	pool     *database.Pool
-	config   Config
-	schema   string
-	identity [32]byte
-	domain   *kernel.Repository
-	counters *riskpg.Repository
-	crypto   *envelope.Service
-	active   oauth.TokenDigestKey
-	policy   *authority.AuthorityStore
+	pool           *database.Pool
+	config         Config
+	schema         string
+	identity       [32]byte
+	domain         *kernel.Repository
+	counters       *riskpg.Repository
+	crypto         *envelope.Service
+	active         oauth.TokenDigestKey
+	policy         *authority.AuthorityStore
+	endSession     *sessionpg.OIDCEndSessionEffect
+	sessionRecords *sessionpg.Repository
 }
 
 var _ oauth.Store = (*Store)(nil)
@@ -144,6 +151,9 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	if c.ConsentReuseTTL != 0 && (!c.ConsentManagement || len(protocol.OIDCScopes.Scopes()) == 0 || c.ConsentReuseTTL < time.Second || c.ConsentReuseTTL > 24*time.Hour || c.ConsentReuseTTL%time.Microsecond != 0) {
 		return nil, oauth.ErrInvalidRequest
 	}
+	if c.RPInitiatedLogout && (!web || !protocol.OIDCScopes.Contains("openid")) {
+		return nil, oauth.ErrInvalidRequest
+	}
 	// Privileged's native counters supply exactly velocity. The upstream
 	// protected-provider admission API is CredentialMutation-only; accepting
 	// another mandatory signal here would silently omit its owning provider.
@@ -163,6 +173,9 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	if c.ClientMetadataUpdates {
 		operations = append(operations, operation("identity.oauth-server.client-update"))
 	}
+	if c.RPInitiatedLogout {
+		operations = append(operations, endSessionOperation())
+	}
 	for _, operation := range operations {
 		admitted, err := c.Counters.CommandCounters.Policy.Admit(risk.Action(operation.OperationID))
 		if err != nil || admitted.PolicyVersion != c.Counters.PolicyVersion || admitted.PolicyVersion != c.Coordinator.AdmissionPolicy.PolicyVersion || admitted.Preflight != "" || admitted.Profile.Class != risk.Privileged || !slices.Equal(admitted.Profile.RequiredSignals, []string{"velocity"}) {
@@ -178,6 +191,14 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	c.Coordinator.QueryPolicy = &query
 	c.Coordinator.AdmissionPolicy = &admission
 	s := &Store{pool: pool, config: c, schema: pgx.Identifier{c.Schema}.Sanitize()}
+	if c.RPInitiatedLogout {
+		if s.endSession, err = sessionpg.NewOIDCEndSessionEffect(c.Session.Repository, c.Session.Profile); err != nil {
+			return nil, oauth.ErrInvalidRequest
+		}
+		if s.sessionRecords, err = sessionpg.NewRepository(pool, c.Session.Repository); err != nil {
+			return nil, oauth.ErrInvalidRequest
+		}
+	}
 	for i, key := range c.TokenKeys {
 		if key.Version() == 0 {
 			return nil, oauth.ErrInvalidRequest
@@ -294,6 +315,7 @@ type clientPolicy struct {
 	Redirects, Scopes              []string
 	Workload                       *workloadPolicy                `json:",omitempty"`
 	SubjectRegistration            *oauth.OIDCSubjectRegistration `json:",omitempty"`
+	PostLogoutRedirects            []string                       `json:",omitempty"`
 }
 type workloadPolicy struct {
 	Tenant, ID string
@@ -303,7 +325,7 @@ type workloadPolicy struct {
 func clientPolicies(clients []oauth.Client) []clientPolicy {
 	out := make([]clientPolicy, len(clients))
 	for i, c := range clients {
-		out[i] = clientPolicy{ID: c.ID, Method: c.AuthenticationMethod, Resource: c.Resource, Platform: c.Owner.PlatformID(), Version: c.Version, Public: c.Public, Redirects: c.Redirects, Scopes: c.Scopes}
+		out[i] = clientPolicy{ID: c.ID, Method: c.AuthenticationMethod, Resource: c.Resource, Platform: c.Owner.PlatformID(), Version: c.Version, Public: c.Public, Redirects: c.Redirects, Scopes: c.Scopes, PostLogoutRedirects: c.PostLogoutRedirects}
 		if c.Workload != nil {
 			out[i].Workload = &workloadPolicy{Tenant: string(c.Workload.TenantID()), ID: c.Workload.ID(), AccessTTL: c.Workload.AccessTTL()}
 		}

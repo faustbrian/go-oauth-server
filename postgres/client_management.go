@@ -69,11 +69,12 @@ func (s *Store) managementPolicy() [32]byte {
 		return [32]byte{}
 	}
 	wire, _ := json.Marshal(struct {
-		Configuration     [32]byte
-		Platform          string
-		Tenant            identity.TenantID
-		Redirects, Scopes []string
-	}{s.identity, p.Owner.PlatformID(), p.TenantID, p.Redirects, p.Scopes.Scopes()})
+		Configuration       [32]byte
+		Platform            string
+		Tenant              identity.TenantID
+		Redirects, Scopes   []string
+		PostLogoutRedirects []string `json:",omitempty"`
+	}{s.identity, p.Owner.PlatformID(), p.TenantID, p.Redirects, p.Scopes.Scopes(), p.PostLogoutRedirects})
 	defer clear(wire)
 	return sha256.Sum256(wire)
 }
@@ -198,7 +199,7 @@ func (s *Store) ManageClient(ctx context.Context, c oauth.ClientManagementExecut
 }
 func (s *Store) clientManagementPhase(ctx context.Context, c oauth.ClientManagementExecution, action string) (*phase, error) {
 	r := c.Request
-	client := oauth.Client{ID: oauth.ManagedClientPrefix + "pending", Owner: s.config.Protocol.ManagedClients.Owner, Version: 1, Resource: s.config.Protocol.Resource, AuthenticationMethod: "client_secret_basic", Redirects: r.Redirects, Scopes: r.Scopes}
+	client := oauth.Client{ID: oauth.ManagedClientPrefix + "pending", Owner: s.config.Protocol.ManagedClients.Owner, Version: 1, Resource: s.config.Protocol.Resource, AuthenticationMethod: "client_secret_basic", Redirects: r.Redirects, PostLogoutRedirects: r.PostLogoutRedirects, Scopes: r.Scopes}
 	version := uint64(0)
 	secretVersion := uint64(0)
 	if s.config.ClientMetadataUpdates {
@@ -231,16 +232,17 @@ func (s *Store) clientManagementPhase(ctx context.Context, c oauth.ClientManagem
 
 func (p *phase) clientIntent(r oauth.ClientManagementRequest) (identity.RequestIntent, error) {
 	wire, err := json.Marshal(struct {
-		Policy            [32]byte
-		Delete            bool
-		ID                string
-		Version           uint64
-		Redirects, Scopes []string
-		Origin, Network   string
-		Source            []identity.FeatureField
-		RotationOverlap   *time.Duration     `json:",omitempty"`
-		Replacement       *clientReplacement `json:",omitempty"`
-	}{p.store.managementPolicy(), p.input.Transition == deleteManagedClient, r.ClientID, r.Version, r.Redirects, r.Scopes, r.Origin, r.Network, p.input.Grant.Source, p.rotationOverlap(), p.input.ClientChange.Replacement})
+		Policy              [32]byte
+		Delete              bool
+		ID                  string
+		Version             uint64
+		Redirects, Scopes   []string
+		Origin, Network     string
+		Source              []identity.FeatureField
+		RotationOverlap     *time.Duration     `json:",omitempty"`
+		Replacement         *clientReplacement `json:",omitempty"`
+		PostLogoutRedirects []string           `json:",omitempty"`
+	}{p.store.managementPolicy(), p.input.Transition == deleteManagedClient, r.ClientID, r.Version, r.Redirects, r.Scopes, r.Origin, r.Network, p.input.Grant.Source, p.rotationOverlap(), p.input.ClientChange.Replacement, r.PostLogoutRedirects})
 	if err != nil {
 		return identity.RequestIntent{}, err
 	}
@@ -530,7 +532,7 @@ func (s *Store) recoverClientManagement(ctx context.Context, r RecoveryRequest) 
 		}
 		transition, version, intentID = updateManagedClient, 1, r.ClientID
 	}
-	client := oauth.Client{ID: r.ClientID, Owner: policy.Owner, Version: 1, Resource: s.config.Protocol.Resource, AuthenticationMethod: "client_secret_basic", Redirects: policy.Redirects, Scopes: policy.Scopes.Scopes()}
+	client := oauth.Client{ID: r.ClientID, Owner: policy.Owner, Version: 1, Resource: s.config.Protocol.Resource, AuthenticationMethod: "client_secret_basic", Redirects: policy.Redirects, PostLogoutRedirects: policy.PostLogoutRedirects, Scopes: policy.Scopes.Scopes()}
 	p := &phase{store: s, client: client, observation: observed, input: phaseInput{Schema: 1, Configuration: s.identity, Transition: transition, Grant: grantRecord{Tenant: b.TenantID, User: b.UserID, Source: source}, ClientChange: &clientMutation{Client: client, Version: version, Policy: s.managementPolicy()}, Intent: s.intent(r.OperationID, intentID)}}
 	p.bind(r.CommandID, r.OperationID, record)
 	if err := s.coordinator(p); err != nil {

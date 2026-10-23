@@ -34,17 +34,18 @@ type managedRegistration struct {
 	ID, Platform, Resource, AuthenticationMethod string
 	Version                                      uint64
 	Redirects, Scopes                            []string
+	PostLogoutRedirects                          []string `json:",omitempty"`
 }
 
 func registrationWire(c oauth.Client) managedRegistration {
-	return managedRegistration{c.ID, c.Owner.PlatformID(), c.Resource, c.AuthenticationMethod, c.Version, c.Redirects, c.Scopes}
+	return managedRegistration{c.ID, c.Owner.PlatformID(), c.Resource, c.AuthenticationMethod, c.Version, c.Redirects, c.Scopes, c.PostLogoutRedirects}
 }
 func registrationClient(r managedRegistration) (oauth.Client, error) {
 	owner, err := oauth.NewPlatformOwner(r.Platform)
 	if err != nil {
 		return oauth.Client{}, err
 	}
-	return oauth.ValidateClient(oauth.Client{ID: r.ID, Owner: owner, Version: r.Version, Resource: r.Resource, AuthenticationMethod: r.AuthenticationMethod, Redirects: r.Redirects, Scopes: r.Scopes})
+	return oauth.ValidateClient(oauth.Client{ID: r.ID, Owner: owner, Version: r.Version, Resource: r.Resource, AuthenticationMethod: r.AuthenticationMethod, Redirects: r.Redirects, PostLogoutRedirects: r.PostLogoutRedirects, Scopes: r.Scopes})
 }
 func decodeRegistration(wire []byte) (oauth.Client, error) {
 	var r managedRegistration
@@ -142,6 +143,11 @@ func (s *Store) managedMetadata(c oauth.Client) bool {
 	}
 	for _, r := range c.Redirects {
 		if !slices.Contains(p.Redirects, r) {
+			return false
+		}
+	}
+	for _, r := range c.PostLogoutRedirects {
+		if !slices.Contains(p.PostLogoutRedirects, r) {
 			return false
 		}
 	}

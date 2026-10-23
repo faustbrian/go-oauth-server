@@ -95,6 +95,9 @@ func (s *Store) Introspect(ctx context.Context, c oauth.IntrospectionCommand) (o
 	if err != nil {
 		return out, err
 	}
+	if err := s.grantEndSessionFence(ctx, target.Grant); err != nil {
+		return out, introspectionError(ctx, err)
+	}
 	finished := s.now()
 	if ctx.Err() != nil {
 		return out, ctx.Err()
@@ -128,6 +131,16 @@ func (s *Store) introspectionTime(ctx context.Context) (time.Time, error) {
 // vocabulary and method/authority scope mapping. Only its frozen expectations
 // are compared below; OAuth neither reconstructs identity SQL nor infers epochs.
 func (s *Store) introspectionAuthority(ctx context.Context, g grantRecord, now time.Time) (time.Time, error) {
+	if err := s.grantEndSessionFence(ctx, g); err != nil {
+		return time.Time{}, err
+	}
+	return s.originalGrantAuthority(ctx, g, now)
+}
+
+// Historical logout result access checks the original account/credential and
+// current result-access policy, but must not treat its own tombstone as denial.
+// This projection authenticates no browser session and grants no token lease.
+func (s *Store) originalGrantAuthority(ctx context.Context, g grantRecord, now time.Time) (time.Time, error) {
 	original, err := sessionpg.OriginalSessionFromFields(g.Tenant, g.User, g.Source)
 	if err != nil {
 		return time.Time{}, oauth.ErrInvalidGrant

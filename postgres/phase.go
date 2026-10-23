@@ -35,15 +35,16 @@ type generatedArtifact struct {
 	Transition, Replay identity.CommandID
 }
 type preparedOutput struct {
-	Schema       uint32
-	Generation   uint64
-	Input        phaseInput
-	Artifacts    []generatedArtifact
-	IDToken      string `json:",omitempty"`
-	Subject      string `json:",omitempty"`
-	SigningKeyID string `json:",omitempty"`
-	ClientSecret string `json:",omitempty"`
-	ClientDigest []byte `json:",omitempty"`
+	Schema            uint32
+	Generation        uint64
+	Input             phaseInput
+	Artifacts         []generatedArtifact
+	IDToken           string             `json:",omitempty"`
+	Subject           string             `json:",omitempty"`
+	SigningKeyID      string             `json:",omitempty"`
+	ClientSecret      string             `json:",omitempty"`
+	ClientDigest      []byte             `json:",omitempty"`
+	EndSessionCommand identity.CommandID `json:",omitempty"`
 }
 
 // Generated credentials exist only in invocation memory or the existing
@@ -90,6 +91,9 @@ func workloadOperation(name string) identity.FeatureOperation {
 	return identity.FeatureOperation{Owner: "oauth-server", OperationID: name, SchemaID: name + ".configured-workload-v1", SchemaVersion: 1, RecordRequirement: identity.FeatureRecordRequired, SubjectRequirement: identity.FeatureSubjectAnonymousFlow}
 }
 func (p *phase) operation(name string) identity.FeatureOperation {
+	if name == "identity.oauth-server.end-session" {
+		return endSessionOperation()
+	}
 	if p.input.Grant.Workload != nil {
 		return workloadOperation(name)
 	}
@@ -112,6 +116,9 @@ func (p *phase) FeatureOperations() []identity.FeatureOperation {
 	if p.store != nil && p.store.config.ClientMetadataUpdates {
 		operations = append(operations, operation("identity.oauth-server.client-update"))
 	}
+	if p.store != nil && p.store.config.RPInitiatedLogout {
+		operations = append(operations, endSessionOperation())
+	}
 	return operations
 }
 func (p *phase) registration() kernel.FeatureRegistration {
@@ -123,6 +130,8 @@ func (p *phase) registration() kernel.FeatureRegistration {
 // and replay revocation each declare their distinct composed actions once.
 func (p *phase) auditActions() []string {
 	switch p.input.Transition {
+	case endSession:
+		return []string{"identity.oauth_server.end_session"}
 	case createManagedClient:
 		return []string{"identity.oauth_server.create_client"}
 	case deleteManagedClient:
@@ -162,6 +171,10 @@ func (p *phase) lifecycle() kernel.LifecyclePlan {
 	before := p.input.Grant.Version
 	event := "grant.revoked.v1"
 	switch p.input.Transition {
+	case endSession:
+		original, _ := sessionpg.OriginalSessionFromFields(p.input.Grant.Tenant, p.input.Grant.User, p.input.Grant.Source)
+		bindings, _ := original.Bindings()
+		before, event = bindings.Version, "session.revoked.v1"
 	case createManagedClient:
 		before = 0
 		// LIFECYCLE_CASCADES.md lifecycle.events.oauth_server fixes these
@@ -201,6 +214,9 @@ func (p *phase) lifecycle() kernel.LifecyclePlan {
 }
 
 func (p *phase) subjectType() string {
+	if p.input.Transition == endSession {
+		return "session"
+	}
 	if p.input.ClientChange != nil {
 		return "oauth_client"
 	}
@@ -257,7 +273,7 @@ func (p *phase) execute(ctx context.Context) (result identity.CommandResult, exe
 	if !handoff && !admission.Absent {
 		// A terminal result is historical metadata, never an instruction to
 		// decrypt/redeliver output or reconstruct today's aggregate as success.
-		if admission.Record.Outcome != identity.CommitOutcomeInProgress {
+		if admission.Record.Outcome != identity.CommitOutcomeInProgress || p.input.Transition == endSession {
 			return p.coordinator.RecoverFeatureCommand(ctx, p.query(), p.caller())
 		}
 		wire, generation, err := p.coordinator.QueryFeaturePreparation(ctx, p.query(), p.caller(), p.registration(), p)
@@ -347,6 +363,13 @@ func (p *phase) buildCommand() error {
 	} else if i.Transition == createManagedClient || i.Transition == deleteManagedClient || i.Transition == rotateManagedSecret || i.Transition == updateManagedClient {
 		return oauth.ErrInvalidRequest
 	}
+	if i.Transition == endSession {
+		if !p.store.EndSessionSelected() || i.Logout == nil || i.Logout.Hint.Command != b.CommandID || !sameJSON(i.Logout.Hint.Grant, i.Grant) || i.ObservationUntil.IsZero() {
+			return oauth.ErrInvalidRequest
+		}
+	} else if i.Logout != nil {
+		return oauth.ErrInvalidRequest
+	}
 	// This fixed native codec commits every nonsecret typed input, including
 	// original owner fields, with a scalar commitment. It never places JSON or
 	// credential wire bytes in FeatureFields. The original encrypted preparation
@@ -358,6 +381,16 @@ func (p *phase) buildCommand() error {
 	commitment := sha256.Sum256(frame)
 	clear(frame)
 	fields := slices.Clone(i.Grant.Source)
+	if i.Transition == endSession {
+		original, err := sessionpg.OriginalSessionFromFields(i.Grant.Tenant, i.Grant.User, i.Grant.Source)
+		if err != nil {
+			return err
+		}
+		fields, err = sessionpg.OIDCEndSessionFields(original, i.ObservationUntil)
+		if err != nil {
+			return err
+		}
+	}
 	recordField := identity.FeatureField{Name: "oauth.grant", Value: identity.FeatureValue{Kind: identity.FeatureText, Text: i.Grant.ID}}
 	versionField := identity.FeatureField{Name: "oauth.grant-version", Value: identity.FeatureValue{Kind: identity.FeatureUint64, Uint64: i.Grant.Version}}
 	if i.Transition == deleteConsent {
@@ -507,7 +540,7 @@ func (p *phase) AdmitFeaturePreparation(ctx context.Context, w kernel.Work, c id
 	return p.checkArtifactExpiry(ctx, w)
 }
 func (p *phase) browserRequired() bool {
-	return p.input.ClientChange != nil || p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == denyInteraction || p.input.Transition == deleteConsent || p.input.Transition == narrowConsent
+	return p.input.ClientChange != nil || p.input.Transition == endSession || p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == denyInteraction || p.input.Transition == deleteConsent || p.input.Transition == narrowConsent
 }
 func (p *phase) issuing() bool {
 	return p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == exchangeCode || p.input.Transition == rotateRefresh || p.input.Transition == createWorkload
@@ -520,6 +553,9 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 	}
 	i := p.input
 	g := i.Grant
+	if i.Transition == endSession {
+		return p.checkEndSession(ctx, w, final)
+	}
 	if g.ClientFingerprint != clientFingerprint(p.client) || g.ClientVersion != p.client.Version || g.ClientID != p.client.ID || i.Configuration != p.store.identity {
 		return identity.ForbiddenError{}
 	}
@@ -560,6 +596,11 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 		}
 		if err := w.RequireActiveActorAuthorization(ctx, p, authorization); err != nil {
 			return err
+		}
+		if p.store.config.RPInitiatedLogout && (i.Transition == exchangeCode || i.Transition == rotateRefresh) {
+			if err := p.store.endSession.RequireNotRevoked(ctx, w, p, original); err != nil {
+				return err
+			}
 		}
 		if p.browserRequired() {
 			if err := p.checkBrowser(original); err != nil {
@@ -982,6 +1023,12 @@ func (p *phase) GenerateFeaturePreparation(ctx context.Context, c identity.Comma
 			}
 			out.Subject = claims.Subject
 			out.SigningKeyID = claims.SigningKeyID
+			if p.store.config.RPInitiatedLogout {
+				out.EndSessionCommand, err = identity.NewCommandID()
+				if err != nil {
+					return nil, err
+				}
+			}
 		}
 	}
 	plain, err := json.Marshal(out)
@@ -1040,8 +1087,8 @@ func (p *phase) restore(ctx context.Context, generation uint64, wire []byte, ini
 		// Recovery has no proposed consent/network intent. The owning
 		// preparation authenticates that original intent, but never authorizes
 		// execution or redelivery. Keep exact continuation/client/source scope.
-		transitionMatches = p.input.Transition == approveInteraction && (out.Input.Transition == approveInteraction || out.Input.Transition == denyInteraction)
-		if out.Input.Target != p.input.Target || out.Input.TargetID != p.input.TargetID || out.Input.TargetKind != oauth.TokenContinuation || !out.Input.TargetExpires.Equal(p.input.TargetExpires) || !sameJSON(out.Input.TargetPayload, p.input.TargetPayload) {
+		transitionMatches = p.input.Transition == approveInteraction && (out.Input.Transition == approveInteraction || out.Input.Transition == denyInteraction) || p.input.Transition == endSession && out.Input.Transition == endSession
+		if p.input.Transition != endSession && (out.Input.Target != p.input.Target || out.Input.TargetID != p.input.TargetID || out.Input.TargetKind != oauth.TokenContinuation || !out.Input.TargetExpires.Equal(p.input.TargetExpires) || !sameJSON(out.Input.TargetPayload, p.input.TargetPayload)) {
 			return identity.ForbiddenError{}
 		}
 	}
@@ -1071,6 +1118,17 @@ func (p *phase) restore(ctx context.Context, generation uint64, wire []byte, ini
 	}
 	if len(out.Artifacts) != want {
 		return oauth.ErrUnavailable
+	}
+	// Selection belongs to the authenticated original preparation. Schema-1
+	// output from before logout activation has no association command; the
+	// retained-preparation contract forbids regenerating or enriching it.
+	if out.EndSessionCommand != "" {
+		if !p.store.config.RPInitiatedLogout || out.IDToken == "" {
+			return oauth.ErrUnavailable
+		}
+		if _, err := identity.ParseCommandID(string(out.EndSessionCommand)); err != nil {
+			return oauth.ErrUnavailable
+		}
 	}
 	if out.Input.Transition == createManagedClient || out.Input.Transition == rotateManagedSecret {
 		// Authenticate the originally captured generation, not a registration

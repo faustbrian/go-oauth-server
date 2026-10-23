@@ -60,6 +60,9 @@ func (s *Store) userInfoIdentifiers(ctx context.Context, token string, client oa
 	if err := ctx.Err(); err != nil {
 		return oauth.OIDCClaimsInput{}, err
 	}
+	if err := s.grantEndSessionFence(ctx, original.Grant); err != nil {
+		return oauth.OIDCClaimsInput{}, publicError(ctx, err, oauth.ErrAccessDenied)
+	}
 	finished := s.now()
 	if finished.Before(start) || !finished.Before(out.AuthorityExpiresAt) || !now.Before(out.AuthorityExpiresAt) || !activeIntrospectionArtifact(current, now) || !sameJSON(original, current) {
 		return oauth.OIDCClaimsInput{}, oauth.ErrAccessDenied

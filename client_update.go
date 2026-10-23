@@ -17,9 +17,10 @@ import (
 // Every committed replacement advances authority and invalidates old consent and
 // grants; unchanged Basic custody requires new explicit authorization afterward.
 type ClientUpdateRequest struct {
-	Management ClientManagementRequest
-	Redirects  []string
-	Scopes     []string
+	Management          ClientManagementRequest
+	Redirects           []string
+	PostLogoutRedirects []string
+	Scopes              []string
 }
 
 func (ClientUpdateRequest) Format(f fmt.State, _ rune) {
@@ -75,11 +76,13 @@ func ValidateClientUpdateRequest(r ClientUpdateRequest, p ManagedClientPolicy, i
 	replacement := r.Management
 	replacement.ClientID, replacement.Version = "", 0
 	replacement.Redirects, replacement.Scopes = r.Redirects, r.Scopes
+	replacement.PostLogoutRedirects = r.PostLogoutRedirects
 	replacement, err = ValidateClientManagementRequest(replacement, false, p, issuer)
 	if err != nil {
 		return ClientUpdateRequest{}, err
 	}
 	r.Redirects, r.Scopes = replacement.Redirects, replacement.Scopes
+	r.PostLogoutRedirects = replacement.PostLogoutRedirects
 	return r, nil
 }
 
@@ -133,7 +136,7 @@ func (s *Service) ClientUpdate(ctx context.Context, r ClientUpdateRequest) (out 
 		return ClientUpdateResult{Completion: out.Completion}, nil
 	}
 	client, err := s.selectedClientReadProjection(out.Client)
-	if err != nil || client.ID != r.Management.ClientID || client.Version != r.Management.Version+1 || !slices.Equal(client.Redirects, r.Redirects) || !slices.Equal(client.Scopes, r.Scopes) {
+	if err != nil || client.ID != r.Management.ClientID || client.Version != r.Management.Version+1 || !slices.Equal(client.Redirects, r.Redirects) || !slices.Equal(client.PostLogoutRedirects, r.PostLogoutRedirects) || !slices.Equal(client.Scopes, r.Scopes) {
 		return ClientUpdateResult{Completion: out.Completion}, ErrAccessDenied
 	}
 	out.Client = client

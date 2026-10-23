@@ -193,6 +193,11 @@ func (s *Service) selectedClientReadProjection(c Client) (Client, error) {
 			return Client{}, ErrAccessDenied
 		}
 	}
+	for _, redirect := range c.PostLogoutRedirects {
+		if !slices.Contains(s.config.ManagedClients.PostLogoutRedirects, redirect) {
+			return Client{}, ErrAccessDenied
+		}
+	}
 	return c, nil
 }
 

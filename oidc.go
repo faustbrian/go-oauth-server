@@ -158,6 +158,7 @@ type OIDCDiscoveryProjection struct {
 	SubjectTypesSupported            []string `json:"subject_types_supported"`
 	IDTokenSigningAlgValuesSupported []string `json:"id_token_signing_alg_values_supported"`
 	ClaimsSupported                  []string `json:"claims_supported"`
+	EndSessionEndpoint               string   `json:"end_session_endpoint,omitempty"`
 }
 
 // IDToken is explicit reveal-once signed authentication custody, not an access

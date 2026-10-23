@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add optional native RP-initiated logout with separately registered exact
+  post-logout redirects, read-only retained signing-key verification and closed
+  metadata-only unknown/history results. Only the genuine issued hint's exact
+  initiating session can terminate; existing Store and OIDC extension methods
+  remain unchanged. Use matching child/native versions and forward histories.
+
 - Select exact OIDC `prompt=consent` to require a new protected approval despite
   reusable consent, while retaining current-session/maximum-age policy. Fail
   closed when custom adapters skip the initial interaction; denial and unknown

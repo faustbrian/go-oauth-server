@@ -94,6 +94,9 @@ type Client struct {
 	Version                            uint64
 	Public                             bool
 	Redirects, Scopes                  []string
+	// PostLogoutRedirects independently registers exact RP logout targets.
+	// Empty selects local-only logout, never an authorization-redirect fallback.
+	PostLogoutRedirects []string `json:",omitempty"`
 	// Workload explicitly selects access-only client credentials instead of
 	// browser code/consent/refresh. Nil retains the existing web profile.
 	Workload *Workload `json:",omitempty"`
@@ -125,6 +128,16 @@ func ValidateClient(input Client) (Client, error) {
 	if !validSubjectRegistration(input) {
 		return Client{}, ErrInvalidRequest
 	}
+	if len(input.PostLogoutRedirects) != 0 {
+		if input.Workload != nil {
+			return Client{}, ErrInvalidRequest
+		}
+		logout, err := NewRedirectPolicy(input.PostLogoutRedirects)
+		if err != nil {
+			return Client{}, err
+		}
+		input.PostLogoutRedirects = slices.Clone(logout.targets)
+	}
 	scopes, err := newScopeCatalog(input.Scopes, true)
 	if err != nil {
 		return Client{}, err
@@ -140,6 +153,7 @@ func ValidateClient(input Client) (Client, error) {
 // nor adapter mutation can alter retained policy or in-flight result checks.
 func (c Client) snapshot() Client {
 	c.Redirects, c.Scopes = slices.Clone(c.Redirects), slices.Clone(c.Scopes)
+	c.PostLogoutRedirects = slices.Clone(c.PostLogoutRedirects)
 	if c.Workload != nil {
 		owned := *c.Workload
 		c.Workload = &owned
@@ -149,6 +163,14 @@ func (c Client) snapshot() Client {
 		c.SubjectRegistration = &owned
 	}
 	return c
+}
+
+// PostLogoutRedirectAllowed tests only exact explicitly registered logout
+// metadata. It authenticates no client or session; callers must separately
+// obtain current registration and prove the hint/session association. An absent
+// target is local-only, not a registered redirect, under RP-Initiated Logout §3.
+func PostLogoutRedirectAllowed(c Client, target string) bool {
+	return target != "" && c.Workload == nil && slices.Contains(c.PostLogoutRedirects, target)
 }
 
 func identifier(value string) bool {

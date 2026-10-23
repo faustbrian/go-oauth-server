@@ -32,6 +32,7 @@ type signingKey struct {
 	private            *ecdsa.PrivateKey
 	public             PublicSigningKey
 	published, removed bool
+	compromised        bool
 	until              time.Time
 }
 
@@ -167,6 +168,7 @@ func (a *SigningAuthority) Compromise(kid string) error {
 		return ErrAccessDenied
 	}
 	k.removed = true
+	k.compromised = true
 	k.private = nil
 	if a.active == kid {
 		a.active = ""

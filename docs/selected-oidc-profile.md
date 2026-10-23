@@ -36,7 +36,7 @@ subjects across this issuer/tenant's clients. UserInfo reads actual access and
 grant/client state, original primary directory/user/credential/authorization,
 selected consent and key compromise. OAuth state is rechecked after the original
 authority read without positive caching, then the child compares the persisted
-grant/client subject. Browser logout keeps the existing approved-grant policy;
+grant/client subject. Ordinary browser signout keeps the existing approved-grant policy;
 credential/owner withdrawal and grant/access revocation deny UserInfo.
 
 ## Optional consented email UserInfo
@@ -326,6 +326,89 @@ never redelivers code or renews consent. Other prompt values and all combination
 remain unselected. Managed client mutations are not OIDC registration support; their
 ordinary-grant controls do not prove an OIDC-management variant.
 
+## Native RP-initiated logout
+
+Select native `RPInitiatedLogout` and configure `oidc.Config.EndSessionEndpoint`
+plus the actual initiating browser's `SessionCookie` policy. The endpoint is a
+trusted same-issuer URL distinct from authorization, token, JWKS and UserInfo;
+unselected composition advertises none and denies invocation. This is an exported
+native library operation, not an HTTP route or confirmation UI.
+
+Install the forward OAuth `EndSessionMigrationSource` after signing history and
+the session owner's `OIDCEndSessionMigrationSource` after single-session history.
+Retain original migration bytes, keys, configuration, encrypted preparations and
+terminal evidence. Upgrade all serving readers/writers before activation; an
+unaware/off instance cannot enforce explicit termination against old grants, so
+mixed/off rollback after activation is unsupported. The base OAuth schema does
+not acquire mandatory logout/session bootstrap. Use matching published root,
+child, native kernel and session-owner versions.
+The forward unique source-effect index scans existing OAuth effect history and
+uses a transactional, write-blocking build. Schedule that DDL with OAuth writers
+quiescent and sufficient index/build headroom; no online-build claim is implied.
+Only RP terminations add index entries; existing non-logout effects remain outside
+its predicate. Deployment-specific build duration/storage remain operator inputs.
+
+Each newly prepared selected **actually committed** ID token gets an immutable digest association
+to its original issuer/environment, tenant/client/subject, signing key/source
+session and original command locator, atomically with issuance. Existing minimized claims stay
+unchanged; no `sid`, subject-equality heuristic or caller-selected session is used.
+Preactivation hints have no association and deny; no history is backfilled.
+An authenticated token response prepared before activation can complete its
+original pending execution while its original admission remains valid. Its
+signed bytes, expiry and preparation generation stay unchanged; it gains no
+logout association. A newly selected preparation still requires the atomic
+association. Activation does not regenerate older output or renew its authority.
+Managed-client metadata conserves separately registered logout targets, but does
+not expand the existing OAuth-only managed issuance profile into OIDC registration.
+
+[RP-Initiated Logout 1.0 section 2](https://openid.net/specs/openid-connect-rpinitiated-1_0.html#RPLogout)
+defines `id_token_hint`, `client_id`, `post_logout_redirect_uri` and opaque `state`.
+This selected profile requires the genuine hint **and its exact current source
+browser/CSRF** even without a redirect. A valid hint from session A cannot end
+same-user/client session B. Root verifies strict ES256/JWT signature and current
+eligible public key; child checks issuer/audience/authorized party/subject and
+closed issued claims; native verifies actual durable issuance and original source
+custody plus current client/account/credential/authorization/session owners.
+Compromised keys deny. Retained previously published retired public material is
+eligible without retired private custody. Expired hints are accepted only while
+their exact original source remains currently valid; expiry is not recent-session
+or absent-session permission.
+
+`Client.PostLogoutRedirects` and the managed ceiling of the same name are independent
+of authorization redirects. Matching is byte-exact with no normalization, prefix,
+default callback or cross-client fallback. Only fresh known commitment returns
+`redirect` with the exact supplied registered URI and original opaque state.
+Without URI the result is `local-only`, with no redirect/state. Only these fresh
+successes include session-owned deletion attributes; applications own transport.
+
+The existing sole coordinator commits the exact session owner's invalidation,
+protected `identity.oauth_server.end_session` audit and `session.revoked.v1`
+lifecycle together. Siblings and family/user epochs are unchanged. Only this RP
+purpose's retained tombstone withdraws source grant exchange/refresh/UserInfo and
+resource authority; ordinary signout keeps its existing approved-grant policy.
+Current primary reads and token Work fences do not cache absence or renew time.
+Original hint-key read-start+20s, genuine session observation, credential and caller
+deadlines remain exclusive; protected waits and final reads cannot restart them.
+`VerifiedCompact.ReadStartedAt` exposes only the immutable original start, not a
+lease. Public native calls retain the minimum of that sealed start and any
+caller-supplied narrower start; changing deployment namespace cannot adopt an
+old association or renew its observation window.
+
+Ambiguous completion returns `unknown-reconciliation` with the original command
+locator, never redirect/state/deletion or replacement permission. Native `Recover`
+accepts operation `identity.oauth-server.end-session`, original command/client,
+tenant, browser cookie and exact raw issued hint. Matching original cookie lookup
+commitment, authenticated encrypted preparation and current result-access authority
+permit historical observation **without re-authenticating the self-revoked session**.
+No CSRF, new execution or fresh validity is inferred by recovery. Known matching
+repeat is metadata-only local completion; pending/unknown repeat reconciles the
+original command and cannot resume execution or redeliver a callback.
+
+Static public/confidential human clients and registered public/pairwise subjects
+remain distinct selected variants. Front/back-channel notifications, provider
+orchestration, hintless UI, device/private exchange and generic HTTP/reference
+integration remain separate unselected work.
+
 ## Protocol and evidence scope
 
 References: OpenID Connect Core 1.0 and Discovery 1.0, errata set 2. Only actual
@@ -334,7 +417,7 @@ client methods are advertised.
 Core 3.1.3.6 does not require at_hash/c_hash for this token-endpoint-only ID token.
 Other prompt variants and identity scopes,
 implicit/hybrid, request objects,
-logout, private session exchange, shared-issuer access-JWT/delegation and
+front/back-channel logout, private session exchange, shared-issuer access-JWT/delegation and
 HTTP/reference integration remain open/unadvertised.
 
 Native tests use test-only

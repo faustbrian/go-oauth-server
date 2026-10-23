@@ -30,7 +30,9 @@ type ManagedClientPolicy struct {
 	Owner     Owner
 	TenantID  identity.TenantID
 	Redirects []string
-	Scopes    ScopeCatalog
+	// PostLogoutRedirects is an independent exact ceiling, never inferred from Redirects.
+	PostLogoutRedirects []string
+	Scopes              ScopeCatalog
 }
 
 func (p ManagedClientPolicy) validated(c Config) (ManagedClientPolicy, error) {
@@ -39,6 +41,13 @@ func (p ManagedClientPolicy) validated(c Config) (ManagedClientPolicy, error) {
 		return ManagedClientPolicy{}, ErrInvalidRequest
 	}
 	p.Redirects = slices.Clone(redirects.targets)
+	if len(p.PostLogoutRedirects) != 0 {
+		logout, err := NewRedirectPolicy(p.PostLogoutRedirects)
+		if err != nil {
+			return ManagedClientPolicy{}, ErrInvalidRequest
+		}
+		p.PostLogoutRedirects = slices.Clone(logout.targets)
+	}
 	for _, client := range c.Clients {
 		if strings.HasPrefix(client.ID, ManagedClientPrefix) {
 			return ManagedClientPolicy{}, ErrInvalidRequest
@@ -62,16 +71,17 @@ type CurrentClientRegistry interface {
 // and no registration edits. Owner/tenant are exact preconditions, not overrides.
 // RequestKey is correlation only and never authenticates a manager.
 type ClientManagementRequest struct {
-	Owner             Owner
-	TenantID          identity.TenantID
-	Session           auth.BearerCredential
-	CSRF              session.CSRFToken
-	Origin, Network   string
-	RequestKey        identity.IdempotencyKey
-	ClientID          string
-	Version           uint64
-	Public            bool
-	Redirects, Scopes []string
+	Owner               Owner
+	TenantID            identity.TenantID
+	Session             auth.BearerCredential
+	CSRF                session.CSRFToken
+	Origin, Network     string
+	RequestKey          identity.IdempotencyKey
+	ClientID            string
+	Version             uint64
+	Public              bool
+	Redirects, Scopes   []string
+	PostLogoutRedirects []string
 }
 
 func (ClientManagementRequest) Format(f fmt.State, _ rune) {
@@ -205,7 +215,7 @@ func ValidateClientManagementRequest(r ClientManagementRequest, remove bool, p M
 		return ClientManagementRequest{}, ErrInvalidRequest
 	}
 	if remove {
-		if !strings.HasPrefix(r.ClientID, ManagedClientPrefix) || !identifier(r.ClientID) || r.Version == 0 || r.Version == ^uint64(0) || len(r.Redirects) != 0 || len(r.Scopes) != 0 {
+		if !strings.HasPrefix(r.ClientID, ManagedClientPrefix) || !identifier(r.ClientID) || r.Version == 0 || r.Version == ^uint64(0) || len(r.Redirects) != 0 || len(r.Scopes) != 0 || len(r.PostLogoutRedirects) != 0 {
 			return ClientManagementRequest{}, ErrInvalidRequest
 		}
 		return r, nil
@@ -221,6 +231,18 @@ func ValidateClientManagementRequest(r ClientManagementRequest, remove bool, p M
 		if !slices.Contains(p.Redirects, target) {
 			return ClientManagementRequest{}, ErrAccessDenied
 		}
+	}
+	if len(r.PostLogoutRedirects) != 0 {
+		logout, err := NewRedirectPolicy(r.PostLogoutRedirects)
+		if err != nil {
+			return ClientManagementRequest{}, ErrInvalidRequest
+		}
+		for _, target := range logout.targets {
+			if !slices.Contains(p.PostLogoutRedirects, target) {
+				return ClientManagementRequest{}, ErrAccessDenied
+			}
+		}
+		r.PostLogoutRedirects = slices.Clone(logout.targets)
 	}
 	scopes, err := validatedScopes(r.Scopes)
 	if err != nil || !scopeSubset(scopes, p.Scopes.values) {
@@ -245,6 +267,11 @@ func (s *Service) currentClient(ctx context.Context, id string) (Client, error) 
 	}
 	for _, redirect := range c.Redirects {
 		if !slices.Contains(s.config.ManagedClients.Redirects, redirect) {
+			return Client{}, ErrAccessDenied
+		}
+	}
+	for _, redirect := range c.PostLogoutRedirects {
+		if !slices.Contains(s.config.ManagedClients.PostLogoutRedirects, redirect) {
 			return Client{}, ErrAccessDenied
 		}
 	}

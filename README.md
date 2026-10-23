@@ -45,6 +45,11 @@ replacement authentication engine.
 - `Service.Revoke` handles owning-client token possession. Unknown and foreign
   tokens are indistinguishable no-ops; access revocation is narrower than
   refresh-family revocation.
+- Optional `Service.EndSession` composes native RP-initiated logout through the
+  OIDC child and existing session owner. Client `PostLogoutRedirects` are exact
+  independent registrations, never authorization callbacks. See the selected
+  [logout profile](docs/selected-oidc-profile.md#native-rp-initiated-logout) for
+  required migrations, issued-hint custody and metadata-only recovery.
 - `Service.Introspect` is disabled by default. Explicit
   `OwningClientIntrospection` selects separately authenticated confidential
   clients inspecting only their own actual opaque access/refresh tokens.

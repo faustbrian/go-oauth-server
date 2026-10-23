@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Admit exact OIDC `prompt=consent` through existing genuine-session and protected
+  approval/denial transitions, even with reusable consent. Preserve original
+  authority/deadlines, atomic required effects and metadata-only recovery with
+  matching core/child versions; no additional schema or consent-reuse activation
+  is required for this interactive profile.
+
 - Supply existing native identifier/verification custody for approved OIDC phone
   scopes, preserving original grant/session/credential and exclusive freshness
   fences. Identifier-authority changes deny old grants rather than silently

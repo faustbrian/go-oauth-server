@@ -200,6 +200,14 @@ requires the exact new session authenticated by original preparation even when
 the grant update rolled back; historical `NotCommitted` retains its failure error.
 Use matching core/child/native versions: selected results echo the original
 request, and native pre-Work child decisions remain fenced through core return.
+
+Exact OIDC `prompt=consent` always uses this existing protected interaction,
+including when bounded prior consent is reusable for `prompt=none`. No approval
+row is renewed before explicit `Continue` approval; denial spends only this
+interaction and issues no code/token. Current session/CSRF and maximum-age policy,
+original authority/deadlines, required effects and metadata-only recovery remain
+unchanged. Compose matching core/child/native versions; no additional migration
+or mandatory silent-consent bootstrap is introduced.
 If a committed code/continuation expires before core delivery, retain the
 metadata-only historical command ID for `Recover`; the withheld credential
 cannot be replayed and its delivery error does not prove absence of commit.

@@ -239,7 +239,7 @@ func (s *Store) Authorize(ctx context.Context, c oauth.AuthorizationCommand) (oa
 		return oauth.AuthorizeResult{}, err
 	}
 	defer stop()
-	if !boundedText(c.Network, 128) || !boundedText(c.Request.ClientID, 128) || !boundedText(c.Request.RedirectURI, 2048) || !boundedText(c.Request.CodeChallenge, 43) || !boundedText(c.Request.Resource, 2048) || c.Request.State != "" && !boundedText(c.Request.State, 1024) || c.Request.Nonce != "" && !boundedText(c.Request.Nonce, 256) || c.Request.Prompt != "" && c.Request.Prompt != "login" && c.Request.Prompt != "none" {
+	if !boundedText(c.Network, 128) || !boundedText(c.Request.ClientID, 128) || !boundedText(c.Request.RedirectURI, 2048) || !boundedText(c.Request.CodeChallenge, 43) || !boundedText(c.Request.Resource, 2048) || c.Request.State != "" && !boundedText(c.Request.State, 1024) || c.Request.Nonce != "" && !boundedText(c.Request.Nonce, 256) || c.Request.Prompt != "" && c.Request.Prompt != "login" && c.Request.Prompt != "none" && c.Request.Prompt != "consent" {
 		return oauth.AuthorizeResult{}, oauth.ErrInvalidRequest
 	}
 	if c.Request.Scopes, err = selectedScopes(c.Request.Scopes); err != nil {

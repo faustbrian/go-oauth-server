@@ -330,7 +330,7 @@ func (gate *authenticationApplyGate) observe(data []byte) {
 	}
 }
 
-func positiveAgeExpiresAfterGrantWait(t *testing.T, afterStart bool) {
+func positiveAgeExpiresAfterGrantWait(t *testing.T, afterStart bool, prompt ...string) {
 	t.Helper()
 	gate := &authenticationApplyGate{reached: make(chan struct{}), proceed: make(chan struct{})}
 	f := passwordFixture(t, &oauthCommitFault{beforeWrite: gate.observe})
@@ -339,6 +339,9 @@ func positiveAgeExpiresAfterGrantWait(t *testing.T, afterStart bool) {
 	authenticatedAt := authenticationAt(t, f, f.browser)
 	age := uint32(3)
 	request := pairwiseBegin(f)
+	if len(prompt) != 0 {
+		request.Request.Prompt = prompt[0]
+	}
 	request.Request.MaxAge = &age
 	verifier := oauth2.GenerateVerifier()
 	request.Request.CodeChallenge = oauth2.S256ChallengeFromVerifier(verifier)

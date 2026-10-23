@@ -158,8 +158,15 @@ request-key owner/history and an explicit application permission for
 `identity.oauth-server.consent-update`. A request key is retry correlation,
 never authentication. See the native adoption and recovery requirements before
 enabling this separate profile.
-Client administration, OIDC,
-device flow, organization delegation, API-key exchange and
+Device authorization is separately selected through the
+[`device` child](device/README.md) and the native adapter's optional factory.
+Only clients with explicit `DeviceAuthorization` permission can use it; default
+registration and base OAuth bootstrap remain unchanged. The first native
+profile is unbound OAuth-only issuance reviewed by a recent authenticated
+password human. It provides no device UI or HTTP/reference routes and does not
+by itself establish complete device milestone qualification.
+
+Client administration, OIDC, organization delegation, API-key exchange and
 general resource-server policy and positive-cache composition remain
 unsupported. The separately selected [direct access-only resource profile](docs/selected-resource-profile.md)
 adds no transport, JWT or remote introspection endpoint. No vendor authorization

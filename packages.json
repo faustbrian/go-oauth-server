@@ -37,6 +37,18 @@
       "coverage_required": true,
       "build_required": true,
       "build_tags": []
+    },
+    {
+      "module_directory": "device",
+      "directory": "device",
+      "name": "device",
+      "import_path": "github.com/faustbrian/go-oauth-server/device",
+      "kind": "public",
+      "production": true,
+      "executable": true,
+      "coverage_required": true,
+      "build_required": true,
+      "build_tags": []
     }
   ]
 }

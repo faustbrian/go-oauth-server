@@ -439,6 +439,140 @@
         "security": false,
         "tests": true
       }
+    },
+    {
+      "directory": "device",
+      "module_path": "github.com/faustbrian/go-oauth-server/device",
+      "go_version": "1.27.0",
+      "packages": [
+        {
+          "module_directory": "device",
+          "directory": "device",
+          "name": "device",
+          "import_path": "github.com/faustbrian/go-oauth-server/device",
+          "kind": "public",
+          "production": true,
+          "executable": true,
+          "coverage_required": true,
+          "build_required": true,
+          "build_tags": []
+        }
+      ],
+      "purpose": "Experimental optional RFC 8628 device authorization protocol over the existing OAuth and native durable owners; full provider qualification remains pending.",
+      "lifecycle": "experimental",
+      "kind": "optional companion",
+      "releasable": true,
+      "family": "service-edge",
+      "family_label": "Service Edge",
+      "family_description": "Request-edge policy, identity, access decisions, routing, middleware, and process lifecycle.",
+      "family_order": 2,
+      "version": "0.0.0",
+      "tag_prefix": "device/v",
+      "owned_dependencies": [
+        "github.com/faustbrian/go-authentication/v2",
+        "github.com/faustbrian/go-identity",
+        "github.com/faustbrian/go-identity/session",
+        "github.com/faustbrian/go-oauth-server"
+      ],
+      "reverse_owned_dependencies": [],
+      "external_runtime_dependencies": [],
+      "required_services": [],
+      "build_tags": [],
+      "test_tags": [],
+      "interoperability_tools": [],
+      "specifications": [],
+      "conformance_corpora": [],
+      "provenance": [],
+      "goal_files": [
+        "device/README.md"
+      ],
+      "goal_status": "in-progress",
+      "goal_evidence": [],
+      "cohesion": {
+        "family": "service-edge",
+        "secondary_capabilities": [
+          "cryptography-and-secrets",
+          "identity-and-access",
+          "protocols-and-schemas",
+          "resilience-and-admission"
+        ],
+        "responsibility": "Explicit opt-in device authorization, safe verification prompts, approval/denial, bounded polling and original recovery through existing OAuth and native store contracts.",
+        "non_goals": [
+          "Own user interfaces, browser sessions, credentials, consent authority, token cryptography or a second transaction/recovery engine.",
+          "Enable device flow in base OAuth/PostgreSQL construction or claim full provider, HTTP/reference, interoperability or release qualification."
+        ],
+        "public_package_identifier": "device",
+        "primary_entry_packages": [
+          "github.com/faustbrian/go-oauth-server/device"
+        ],
+        "package_selection": {
+          "github.com/faustbrian/go-oauth-server/device": "Experimental explicit device profile; requires actual client/session admission and separately composed native device storage and policy."
+        },
+        "lifecycle_status": "active",
+        "maturity": "experimental",
+        "construction_styles": [
+          "new-config",
+          "validated-value"
+        ],
+        "lifecycle_styles": [
+          "stateless"
+        ],
+        "ownership": {
+          "configuration": "caller",
+          "mutable_inputs": [
+            "copy"
+          ],
+          "runtime_resources": "caller",
+          "background_work": "none"
+        },
+        "optional_owned_dependencies": [],
+        "adapters": [],
+        "companions": [],
+        "supported_go": {
+          "minimum": "1.27.0",
+          "tested": [
+            "1.27.3"
+          ]
+        },
+        "supported_platforms": [
+          "portable-go"
+        ],
+        "supported_backends": [],
+        "supported_protocols": [],
+        "documentation": {
+          "readme": "device/README.md",
+          "api": "device/README.md",
+          "adoption": "device/README.md",
+          "security": "docs/security.md",
+          "compatibility": null,
+          "performance": null,
+          "examples": "device/README.md",
+          "faq": null,
+          "changelog": "device/CHANGELOG.md",
+          "pkg_go_dev": "https://pkg.go.dev/github.com/faustbrian/go-oauth-server/device",
+          "ecosystem_index": "https://github.com/faustbrian/go-library-tools/blob/v2.5.1/docs/ecosystem/README.md"
+        },
+        "known_good_compatibility_sets": [],
+        "delivery": {
+          "implementation": "in-progress",
+          "hardening": "in-progress",
+          "release": "blocked"
+        }
+      },
+      "gates": {
+        "api_compatibility": false,
+        "benchmarks": false,
+        "conformance": false,
+        "coverage": false,
+        "documentation": true,
+        "fuzz": false,
+        "interoperability": false,
+        "lint": false,
+        "mutation": false,
+        "race": true,
+        "security": false,
+        "tests": true
+      }
     }
   ]
 }

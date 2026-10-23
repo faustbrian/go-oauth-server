@@ -124,7 +124,14 @@ native continuation with current session/CSRF custody. Denial issues no code or
 token and does not revoke prior consent. Use matching core/child/native versions;
 no additional schema or extension method is introduced.
 
+Native RP-initiated logout is separately selected with `EndSessionEndpoint`, the
+actual `SessionCookie` policy and native `RPInitiatedLogout`. `ParseEndSessionQuery`
+accepts the bounded standard hint/client/URI/state parameters; `Service.EndSession`
+returns a typed result and only fresh known commitment projects cookie deletion.
+It writes no HTTP response. Follow the [selected logout profile](../docs/selected-oidc-profile.md#native-rp-initiated-logout),
+including exact-session/expired-hint and migration/fleet requirements.
+
 Other prompt variants,
-profile/address/offline scopes, logout, private session JWT exchange,
+profile/address/offline scopes, front/back-channel logout, private session JWT exchange,
 shared-issuer access-JWT/delegation, HTTP/reference integration and complete
 conformance/release qualification remain open, unadvertised and unstubbed.

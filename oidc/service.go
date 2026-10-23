@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/faustbrian/go-identity/session"
 	oauth "github.com/faustbrian/go-oauth-server"
 )
 
@@ -41,6 +42,13 @@ type Config struct {
 	// from native primary custody. Pending/revoked numbers are omitted; ID tokens
 	// retain their subject/authentication-only projection.
 	PhoneUserInfo bool
+	// EndSessionEndpoint explicitly selects native RP-initiated logout only
+	// when core supplies its actual optional session-owner composition and the
+	// signer supplies read-only verification. Empty leaves logout unavailable.
+	EndSessionEndpoint string
+	// SessionCookie is the initiating transport's existing owner policy. Only
+	// fresh known committed logout may project its credential-free deletion.
+	SessionCookie session.CookiePolicy
 }
 
 func (Config) Format(f fmt.State, _ rune)   { _, _ = f.Write([]byte("oidc.Config(redacted)")) }
@@ -69,6 +77,12 @@ var _ oauth.OIDCExtension = (*Service)(nil)
 func NewService(c Config, core *oauth.Service) (*Service, error) {
 	if core == nil || c.Issuer.String() == "" || c.Signing == nil || c.SubjectKey == ([32]byte{}) || nilClock(c.Clock) || c.MaximumDuration < time.Millisecond || c.MaximumDuration > 5*time.Second || !endpoint(c.Issuer, c.JWKSURI) || !endpoint(c.Issuer, c.UserInfoEndpoint) || c.JWKSURI == c.UserInfoEndpoint {
 		return nil, oauth.ErrInvalidRequest
+	}
+	if c.EndSessionEndpoint != "" {
+		_, cookieErr := c.SessionCookie.DeletionAttributes()
+		if !endpoint(c.Issuer, c.EndSessionEndpoint) || c.EndSessionEndpoint == c.JWKSURI || c.EndSessionEndpoint == c.UserInfoEndpoint || cookieErr != nil || !c.Signing.VerificationConfigured() || !core.EndSessionConfigured() {
+			return nil, oauth.ErrInvalidRequest
+		}
 	}
 	if c.SubjectPolicy != nil {
 		if _, present := c.SubjectPolicy.keys[c.SubjectPolicy.active]; !present || c.SubjectPolicy.issuer != c.Issuer {
@@ -119,8 +133,8 @@ func (s *Service) bounded(ctx context.Context) (context.Context, context.CancelF
 }
 
 // Scopes returns only implemented scope ownership. Profile/address
-// claims, offline_access and every logout profile remain
-// unselected, unadvertised and unavailable rather than approximated.
+// claims and offline_access remain unselected. Front/back-channel logout is
+// unavailable; native RP logout requires its separate explicit composition.
 func (s *Service) Scopes() oauth.ScopeCatalog {
 	if s == nil {
 		return oauth.ScopeCatalog{}
@@ -314,7 +328,7 @@ func (s *Service) OIDCDiscovery(ctx context.Context) (oauth.OIDCDiscoveryProject
 		return oauth.OIDCDiscoveryProjection{}, oauth.ErrAccessDenied
 	}
 	for _, url := range []string{core.Metadata.AuthorizationEndpoint, core.Metadata.TokenEndpoint, core.Metadata.RevocationEndpoint, core.Metadata.IntrospectionEndpoint} {
-		if url == s.config.JWKSURI || url == s.config.UserInfoEndpoint {
+		if url == s.config.JWKSURI || url == s.config.UserInfoEndpoint || s.config.EndSessionEndpoint != "" && url == s.config.EndSessionEndpoint {
 			return oauth.OIDCDiscoveryProjection{}, oauth.ErrInvalidRequest
 		}
 	}
@@ -329,7 +343,7 @@ func (s *Service) OIDCDiscovery(ctx context.Context) (oauth.OIDCDiscoveryProject
 	if s.config.PhoneUserInfo {
 		claims = append(claims, "phone_number", "phone_number_verified")
 	}
-	return oauth.OIDCDiscoveryProjection{JWKSURI: s.config.JWKSURI, UserInfoEndpoint: s.config.UserInfoEndpoint, SubjectTypesSupported: subjectTypes, IDTokenSigningAlgValuesSupported: []string{"ES256"}, ClaimsSupported: claims}, nil
+	return oauth.OIDCDiscoveryProjection{JWKSURI: s.config.JWKSURI, UserInfoEndpoint: s.config.UserInfoEndpoint, EndSessionEndpoint: s.config.EndSessionEndpoint, SubjectTypesSupported: subjectTypes, IDTokenSigningAlgValuesSupported: []string{"ES256"}, ClaimsSupported: claims}, nil
 }
 
 type Discovery struct {

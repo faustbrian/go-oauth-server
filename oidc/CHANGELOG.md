@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Select native RP-initiated logout with bounded standard parameters, verified
+  issued hints and exact URI/state or local-only outcomes. Retained retired
+  public keys can verify expired hints only for their still-current exact source
+  session. Compromised keys deny; unknown/history never clear cookies or redirect.
+  Front/back-channel, hintless UI and provider orchestration remain unselected.
+
 - Select exact `prompt=consent` without conflating approval with fresh login.
   Preserve original maximum-age policy through the existing native interaction;
   prompt combinations and account selection remain unsupported.

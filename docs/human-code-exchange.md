@@ -31,7 +31,7 @@ provenance, so mixed old/new writers are unsupported for the selected profile.
 The first selected rotation must consume a refresh directly issued by genuine
 S256 code redemption. It records fixed-size original consumed-code/root-refresh
 issuance provenance. Every successor retains that exact provenance; arbitrary
-preactivation refresh histories are not backfilled. Reauthorize such a client
+refresh histories from before activation are not backfilled. Reauthorize such a client
 instead. Bounded checks of the original code, initial refresh, immediate consumed
 parent and native issuance effects prove the source without walking refresh
 history. Consumed code/refresh expiry is historical issuance proof, not current

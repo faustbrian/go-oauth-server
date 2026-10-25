@@ -79,6 +79,7 @@ type artifactPayload struct {
 	SigningKeyID  string                `json:",omitempty"`
 	Exchange      *exchangeLineage      `json:",omitempty"`
 	HumanExchange *humanExchangeLineage `json:",omitempty"`
+	HumanRefresh  *humanRefreshIssuance `json:",omitempty"`
 }
 type artifactRecord struct {
 	ID                   string
@@ -126,6 +127,7 @@ type phaseInput struct {
 	Device                      *deviceMutation               `json:",omitempty"`
 	Exchange                    *exchangeLineage              `json:",omitempty"`
 	HumanExchange               *humanExchangeLineage         `json:",omitempty"`
+	HumanRefresh                *humanRefreshIssuance         `json:",omitempty"`
 	ExchangeObservation         *exchangeObservation          `json:",omitempty"`
 }
 
@@ -558,6 +560,12 @@ func (s *Store) Token(ctx context.Context, c oauth.TokenCommand) (out oauth.Toke
 	executing = p
 	p.input.Scopes = slices.Clone(selected)
 	p.input.ClientAuthentication = proof
+	if operation == rotateRefresh && s.humanRefreshExchangeSelected(client) {
+		p.input.HumanRefresh, err = s.captureHumanRefreshIssuance(ctx, target, client)
+		if err != nil {
+			return oauth.TokenResult{}, publicError(ctx, err, oauth.ErrInvalidGrant)
+		}
+	}
 	if r.GrantType == oauth.AuthorizationCodeGrant {
 		p.oidc = c.OIDC
 	}

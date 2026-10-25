@@ -92,7 +92,14 @@ func (s *Store) validHumanExchangeLineage(e *humanExchangeLineage, g grantRecord
 	_, rootErr := identity.ParseSubjectID(e.RootID)
 	_, parentErr := identity.ParseSubjectID(e.ParentID)
 	scope := s.humanExchangeScope(g, c)
-	return rootErr == nil && parentErr == nil && e.GrantID == g.ID && e.GrantVersion > 0 && e.GrantVersion <= g.Version && e.RootVersion == 1 && e.ParentVersion == 1 && e.Depth > 0 && e.Depth <= s.config.Protocol.HumanCodeExchange.MaximumDepth && e.Issuer == s.config.Protocol.Issuer.String() && e.Environment == s.config.Protocol.Environment && e.PlatformOwner == c.Owner.PlatformID() && e.HumanOwner == g.User && e.HumanActor == identity.ActorID(g.User) && e.TenantID == g.Tenant && e.ClientID == c.ID && e.ClientVersion == c.Version && e.SourceFingerprint == humanSourceFingerprint(g) && e.ConsentID == g.ConsentID && e.ConsentID != "" && e.ConsentGeneration == g.ConsentGeneration && e.ConsentGeneration > 0 && e.ClientNamespace == scope.PolicyNamespace && e.ClientAuthoritySubject == string(scope.SubjectID) && e.AuthorityDerivation == 1 && e.ClientAuthorityVersion == 1 && e.Policy == *s.config.Protocol.HumanCodeExchange && scopeSubset(e.RootScopes, g.Scopes) && !e.RootExpiresAt.After(g.ExpiresAt) && !e.SourceReadStartedAt.IsZero() && !e.SourceReadStartedAt.Before(g.CreatedAt) && e.SourceValidUntil.After(e.SourceReadStartedAt) && !e.SourceValidUntil.After(e.SourceReadStartedAt.Add(20*time.Second)) && !e.SourceValidUntil.After(e.RootExpiresAt)
+	policy := *s.config.Protocol.HumanCodeExchange
+	if e.Policy.AllowRefreshIssuedAccess && !policy.AllowRefreshIssuedAccess {
+		return false
+	}
+	// The extra source selection must not withdraw or enrich existing code-root
+	// children. Each root freezes only the source profile it actually consumed.
+	policy.AllowRefreshIssuedAccess = e.Policy.AllowRefreshIssuedAccess
+	return rootErr == nil && parentErr == nil && e.GrantID == g.ID && e.GrantVersion > 0 && e.GrantVersion <= g.Version && e.RootVersion == 1 && e.ParentVersion == 1 && e.Depth > 0 && e.Depth <= s.config.Protocol.HumanCodeExchange.MaximumDepth && e.Issuer == s.config.Protocol.Issuer.String() && e.Environment == s.config.Protocol.Environment && e.PlatformOwner == c.Owner.PlatformID() && e.HumanOwner == g.User && e.HumanActor == identity.ActorID(g.User) && e.TenantID == g.Tenant && e.ClientID == c.ID && e.ClientVersion == c.Version && e.SourceFingerprint == humanSourceFingerprint(g) && e.ConsentID == g.ConsentID && e.ConsentID != "" && e.ConsentGeneration == g.ConsentGeneration && e.ConsentGeneration > 0 && e.ClientNamespace == scope.PolicyNamespace && e.ClientAuthoritySubject == string(scope.SubjectID) && e.AuthorityDerivation == 1 && e.ClientAuthorityVersion == 1 && e.Policy == policy && scopeSubset(e.RootScopes, g.Scopes) && !e.RootExpiresAt.After(g.ExpiresAt) && !e.SourceReadStartedAt.IsZero() && !e.SourceReadStartedAt.Before(g.CreatedAt) && e.SourceValidUntil.After(e.SourceReadStartedAt) && !e.SourceValidUntil.After(e.SourceReadStartedAt.Add(20*time.Second)) && !e.SourceValidUntil.After(e.RootExpiresAt)
 }
 
 func sameHumanExchangeOrigin(a, b *humanExchangeLineage) bool {
@@ -166,6 +173,16 @@ func (s *Store) humanExchangeLineageCurrent(ctx context.Context, a artifactRecor
 			if derived || p.HumanExchange != nil || parent == "" || origin != nil && (id != origin.RootID || !expires.Equal(origin.RootExpiresAt) || !slices.Equal(p.Scopes, origin.RootScopes)) {
 				return oauth.ErrInvalidGrant
 			}
+			if p.HumanRefresh != nil {
+				if origin != nil && !origin.Policy.AllowRefreshIssuedAccess {
+					return oauth.ErrInvalidGrant
+				}
+				root := artifactRecord{ID: id, Kind: oauth.TokenAccess, Grant: a.Grant, Payload: p, ParentID: parent}
+				return s.humanRefreshAccessIssuance(ctx, root, c, query, locked)
+			}
+			if origin != nil && origin.Policy.AllowRefreshIssuedAccess {
+				return oauth.ErrInvalidGrant
+			}
 			// The consumed code is issuance proof, not an active delegation
 			// ancestor. Its original expiry must not truncate access validity.
 			statement := `SELECT code.payload FROM ` + s.schema + `.artifacts code JOIN ` + s.schema + `.artifacts access ON access.parent_artifact_id=code.artifact_id AND access.grant_id=code.grant_id JOIN ` + s.schema + `.effects issued ON issued.command_id=access.issued_by AND issued.grant_id=access.grant_id AND issued.tenant_id=$4 WHERE access.artifact_id=$1 AND access.grant_id=$2 AND access.client_id=$3 AND code.kind=2 AND code.state='consumed' AND code.consumed_by=access.issued_by AND code.client_id=access.client_id AND issued.operation_id='identity.oauth-server.token'`
@@ -197,7 +214,7 @@ func (s *Store) humanExchangeLineageCurrent(ctx context.Context, a artifactRecor
 			}
 			return nil
 		}
-		if !derived || !s.validHumanExchangeLineage(p.HumanExchange, a.Grant, c) || p.HumanExchange.Depth != depth || p.HumanExchange.ParentID != parent || !sameHumanExchangeOrigin(p.HumanExchange, origin) || created.Before(p.HumanExchange.SourceReadStartedAt) || parent == "" {
+		if !derived || p.HumanRefresh != nil || !s.validHumanExchangeLineage(p.HumanExchange, a.Grant, c) || p.HumanExchange.Depth != depth || p.HumanExchange.ParentID != parent || !sameHumanExchangeOrigin(p.HumanExchange, origin) || created.Before(p.HumanExchange.SourceReadStartedAt) || parent == "" {
 			return oauth.ErrInvalidGrant
 		}
 		descendantScopes, descendantExpiry = p.Scopes, expires
@@ -315,6 +332,7 @@ func (s *Store) exchangeHumanCode(ctx context.Context, c oauth.Client, r oauth.T
 	}
 	scope := s.humanExchangeScope(a.Grant, c)
 	e := &humanExchangeLineage{GrantID: a.Grant.ID, GrantVersion: a.Grant.Version, RootID: a.ID, ParentID: a.ID, RootVersion: a.MetadataVersion, ParentVersion: a.MetadataVersion, Depth: 1, Issuer: s.config.Protocol.Issuer.String(), Environment: s.config.Protocol.Environment, PlatformOwner: c.Owner.PlatformID(), HumanOwner: a.Grant.User, HumanActor: identity.ActorID(a.Grant.User), TenantID: a.Grant.Tenant, ClientID: c.ID, ClientVersion: c.Version, SourceFingerprint: humanSourceFingerprint(a.Grant), ConsentID: a.Grant.ConsentID, ConsentGeneration: a.Grant.ConsentGeneration, ClientNamespace: scope.PolicyNamespace, ClientAuthoritySubject: string(scope.SubjectID), ClientAuthorityVersion: 1, AuthorityDerivation: 1, Policy: *s.config.Protocol.HumanCodeExchange, RootScopes: slices.Clone(a.Payload.Scopes), RootExpiresAt: a.ExpiresAt, SourceReadStartedAt: start, SourceValidUntil: until}
+	e.Policy.AllowRefreshIssuedAccess = a.Payload.HumanRefresh != nil
 	if a.Payload.HumanExchange != nil {
 		owned := *a.Payload.HumanExchange
 		e = &owned
@@ -350,7 +368,7 @@ func (s *Store) exchangeHumanCode(ctx context.Context, c oauth.Client, r oauth.T
 }
 
 // BootstrapHumanCodeExchangeClient explicitly initializes the selected native
-// per-registration client authority from an actual code-issued access source
+// per-registration client authority from an actual S256-derived access source
 // and its owning Basic client. It accepts no asserted tenant/version/epoch.
 // This is trusted installation/bootstrap, never an HTTP endpoint or an implicit
 // issuance/read side effect. Install the forward history first. Repeating an
@@ -412,8 +430,9 @@ func (s *Store) BootstrapHumanCodeExchangeClient(ctx context.Context, r oauth.In
 
 // HumanCodeExchangeClientAuthority locates the real current public authority
 // record for the selected source's actual tenant and registered client version.
-// Owning Basic and a genuine active code-issued source are required. It accepts
-// no subject hash, asserted version or tenant; consumers never copy the private
+// Owning Basic and a genuine active S256-derived source are required. A refreshed
+// source additionally requires AllowRefreshIssuedAccess and native provenance.
+// It accepts no subject hash, asserted version or tenant; consumers never copy the private
 // derivation. An advanced epoch remains readable, not reset or authorized anew.
 // Use the returned Scope/Version with authorization/postgres.AdvanceAuthority in
 // the existing authorized owner's transaction and audit workflow to withdraw

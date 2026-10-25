@@ -338,6 +338,9 @@ func (p *phase) execute(ctx context.Context) (result identity.CommandResult, exe
 func (p *phase) buildCommand() error {
 	i := p.input
 	b := i.Binding
+	if i.HumanRefresh != nil && i.Transition != rotateRefresh {
+		return oauth.ErrInvalidRequest
+	}
 	if i.Transition == exchangeWorkload {
 		if !p.store.validExchangeLineage(i.Exchange, i.Grant) || i.ExchangeObservation == nil || i.TargetKind != oauth.TokenAccess || i.Exchange.ParentID != i.TargetID {
 			return oauth.ErrInvalidRequest
@@ -815,6 +818,9 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 		return err
 	}
 	if err := p.checkHumanExchange(ctx, w, now); err != nil {
+		return err
+	}
+	if err := p.checkHumanRefreshIssuance(ctx, w); err != nil {
 		return err
 	}
 	return p.checkConsent(ctx, w, final)

@@ -10,9 +10,19 @@ only with real consent management, the final forward
 `HumanCodeExchangeMigrationSource` and explicit source-bound native client
 bootstrap. `BootstrapHumanCodeExchangeClient` and
 `HumanCodeExchangeClientAuthority` derive actual tenant/registration scope from
-a genuine code-issued root and owning Basic credentials, never a caller's
+a genuine S256-derived root and owning Basic credentials, never a caller's
 asserted epoch. The public authorization owner remains the sole lifecycle owner.
 Turning selection off denies derived tokens without altering ordinary roots.
+
+The additional `HumanCodeExchangePolicy.AllowRefreshIssuedAccess` flag admits
+opaque access from native human refresh rotation, never refresh bearers. Its
+zero value retains code-only exchange. Replace all old writers before enabling;
+the first selected rotation must still descend directly from genuine S256 code
+redemption. Subsequent rotations retain fixed-size original issuance proof,
+without traversing arbitrary refresh history or reviving expired consumed
+refresh authority. No additional migration is needed; unproven preactivation
+refresh histories require reauthorization. See the linked profile for withdrawal
+and original-lineage freshness semantics.
 
 
 ## Optional platform-owned confidential client management

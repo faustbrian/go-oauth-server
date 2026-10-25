@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Support explicitly selected refresh-issued human access exchange using bounded
+  original S256 issuance provenance retained through native rotations. Existing
+  grant/consent/current human authority, narrowed scopes, parent expiry and
+  metadata-only retry/recovery remain mandatory. No new migration is required;
+  replace old writers before activation and reauthorize refresh histories lacking
+  original provenance rather than silently backfilling them.
+  Disabling delegation preserves resumability of already prepared ordinary
+  refresh rotations without granting exchange authority.
+
 - Add explicit human code-issued opaque access exchange with separate bounded
   delegation ancestry, preserved consumed-code history, current human/consent
   and per-registration client epochs, and metadata-only retry/recovery. Append

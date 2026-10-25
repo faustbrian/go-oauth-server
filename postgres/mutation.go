@@ -181,7 +181,7 @@ func (p *phase) mutateOAuth(ctx context.Context, w kernel.Work) error {
 			return err
 		}
 	}
-	payload, err := json.Marshal(artifactPayload{Schema: 1, Request: i.Request, Scopes: i.Scopes, Subject: p.output.Subject, SigningKeyID: p.output.SigningKeyID, Exchange: i.Exchange, HumanExchange: i.HumanExchange})
+	payload, err := json.Marshal(artifactPayload{Schema: 1, Request: i.Request, Scopes: i.Scopes, Subject: p.output.Subject, SigningKeyID: p.output.SigningKeyID, Exchange: i.Exchange, HumanExchange: i.HumanExchange, HumanRefresh: i.HumanRefresh})
 	if err != nil {
 		return identity.UnavailableError{}
 	}

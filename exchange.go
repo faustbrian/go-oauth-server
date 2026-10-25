@@ -22,7 +22,7 @@ type WorkloadExchangePolicy struct {
 // HumanCodeExchangePolicy explicitly selects owning-client delegation of opaque
 // access issued through the existing password-session/S256 authorization-code
 // profile. Clients must independently opt in with Client.HumanCodeExchange.
-// It grants no workload, refresh-source, device, API-key, organization, JWT or
+// It grants no workload, refresh-bearer, device, API-key, organization, JWT or
 // private-session exchange authority. Zero MaximumDepth means four exchanges;
 // an explicit value may only lower that ceiling. ClockUncertainty and the
 // configured MaximumDuration share the profile's ten-second uncertainty budget.
@@ -30,6 +30,10 @@ type WorkloadExchangePolicy struct {
 type HumanCodeExchangePolicy struct {
 	MaximumDepth     uint8
 	ClockUncertainty time.Duration
+	// AllowRefreshIssuedAccess additionally admits opaque human access from
+	// native refresh rotation with bounded original S256 issuance provenance.
+	// False preserves code-issued access only. Refresh tokens are never sources.
+	AllowRefreshIssuedAccess bool `json:",omitempty"`
 }
 
 func (p HumanCodeExchangePolicy) validated(c Config) (HumanCodeExchangePolicy, error) {

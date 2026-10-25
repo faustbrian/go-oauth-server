@@ -97,7 +97,7 @@ type Client struct {
 	// client. Zero preserves browser-only permission. The optional device child
 	// and native composition must still be selected; this is not authentication.
 	DeviceAuthorization bool `json:",omitempty"`
-	// HumanCodeExchange selects the separate configured code-access delegation
+	// HumanCodeExchange selects the separate configured human-access delegation
 	// operation for this confidential web client. It does not replace Basic
 	// authentication or alter existing registration/grant identity. False retains
 	// the existing profile; the global/native selection is also required.

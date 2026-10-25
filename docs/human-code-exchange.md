@@ -4,8 +4,8 @@ This explicitly selected RFC 8693 profile permits a configured confidential
 `client_secret_basic` web client to narrow its own genuine password-session/S256
 authorization-code access token. It is separate from `WorkloadExchangePolicy`:
 nil/false defaults preserve existing workload, registration and preparation
-identities. It does not complete M33 or select public clients, refresh-issued
-access sources, device/session/API-key/organization sources, JWT/cache profiles,
+identities. It does not complete M33 or select public clients,
+device/session/API-key/organization sources, JWT/cache profiles,
 OIDC claims, HTTP routes or reference composition.
 
 Set `Client.HumanCodeExchange=true` for each selected configured web client,
@@ -18,6 +18,35 @@ commitments: enabling it does not invalidate previously issued code access or
 rewrite its original source. Actual registration version, secret, status and
 owner checks remain mandatory.
 
+### Optional refresh-issued access sources
+
+`HumanCodeExchangePolicy.AllowRefreshIssuedAccess=true` additionally admits
+human opaque **access** tokens produced by native refresh rotation. The default
+remains code-issued access only; refresh bearers are never exchange sources.
+Enable the flag on every accepting instance before rotating eligible sources.
+Existing consent and human-client bootstrap/history remain prerequisites; no
+additional schema migration is required. Old writers do not preserve this
+provenance, so mixed old/new writers are unsupported for the selected profile.
+
+The first selected rotation must consume a refresh directly issued by genuine
+S256 code redemption. It records fixed-size original consumed-code/root-refresh
+issuance provenance. Every successor retains that exact provenance; arbitrary
+preactivation refresh histories are not backfilled. Reauthorize such a client
+instead. Bounded checks of the original code, initial refresh, immediate consumed
+parent and native issuance effects prove the source without walking refresh
+history. Consumed code/refresh expiry is historical issuance proof, not current
+delegation authority. The active refreshed access and original current grant,
+consent, account, credential and client remain the authority owners.
+
+Delegation starts at that refreshed access, with at most four exchanges and the
+same parent/five-minute expiry ceiling. A later refresh is not another exchange
+depth and does not renew an existing child's lineage freshness or permissions.
+Disabling the extra flag denies refreshed-root descendants, not ordinary native
+refresh or code-root delegation.
+Already prepared ordinary rotations retain and revalidate their original S256
+metadata even when the extra flag or whole human exchange profile is disabled;
+resuming them does not re-enable delegation or regenerate preparation.
+
 The human namespace must differ from session, workload-principal and
 workload-client namespaces. The shared public authorization owner keys only
 tenant/namespace/subject, so namespace aliasing could turn one profile's explicit
@@ -29,7 +58,8 @@ During an exclusive schema window, append `HumanCodeExchangeMigrationSource`
 after the complete installed OAuth history, including any selected workload,
 consent-expiry and workload-exchange suffixes. Do not rewrite old migration bytes
 or run unaware writers afterward. The suffix adds no authority to existing rows.
-Prepare an actual existing code-issued access source, then explicitly bootstrap:
+Prepare an actual existing code-issued access source (or an explicitly selected
+refresh-issued access with native S256 provenance), then explicitly bootstrap:
 
 ```go
 source := oauthserver.IntrospectRequest{

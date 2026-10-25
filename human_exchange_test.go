@@ -101,3 +101,24 @@ func TestHumanCodeExchangePolicyIsBoundedAndFrozen(t *testing.T) {
 		}
 	}
 }
+
+func TestHumanRefreshIssuedAccessExchangeIsExplicitAndFrozen(t *testing.T) {
+	config, _ := workloadCoreConfig(t)
+	config.Clients[0].Workload = nil
+	config.Clients[0].Redirects = []string{"https://client.example/cb"}
+	config.Clients[0].HumanCodeExchange = true
+	policy := &oauth.HumanCodeExchangePolicy{}
+	config.HumanCodeExchange = policy
+	validated, err := config.Validated()
+	if err != nil || validated.HumanCodeExchange.AllowRefreshIssuedAccess {
+		t.Fatal("code-only default was broadened", err)
+	}
+	policy.AllowRefreshIssuedAccess = true
+	if validated.HumanCodeExchange.AllowRefreshIssuedAccess {
+		t.Fatal("caller changed frozen source authority")
+	}
+	selected, err := config.Validated()
+	if err != nil || !selected.HumanCodeExchange.AllowRefreshIssuedAccess {
+		t.Fatal("explicit refreshed access selection unavailable", err)
+	}
+}

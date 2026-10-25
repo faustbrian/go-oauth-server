@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add explicit `HumanCodeExchangePolicy.AllowRefreshIssuedAccess` selection for
+  human opaque access produced by native S256-derived refresh rotation. Code-only
+  defaults and refresh-bearer denial remain unchanged; adopt matching native
+  support and replace old writers before activating the selected profile.
+
 - Add a separate opt-in human authorization-code access-source exchange for
   owning configured Basic web clients. Opaque descendants preserve original
   human/session/consent authority, scopes and lifetime across refresh and

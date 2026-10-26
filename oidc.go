@@ -135,6 +135,10 @@ type OIDCClaimsInput struct {
 	// copying or projecting this input cannot renew primary-read freshness.
 	Identifiers        *identity.IdentifierState
 	AuthorityExpiresAt time.Time
+	// Profile is optional trusted primary profile custody for selected UserInfo.
+	// Only name is transported; native owners must fence consistent snapshots,
+	// original authority and schema/source identity without renewing validity.
+	Profile *identity.ProfileRecord
 }
 
 func (OIDCClaimsInput) Format(f fmt.State, _ rune) {

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add optional trusted native profile custody to OIDC UserInfo projections,
+  preserving the existing four-method extension and minimized ID-token contract.
+  Select matching native and child versions for consented display-name disclosure.
+
 - Add explicit `HumanCodeExchangePolicy.AllowRefreshIssuedAccess` selection for
   human opaque access produced by native S256-derived refresh rotation. Code-only
   defaults and refresh-bearer denial remain unchanged; adopt matching native

@@ -42,6 +42,9 @@ type Config struct {
 	// from native primary custody. Pending/revoked numbers are omitted; ID tokens
 	// retain their subject/authentication-only projection.
 	PhoneUserInfo bool
+	// ProfileUserInfo explicitly enables only consented native display name in
+	// UserInfo. Images/custom attributes and all ID-token claims stay unchanged.
+	ProfileUserInfo bool
 	// EndSessionEndpoint explicitly selects native RP-initiated logout only
 	// when core supplies its actual optional session-owner composition and the
 	// signer supplies read-only verification. Empty leaves logout unavailable.
@@ -90,6 +93,9 @@ func NewService(c Config, core *oauth.Service) (*Service, error) {
 		}
 	}
 	names := []string{"openid"}
+	if c.ProfileUserInfo {
+		names = append(names, "profile")
+	}
 	if c.EmailUserInfo {
 		names = append(names, "email")
 	}
@@ -132,8 +138,8 @@ func (s *Service) bounded(ctx context.Context) (context.Context, context.CancelF
 	return c, stop, nil
 }
 
-// Scopes returns only implemented scope ownership. Profile/address
-// claims and offline_access remain unselected. Front/back-channel logout is
+// Scopes returns only implemented scope ownership. Profile selects name only;
+// address and offline_access remain unselected. Front/back-channel logout is
 // unavailable; native RP logout requires its separate explicit composition.
 func (s *Service) Scopes() oauth.ScopeCatalog {
 	if s == nil {
@@ -148,6 +154,10 @@ func (s *Service) selected(scopes []string) bool {
 	}
 	for _, scope := range scopes {
 		switch scope {
+		case "profile":
+			if !s.config.ProfileUserInfo {
+				return false
+			}
 		case "email":
 			if !s.config.EmailUserInfo {
 				return false
@@ -156,7 +166,7 @@ func (s *Service) selected(scopes []string) bool {
 			if !s.config.PhoneUserInfo {
 				return false
 			}
-		case "profile", "address", "offline_access":
+		case "address", "offline_access":
 			return false
 		}
 	}
@@ -337,6 +347,9 @@ func (s *Service) OIDCDiscovery(ctx context.Context) (oauth.OIDCDiscoveryProject
 		subjectTypes = append(subjectTypes, "pairwise")
 	}
 	claims := []string{"iss", "sub", "aud", "azp", "iat", "exp", "nonce", "auth_time", "amr"}
+	if s.config.ProfileUserInfo {
+		claims = append(claims, "name")
+	}
 	if s.config.EmailUserInfo {
 		claims = append(claims, "email", "email_verified")
 	}
@@ -397,8 +410,10 @@ func (s *Service) JWKS(ctx context.Context) (JWKS, error) {
 // diagnostics redact. No field is an authentication credential or identity key.
 // PhoneNumberVerified is present and true only with a native verified canonical
 // number; this conservative profile omits pending/revoked phone contacts.
+// Name is optional native display name, never a stable identity key.
 type UserInfo struct {
 	Subject             string `json:"sub"`
+	Name                string `json:"name,omitempty"`
 	Email               string `json:"email,omitempty"`
 	EmailVerified       *bool  `json:"email_verified,omitempty"`
 	PhoneNumber         string `json:"phone_number,omitempty"`
@@ -422,12 +437,19 @@ func (s *Service) UserInfo(ctx context.Context, request oauth.UserInfoRequest) (
 		return UserInfo{}, err
 	}
 	info := UserInfo{Subject: claims.Subject}
-	if slices.Contains(source.Scopes, "email") {
-		info, err = s.emailClaims(ctx, source)
+	if slices.Contains(source.Scopes, "profile") {
+		profile, err := s.profileClaims(ctx, source)
 		if err != nil {
 			return UserInfo{}, err
 		}
-		info.Subject = claims.Subject
+		info.Name = profile.Name
+	}
+	if slices.Contains(source.Scopes, "email") {
+		email, err := s.emailClaims(ctx, source)
+		if err != nil {
+			return UserInfo{}, err
+		}
+		info.Email, info.EmailVerified = email.Email, email.EmailVerified
 	}
 	if slices.Contains(source.Scopes, "phone") {
 		phone, err := s.phoneClaims(ctx, source)

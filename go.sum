@@ -12,8 +12,6 @@ github.com/faustbrian/go-capability/v2 v2.0.2-0.20261015044219-caab644d2fec h1:z
 github.com/faustbrian/go-capability/v2 v2.0.2-0.20261015044219-caab644d2fec/go.mod h1:ssUHOHCArf/XQ+xfzVOmiDsV3eTPJeS2hyFH5uhqIJE=
 github.com/faustbrian/go-clock v1.2.0 h1:vy2700wB/gaXRgW7zWw1iF7twxrKDyL3dSd3fz1DdAA=
 github.com/faustbrian/go-clock v1.2.0/go.mod h1:ZU+wKx09xmXbtOf+swccuicq5Bkezby3k49uk7PCoA0=
-github.com/faustbrian/go-identity v0.0.0-20261015054516-5afeba0ac471 h1:/WRZC0q7VJJ2D3McrtX4VnJGsf8COHDGlqHQWpVMYqs=
-github.com/faustbrian/go-identity v0.0.0-20261015054516-5afeba0ac471/go.mod h1:CaT22sYyoJNiv7Dk9qMNHsDon97tytbbpjMq7/2ztcM=
 github.com/faustbrian/go-identity v0.0.0-20261021074754-2eafc2592af0 h1:iO7vithgLFJNvTtUpFsJyZ96QPCGFfNpSKJGtvpNkI0=
 github.com/faustbrian/go-identity v0.0.0-20261021074754-2eafc2592af0/go.mod h1:CaT22sYyoJNiv7Dk9qMNHsDon97tytbbpjMq7/2ztcM=
 github.com/faustbrian/go-identity/session v0.0.0-20261016125355-af740fb7fb76 h1:OcdRDyR/8DyxVDrQXmXNnmu8PULsfBOmUYA8CwpeQOw=

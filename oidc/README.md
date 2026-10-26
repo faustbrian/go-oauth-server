@@ -21,6 +21,23 @@ original password auth_time/amr and the original nonce when supplied. Resource
 scopes add no identity attributes. Signature/issuer/audience/time/nonce and the
 UserInfo subject must be validated by the relying party.
 
+## Optional consented profile name
+
+Set `Config.ProfileUserInfo=true`, declare `profile` with `openid` in the root
+extension catalog and selected human client, and obtain actual native consent.
+The native adapter must select its existing primary profile repository with an
+exact immutable attribute schema. No application name callback supplies claims.
+Only the current optional display `name` is disclosed in UserInfo and advertised
+in discovery. Absent names omit the claim; ID tokens remain unchanged. Images,
+custom attributes and other profile fields are not selected by this option.
+
+The native owner reads one consistent profile aggregate twice and fences current
+grant/client/consent/subject/credential authority without refreshing the original
+deadline. A committed profile change appears on the next authorized call; mixed
+snapshots, unavailable/mismatched schemas and late withdrawal return zero claims.
+The relying party must independently validate the ID token and equal UserInfo
+`sub`. See [OIDC Core sections5.1/5.4](https://openid.net/specs/openid-connect-core-1_0.html#ScopeClaims).
+
 ## Optional consented email UserInfo
 
 Set child `Config.EmailUserInfo=true`, declare root `Config.OIDCScopes` with
@@ -132,6 +149,6 @@ It writes no HTTP response. Follow the [selected logout profile](../docs/selecte
 including exact-session/expired-hint and migration/fleet requirements.
 
 Other prompt variants,
-profile/address/offline scopes, front/back-channel logout, private session JWT exchange,
+other profile fields, address/offline scopes, front/back-channel logout, private session JWT exchange,
 shared-issuer access-JWT/delegation, HTTP/reference integration and complete
 conformance/release qualification remain open, unadvertised and unstubbed.

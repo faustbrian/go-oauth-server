@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Opt into consented `profile` UserInfo with current native display `name` only.
+  Omit absent names, retain minimized ID tokens and default scopes, and deny
+  inconsistent or expired native custody without partial claims. Other profile
+  fields remain unselected; use matching root/native profile-source versions.
+
 - Select native RP-initiated logout with bounded standard parameters, verified
   issued hints and exact URI/state or local-only outcomes. Retained retired
   public keys can verify expired hints only for their still-current exact source

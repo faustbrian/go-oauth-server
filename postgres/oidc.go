@@ -84,13 +84,21 @@ func (s *Store) UserInfo(ctx context.Context, c oauth.UserInfoCommand) (out oaut
 	}
 	out = oauth.OIDCClaimsInput{Issuer: s.config.Protocol.Issuer, Environment: s.config.Protocol.Environment, TenantID: a.Grant.Tenant, UserID: a.Grant.User, ClientID: client.ID, Nonce: a.Payload.Request.Nonce, ExpectedSubject: a.Payload.Subject, Scopes: slices.Clone(a.Payload.Scopes), IssuedAt: a.CreatedAt, ExpiresAt: a.ExpiresAt, AuthenticatedAt: bindings.Authentication.Proof.IssuedAt, UserInfo: true, SubjectRegistration: registration, BoundSubject: boundSubject,
 		AuthorityExpiresAt: earliestUserInfoExpiry(start.Add(20*time.Second), a.ExpiresAt, a.Grant.ExpiresAt, credentialExpiry)}
-	if slices.Contains(a.Payload.Scopes, "email") || slices.Contains(a.Payload.Scopes, "phone") {
+	if slices.Contains(a.Payload.Scopes, "email") || slices.Contains(a.Payload.Scopes, "phone") || slices.Contains(a.Payload.Scopes, "profile") {
 		lifetime, err := original.Lifetime(now)
 		if err != nil {
 			return oauth.OIDCClaimsInput{}, oauth.ErrAccessDenied
 		}
 		out.AuthorityExpiresAt = earliestUserInfoExpiry(out.AuthorityExpiresAt, lifetime.ExpiresAt)
-		return s.userInfoIdentifiers(ctx, c.Request.AccessToken, client, a, out, start)
+		if slices.Contains(a.Payload.Scopes, "email") || slices.Contains(a.Payload.Scopes, "phone") {
+			out, err = s.userInfoIdentifiers(ctx, c.Request.AccessToken, client, a, out, start)
+			if err != nil {
+				return oauth.OIDCClaimsInput{}, err
+			}
+		}
+		if slices.Contains(a.Payload.Scopes, "profile") {
+			return s.userInfoProfile(ctx, c.Request.AccessToken, client, a, out, start)
+		}
 	}
 	return out, nil
 }

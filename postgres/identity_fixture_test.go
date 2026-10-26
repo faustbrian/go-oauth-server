@@ -96,6 +96,12 @@ func passwordFixture(t *testing.T, faults ...*oauthCommitFault) authenticatedPas
 }
 
 func passwordFixtureWithChange(t *testing.T, change bool, faults ...*oauthCommitFault) authenticatedPasswordFixture {
+	return passwordFixtureWithProfileSchema(t, change, nil, faults...)
+}
+
+// The optional schema is selected before genuine signup. Existing immutable
+// stored schemas are never rewritten to make a later profile read compatible.
+func passwordFixtureWithProfileSchema(t *testing.T, change bool, profileSchema *identity.AttributeSchema, faults ...*oauthCommitFault) authenticatedPasswordFixture {
 	t.Helper()
 	ctx, pool, sqlDB := isolatedPostgres(t, true, faults...)
 	keyNames := []string{"fingerprint", "request", "counter", "risk-evidence", "risk-seal", "preauth-cookie", "session-token", "session-csrf", "http-device", "delivery-envelope", "dummy-password", "capability-binding", "capability-signing", "signin-proof", "migration", "counter-replay", "http-rate", "otp-lockout", "otp-wrap", "otp-attempt", "otp-code", "otp-intent", "identifier", "delivery-digest", "delivery-namespace", "password-flow", "signup-binding", "signup-intent", "verification-scope", "capability-replay", "capability-envelope", "counter-envelope", "verification-http", "oauth-intent", "oauth-token", "oauth-envelope"}
@@ -120,7 +126,11 @@ func passwordFixtureWithChange(t *testing.T, change bool, faults ...*oauthCommit
 	origin := "https://" + server.Listener.Addr().String()
 	mailbox := &registrationMailbox{}
 	t.Cleanup(func() { mailbox.mu.Lock(); mailbox.body = ""; mailbox.mu.Unlock() })
-	graph, err := fixtureGraph(ctx, origin, secrets, pool, mailbox, hibpTransport{}, change)
+	var selectedSchema []identity.AttributeSchema
+	if profileSchema != nil {
+		selectedSchema = []identity.AttributeSchema{*profileSchema}
+	}
+	graph, err := fixtureGraph(ctx, origin, secrets, pool, mailbox, hibpTransport{}, change, selectedSchema...)
 	if err != nil {
 		var invalid identity.InvalidInputError
 		if errors.As(err, &invalid) && len(invalid.Field) <= 128 && strings.IndexFunc(invalid.Field, func(r rune) bool { return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '.') }) < 0 {

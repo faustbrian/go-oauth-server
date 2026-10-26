@@ -39,6 +39,34 @@ authority read without positive caching, then the child compares the persisted
 grant/client subject. Ordinary browser signout keeps the existing approved-grant policy;
 credential/owner withdrawal and grant/access revocation deny UserInfo.
 
+## Optional consented profile name UserInfo
+
+Select child `oidc.Config.ProfileUserInfo=true`, allow `openid` and `profile`
+in the root extension catalog and human client, and obtain native consent for
+both. Select native `Config.ProfileUserInfo` with exact immutable
+`AttributeSchemas` and `ProfileSchema` from the existing identity profile owner.
+The declaration must match actual stored schema bytes; it is not permission to
+guess, rewrite or migrate a user's attributes. Existing histories remain unchanged.
+
+Only the current optional display `name` is selected. Absent names omit the
+claim; `openid`-only consent discloses only the subject. ID tokens remain
+subject/authentication-only and discovery advertises just `profile`/`name`
+for this option. Other profile fields, image, custom attributes and email do
+not follow from selecting profile. Separately enabled email/phone retain their
+own explicit scopes and custody.
+
+[OIDC Core1.0 errata2 sections5.1/5.4](https://openid.net/specs/openid-connect-core-1_0.html#ScopeClaims)
+define voluntary display claims; code flows disclose scope-selected attributes
+through UserInfo. The native adapter requests only name through the existing
+primary `GetProfile`, compares consistent aggregate snapshots and rechecks
+original grant/client/consent/subject/key/credential authority. A real committed
+`ProfileService.ProfileUpdate` appears on the next current-authorized call.
+Mixed snapshots, missing/mismatched schema or source, withdrawal, cancellation
+and exclusive deadline failure return zero claims. The earliest original
+authority/token/grant/session/read-start+20s deadline never refreshes. RPs must
+independently verify the unchanged ID token and equal UserInfo `sub`; a display
+name is not an identity key. No new callback, authority or migration is added.
+
 ## Optional consented email UserInfo
 
 Select `oidc.Config.EmailUserInfo=true` and configure the root extension catalog

@@ -92,7 +92,7 @@ func baselineRiskPolicyConfig(version uint64, screening, reset bool, change ...b
 // copied: all authentication, authority, SQL, replay, audit and issuance remain
 // the public native owners. Reset/MFA workloads are not selected; the optional
 // real password-change profile exists only to prove credential withdrawal.
-func fixtureGraph(ctx context.Context, origin string, fixtureKeys map[string][32]byte, pool *database.Pool, sender delivery.Sender, outbound http.RoundTripper, change bool) (_ *baselineGraph, err error) {
+func fixtureGraph(ctx context.Context, origin string, fixtureKeys map[string][32]byte, pool *database.Pool, sender delivery.Sender, outbound http.RoundTripper, change bool, profileSchemas ...identity.AttributeSchema) (_ *baselineGraph, err error) {
 	key := func(name string) [32]byte { return fixtureKeys[name] }
 	bytes := func(name string) []byte { k := key(name); return append([]byte(nil), k[:]...) }
 	authorize, err := fixtureAuthorization(change)
@@ -235,6 +235,12 @@ func fixtureGraph(ctx context.Context, origin string, fixtureKeys map[string][32
 		return nil, err
 	}
 	schema := identity.AttributeSchema{ID: "local-signup-fields", Version: 1, Fields: []identity.FieldPolicy{{Name: "name", Kind: identity.AttributeString, Cardinality: identity.CardinalityScalar, Normalization: identity.NormalizeNone, InputPermission: identity.FieldWrite, OutputPermission: identity.FieldRead, WriteAuthorization: identity.FieldWriteSystem, Sensitivity: identity.SensitivityPersonal, MigrationVersion: 1, Default: identity.AttributeValue{Kind: identity.AttributeString, Scalar: identity.AttributeScalar{Kind: identity.AttributeString, String: "registered"}}}}}
+	if len(profileSchemas) > 1 {
+		return nil, identity.InvalidInputError{Field: "fixture_profile_schema"}
+	}
+	if len(profileSchemas) == 1 {
+		schema = profileSchemas[0]
+	}
 	fields, err := identity.NewAttributeProcessor(schema, authorize, func(ctx context.Context, _ identity.NormalizationPolicy, value identity.AttributeScalar) (identity.AttributeScalar, error) {
 		return value, ctx.Err()
 	}, identity.AttributeProcessorConfig{Clock: clock.System{}, MaximumDuration: time.Second, PolicyVersion: 9, ValidateCanonicalUserID: func(ctx context.Context, user identity.UserID) error {

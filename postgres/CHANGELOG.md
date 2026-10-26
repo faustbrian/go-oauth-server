@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Opt into current consented OIDC display-name UserInfo using the existing
+  primary profile repository and exact immutable schema configuration. Observe
+  actual committed profile changes on the next authorized call without widening
+  ID tokens or exposing image/custom fields; mixed snapshots, late withdrawal
+  and original expiry deny all claims. Select matching root/child versions and
+  compatible installed profile history; no new migration is required.
+
 - Support explicitly selected refresh-issued human access exchange using bounded
   original S256 issuance provenance retained through native rotations. Existing
   grant/consent/current human authority, narrowed scopes, parent expiry and

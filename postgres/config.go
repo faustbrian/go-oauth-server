@@ -93,6 +93,10 @@ type Config struct {
 	// instances before enabling. Only this explicit purpose withdraws existing
 	// OAuth grants; ordinary browser signout retains its existing grant policy.
 	RPInitiatedLogout bool
+	// ProfileUserInfo explicitly selects the existing primary profile owner for
+	// consented OIDC display-name reads. It must match the profile scope catalog;
+	// stored immutable schemas are never guessed or migrated by this adapter.
+	ProfileUserInfo *ProfileUserInfoConfig
 }
 
 // Format redacts keys, correlated deployment scopes and policy dependencies.
@@ -115,6 +119,7 @@ type Store struct {
 	schema         string
 	identity       [32]byte
 	domain         *kernel.Repository
+	profiles       *kernel.Repository
 	counters       *riskpg.Repository
 	crypto         *envelope.Service
 	active         oauth.TokenDigestKey
@@ -222,7 +227,16 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	query, admission := *c.Coordinator.QueryPolicy, *c.Coordinator.AdmissionPolicy
 	c.Coordinator.QueryPolicy = &query
 	c.Coordinator.AdmissionPolicy = &admission
-	s := &Store{pool: pool, config: c, schema: pgx.Identifier{c.Schema}.Sanitize()}
+	profiles, err := newUserInfoProfileRepository(pool, c)
+	if err != nil {
+		return nil, oauth.ErrInvalidRequest
+	}
+	if c.ProfileUserInfo != nil {
+		// The primary repository owns the frozen schema copy. Retain only its
+		// selected identity here, not an alias to caller-owned personal defaults.
+		c.ProfileUserInfo = &ProfileUserInfoConfig{ProfileSchema: c.ProfileUserInfo.ProfileSchema}
+	}
+	s := &Store{pool: pool, config: c, schema: pgx.Identifier{c.Schema}.Sanitize(), profiles: profiles}
 	if c.RPInitiatedLogout {
 		if s.endSession, err = sessionpg.NewOIDCEndSessionEffect(c.Session.Repository, c.Session.Profile); err != nil {
 			return nil, oauth.ErrInvalidRequest

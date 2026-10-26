@@ -3,6 +3,35 @@
 Experimental persistence and public service composition for the
 [selected authorization-code profile](../docs/selected-profile.md).
 
+## Optional current profile-name UserInfo
+
+Select native `Config.ProfileUserInfo=&ProfileUserInfoConfig{...}` with the exact
+existing identity owner's immutable `AttributeSchemas` and `ProfileSchema`.
+Both that source and the protocol's `profile` scope must be selected together.
+The same primary pool and existing public `identity/postgres.GetProfile` owner
+are used; no name callback, raw identity-table reader or migration is introduced.
+Use matching published root/child/native versions, installed identity profile
+history and a schema compatible with actual stored attributes before enabling.
+Reserved profile names cannot masquerade as custom fields; schema definitions
+are neither guessed nor rewritten during reads.
+
+Enable child `oidc.Config.ProfileUserInfo`, allow `openid`/`profile` for the human
+client and obtain real consent through the existing code/S256 flow. Only current
+optional display `name` is projected in UserInfo. A committed native
+`ProfileService.ProfileUpdate` is visible on the next authorized call using the
+same grant/token; image, custom attributes and other profile claims are omitted.
+ID tokens remain minimized and RPs must independently verify them and equal
+UserInfo `sub`. Openid-only consent never discloses a name.
+
+The source validates the full immutable stored document before selecting name.
+Two consistent aggregate snapshots and repeated original current-authority,
+grant/client/consent/subject/key fences deny mixed profile versions and late
+withdrawal. Cancellation, unavailable/mismatched source and original exclusive
+deadline failures return no partial claims. The earliest original token/grant/
+session/credential/read-start+20s ceiling never refreshes. Existing default,
+email, phone, pairwise and approved-grant browser-logout behavior is retained.
+See the [selected name profile](../docs/selected-oidc-profile.md#optional-consented-profile-name-userinfo).
+
 ## Optional human code-access delegation
 
 Select the separate [human code-access exchange profile](../docs/human-code-exchange.md)

@@ -33,6 +33,10 @@ type ManagedClientPolicy struct {
 	// PostLogoutRedirects is an independent exact ceiling, never inferred from Redirects.
 	PostLogoutRedirects []string
 	Scopes              ScopeCatalog
+	// PublicClients permits managed none-authenticated human-web registrations.
+	// Zero retains confidential-only management; native storage needs its
+	// separately installed forward history before selecting this capability.
+	PublicClients bool `json:",omitempty"`
 	// DeviceAuthorization is an explicit ceiling for newly managed device
 	// registrations; false preserves the existing browser-only namespace.
 	DeviceAuthorization bool
@@ -69,8 +73,8 @@ type CurrentClientRegistry interface {
 }
 
 // ClientManagementRequest borrows genuine browser/CSRF custody. Create accepts
-// no ID/version; the native owner allocates both once. Public=false explicitly
-// selects the supported Basic confidential class. Delete accepts only ID/version
+// no ID/version; the native owner allocates both once. Public=true selects none
+// without a secret; Public=false selects Basic confidential custody. Delete accepts only ID/version
 // and no registration edits. Owner/tenant are exact preconditions, not overrides.
 // RequestKey is correlation only and never authenticates a manager.
 type ClientManagementRequest struct {
@@ -132,7 +136,8 @@ func (e ClientManagementExecution) ValidateAt(now time.Time) error {
 }
 
 // ClientManagementResult returns metadata only except a fresh known committed
-// creation's reveal-once Secret. Retry/recovery/unknown never redelivers secret.
+// confidential creation's reveal-once Secret. Public creation and
+// retry/recovery/unknown never deliver a secret.
 type ClientManagementResult struct {
 	Client     Client
 	Secret     Token
@@ -150,7 +155,7 @@ type ClientManager interface {
 	ManageClient(context.Context, ClientManagementExecution) (ClientManagementResult, error)
 }
 
-// ClientCreate selects confidential creation under current platform-owner policy.
+// ClientCreate selects public or confidential creation under current platform-owner policy.
 func (s *Service) ClientCreate(ctx context.Context, r ClientManagementRequest) (ClientManagementResult, error) {
 	return s.manageClient(ctx, r, false)
 }
@@ -203,7 +208,7 @@ func (s *Service) manageClient(ctx context.Context, r ClientManagementRequest, r
 	if e.ValidateAt(s.config.Clock.Now()) != nil {
 		return ClientManagementResult{Completion: out.Completion}, ErrAccessDenied
 	}
-	if remove || out.Completion.Replayed || out.Completion.Outcome != identity.CommitOutcomeCommitted {
+	if r.Public || remove || out.Completion.Replayed || out.Completion.Outcome != identity.CommitOutcomeCommitted {
 		out.Secret = Token{}
 	}
 	return out, nil
@@ -212,13 +217,16 @@ func (s *Service) manageClient(ctx context.Context, r ClientManagementRequest, r
 // ValidateClientManagementRequest copies the finite registration variant and
 // checks immutable policy preconditions, never authentication or authorization.
 func ValidateClientManagementRequest(r ClientManagementRequest, remove bool, p ManagedClientPolicy, issuer Issuer) (ClientManagementRequest, error) {
-	if r.Owner != p.Owner || r.TenantID != p.TenantID || r.Origin != issuer.String() || r.CSRF == (session.CSRFToken{}) || !visible(r.Network, 128) || r.RequestKey == (identity.IdempotencyKey{}) || r.Public {
+	if r.Owner != p.Owner || r.TenantID != p.TenantID || r.Origin != issuer.String() || r.CSRF == (session.CSRFToken{}) || !visible(r.Network, 128) || r.RequestKey == (identity.IdempotencyKey{}) {
 		return ClientManagementRequest{}, ErrAccessDenied
 	}
 	if _, err := session.ParseToken(r.Session.Token()); err != nil {
 		return ClientManagementRequest{}, ErrInvalidRequest
 	}
 	if remove {
+		if r.Public {
+			return ClientManagementRequest{}, ErrAccessDenied
+		}
 		if !strings.HasPrefix(r.ClientID, ManagedClientPrefix) || !identifier(r.ClientID) || r.Version == 0 || r.Version == ^uint64(0) || len(r.Redirects) != 0 || len(r.Scopes) != 0 || len(r.PostLogoutRedirects) != 0 || r.DeviceAuthorization {
 			return ClientManagementRequest{}, ErrInvalidRequest
 		}
@@ -226,6 +234,9 @@ func ValidateClientManagementRequest(r ClientManagementRequest, remove bool, p M
 	}
 	if r.ClientID != "" || r.Version != 0 {
 		return ClientManagementRequest{}, ErrInvalidRequest
+	}
+	if r.Public && !p.PublicClients {
+		return ClientManagementRequest{}, ErrAccessDenied
 	}
 	if r.DeviceAuthorization && !p.DeviceAuthorization {
 		return ClientManagementRequest{}, ErrAccessDenied
@@ -269,7 +280,7 @@ func (s *Service) currentClient(ctx context.Context, id string) (Client, error) 
 		return Client{}, err
 	}
 	c, err = ValidateClient(c)
-	if err != nil || c.ID != id || c.Owner != s.config.ManagedClients.Owner || c.Public || c.Workload != nil || c.SubjectRegistration != nil || c.Resource != s.config.Resource || !scopeSubset(c.Scopes, s.config.ManagedClients.Scopes.values) || c.DeviceAuthorization && !s.config.ManagedClients.DeviceAuthorization {
+	if err != nil || c.ID != id || c.Owner != s.config.ManagedClients.Owner || c.Public && !s.config.ManagedClients.PublicClients || c.Workload != nil || c.SubjectRegistration != nil || c.Resource != s.config.Resource || !scopeSubset(c.Scopes, s.config.ManagedClients.Scopes.values) || c.DeviceAuthorization && !s.config.ManagedClients.DeviceAuthorization {
 		return Client{}, ErrAccessDenied
 	}
 	for _, redirect := range c.Redirects {

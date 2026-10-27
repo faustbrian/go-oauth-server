@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Accept explicit managed public-client creation and safe private metadata with
+  registered `none` authentication. Public creation never reveals a secret;
+  existing confidential Basic creation, rotation and custody stay unchanged.
+  Durable public clients require matching native support and its forward schema
+  activation; this core change alone does not install or select native storage.
+
 - Add optional trusted native profile custody to OIDC UserInfo projections,
   preserving the existing four-method extension and minimized ID-token contract.
   Select matching native and child versions for consented display-name disclosure.

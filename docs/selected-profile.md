@@ -122,12 +122,17 @@ UTF-8/ASCII response bytes, recheck before changing these profile decisions):
 | [RFC9207](https://www.rfc-editor.org/rfc/rfc9207.txt) | 2.3,2.4,3: issuer response and metadata flag | `c9c17b9824315aca9bda5c0b5e3627cb24aa28d54324292f3761006209b705fd` |
 | [RFC9728](https://www.rfc-editor.org/rfc/rfc9728.txt) | 4: authorization-server protected_resources | `b65bcd0d9daf90fd7006a42cf48e0ac3ba24b7f5637d5197f2de41c6b91c8a89` |
 
-### Optional managed confidential clients
+### Optional managed human-web clients
 
 The separately selected native [client-management profile](../postgres/README.md#optional-platform-owned-confidential-client-management)
-adds finite authenticated platform-owned confidential creation, terminal
+adds finite authenticated platform-owned public or confidential creation, terminal
 deletion, private discovery and separately selected bounded secret rotation or
 complete redirect/scope replacement.
+Creation explicitly selects `Public=true`/`none` without secret custody or
+`Public=false`/Basic with reveal-once custody. Public registrations require the
+`ManagedClientPolicy.PublicClients` ceiling and native `PublicClients`
+forward-schema activation. Safe private metadata and
+terminal deletion cover both classes; secret rotation remains confidential-only.
 `Config.ManagedClients` fixes tenant/owner/redirect/scope ceilings;
 actual fresh human custody, exact platform policy, origin/CSRF and prepared
 request keys authorize each change. Ordinary running services use current native

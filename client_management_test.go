@@ -101,7 +101,7 @@ func TestClientManagementDelegatesOriginalHumanCustodyAndCopiesCreatePolicy(t *t
 	if _, err := s.ClientCreate(context.Background(), r); err != nil || !called || r.Scopes[0] != "identity:read" {
 		t.Fatal("genuine confidential create did not delegate safely", err)
 	}
-	for _, mode := range []string{"owner", "tenant", "origin", "csrf", "public", "id", "scope", "redirect"} {
+	for _, mode := range []string{"owner", "tenant", "origin", "csrf", "id", "scope", "redirect"} {
 		bad := r
 		switch mode {
 		case "owner":
@@ -112,8 +112,6 @@ func TestClientManagementDelegatesOriginalHumanCustodyAndCopiesCreatePolicy(t *t
 			bad.Origin = "https://foreign.example"
 		case "csrf":
 			bad.CSRF = session.CSRFToken{}
-		case "public":
-			bad.Public = true
 		case "id":
 			bad.ClientID = "caller-selected"
 		case "scope":

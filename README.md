@@ -80,12 +80,17 @@ replacement authentication engine.
   needed to obtain new tokens. Existing `ConsentManager` implementations do not
   acquire a new mandatory method.
 - `Service.ClientCreate/Delete` optionally manage one immutable platform-owned
-  confidential class through `Config.ManagedClients` and matching native
+  public (`Public=true`, `none`) or confidential (`Public=false`, Basic) class
+  through `Config.ManagedClients` and matching native
   `CurrentClientRegistry`. Genuine fresh password-session custody, exact current
   platform-management policy, origin/CSRF and native request keys are required;
   configuring the owner does not authorize a manager. Creation allocates a
-  reserved `managed.` ID and reveals a random secret only once after known
-  commitment. Existing warm services resolve actual registry status on every
+  reserved `managed.` ID. Only confidential creation reveals a random secret,
+  once after known commitment; public creation never generates or reveals one.
+  Public creation requires `ManagedClientPolicy.PublicClients` and matching
+  native `PublicClients` activation and its
+  forward schema; unchanged confidential-only deployments need neither.
+  Existing warm services resolve actual registry status on every
   call; terminal deletion denies all descendants without token fanout.
   Selected OAuth discovery includes the managed human-web/Basic capability,
   including when no static confidential registration exists.

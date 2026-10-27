@@ -36,17 +36,18 @@ type managedRegistration struct {
 	Redirects, Scopes                            []string
 	PostLogoutRedirects                          []string `json:",omitempty"`
 	DeviceAuthorization                          bool     `json:",omitempty"`
+	Public                                       bool     `json:",omitempty"`
 }
 
 func registrationWire(c oauth.Client) managedRegistration {
-	return managedRegistration{c.ID, c.Owner.PlatformID(), c.Resource, c.AuthenticationMethod, c.Version, c.Redirects, c.Scopes, c.PostLogoutRedirects, c.DeviceAuthorization}
+	return managedRegistration{c.ID, c.Owner.PlatformID(), c.Resource, c.AuthenticationMethod, c.Version, c.Redirects, c.Scopes, c.PostLogoutRedirects, c.DeviceAuthorization, c.Public}
 }
 func registrationClient(r managedRegistration) (oauth.Client, error) {
 	owner, err := oauth.NewPlatformOwner(r.Platform)
 	if err != nil {
 		return oauth.Client{}, err
 	}
-	return oauth.ValidateClient(oauth.Client{ID: r.ID, Owner: owner, Version: r.Version, Resource: r.Resource, AuthenticationMethod: r.AuthenticationMethod, Redirects: r.Redirects, PostLogoutRedirects: r.PostLogoutRedirects, Scopes: r.Scopes, DeviceAuthorization: r.DeviceAuthorization})
+	return oauth.ValidateClient(oauth.Client{ID: r.ID, Owner: owner, Version: r.Version, Public: r.Public, Resource: r.Resource, AuthenticationMethod: r.AuthenticationMethod, Redirects: r.Redirects, PostLogoutRedirects: r.PostLogoutRedirects, Scopes: r.Scopes, DeviceAuthorization: r.DeviceAuthorization})
 }
 func decodeRegistration(wire []byte) (oauth.Client, error) {
 	var r managedRegistration
@@ -113,7 +114,7 @@ func (s *Store) readManagedClient(ctx context.Context, id string) (managedClient
 		return r, oauth.ErrUnavailable
 	}
 	r.Version, err = strconv.ParseUint(version, 10, 64)
-	if err != nil || r.Version == 0 || len(r.Digest) != 32 || !s.managedMetadata(r.Client) || r.Client.ID != id || r.State != "active" && r.State != "deleted" || r.State == "active" && r.Client.Version != r.Version {
+	if err != nil || r.Version == 0 || r.Client.Public && len(r.Digest) != 0 || !r.Client.Public && len(r.Digest) != 32 || !s.managedMetadata(r.Client) || r.Client.ID != id || r.State != "active" && r.State != "deleted" || r.State == "active" && r.Client.Version != r.Version {
 		return managedClientRecord{}, oauth.ErrUnavailable
 	}
 	r.SecretVersion = r.Client.Version
@@ -131,12 +132,15 @@ func (s *Store) readManagedClient(ctx context.Context, id string) (managedClient
 		} else if previousExpiry != nil || len(r.PreviousDigest) != 0 {
 			return managedClientRecord{}, oauth.ErrUnavailable
 		}
+		if r.Client.Public && (r.SecretVersion != 1 || r.PreviousVersion != 0) {
+			return managedClientRecord{}, oauth.ErrUnavailable
+		}
 	}
 	return r, nil
 }
 func (s *Store) managedMetadata(c oauth.Client) bool {
 	p := s.config.Protocol.ManagedClients
-	if p == nil || c.Owner != p.Owner || !strings.HasPrefix(c.ID, oauth.ManagedClientPrefix) || c.Public || c.Workload != nil || c.SubjectRegistration != nil || c.Resource != s.config.Protocol.Resource || !scopeSubset(c.Scopes, p.Scopes.Scopes()) || c.DeviceAuthorization && !p.DeviceAuthorization {
+	if p == nil || c.Owner != p.Owner || !strings.HasPrefix(c.ID, oauth.ManagedClientPrefix) || c.Public && (!s.config.PublicClients || !p.PublicClients) || c.Workload != nil || c.SubjectRegistration != nil || c.Resource != s.config.Protocol.Resource || !scopeSubset(c.Scopes, p.Scopes.Scopes()) || c.DeviceAuthorization && !p.DeviceAuthorization {
 		return false
 	}
 	if _, err := oauth.ValidateClient(c); err != nil {
@@ -155,7 +159,7 @@ func (s *Store) managedMetadata(c oauth.Client) bool {
 	return true
 }
 
-// AuthenticateCurrentClient verifies digest-only random Basic custody after
+// AuthenticateCurrentClient verifies the registered none/Basic class after
 // primary status/version admission. It never authenticates a human manager.
 func (s *Store) AuthenticateCurrentClient(ctx context.Context, c oauth.Client, a oauth.ClientAuthentication) error {
 	ctx, stop, err := s.bounded(ctx)

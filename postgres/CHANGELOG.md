@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add opt-in platform-managed public clients with `none` authentication and no
+  generated or persisted secret. Genuine manager creation, current metadata,
+  consent/S256 code, refresh, revocation, terminal deletion and original
+  metadata-only recovery reuse existing native owners. Install the new
+  `ClientPublicMigrationSource`, replace unaware serving instances, then select
+  matching native/protocol `PublicClients` flags. Confidential-only deployments
+  need no new schema; confidential custody and rotation remain unchanged.
+
 - Opt into current consented OIDC display-name UserInfo using the existing
   primary profile repository and exact immutable schema configuration. Observe
   actual committed profile changes on the next authorized call without widening

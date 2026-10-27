@@ -82,6 +82,11 @@ type Config struct {
 	// Install ClientUpdateMigrationSource and retire all non-update-aware serving
 	// instances before enabling. Rotation-aware consent/client history is required.
 	ClientMetadataUpdates bool
+	// PublicClients selects no-secret managed human-web registrations. It must
+	// match Protocol.ManagedClients.PublicClients. Install ClientPublicMigrationSource
+	// and retire unaware serving instances before enabling; confidential-only
+	// deployments leave both false and need no additional schema.
+	PublicClients bool
 	// ConsentReuseTTL explicitly selects silent OIDC approval reuse for 1s..24h.
 	// Zero selects only a preactivation legacy writer. After installing expiry
 	// history, EVERY accepting writer must retain a positive TTL; mixed/zero
@@ -183,6 +188,9 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 		return nil, oauth.ErrInvalidRequest
 	}
 	if c.ClientMetadataUpdates && !c.ClientSecretRotation {
+		return nil, oauth.ErrInvalidRequest
+	}
+	if c.PublicClients != (protocol.ManagedClients != nil && protocol.ManagedClients.PublicClients) {
 		return nil, oauth.ErrInvalidRequest
 	}
 	if c.ConsentReuseTTL != 0 && (!c.ConsentManagement || len(protocol.OIDCScopes.Scopes()) == 0 || c.ConsentReuseTTL < time.Second || c.ConsentReuseTTL > 24*time.Hour || c.ConsentReuseTTL%time.Microsecond != 0) {

@@ -402,7 +402,7 @@ func (p *phase) buildCommand() error {
 			return oauth.ErrInvalidRequest
 		}
 		if i.Transition == rotateManagedSecret {
-			if !p.store.config.ClientSecretRotation || i.ClientChange.Overlap < 0 || i.ClientChange.Overlap > 24*time.Hour || i.ClientChange.Overlap%time.Microsecond != 0 {
+			if p.client.Public || !p.store.config.ClientSecretRotation || i.ClientChange.Overlap < 0 || i.ClientChange.Overlap > 24*time.Hour || i.ClientChange.Overlap%time.Microsecond != 0 {
 				return oauth.ErrInvalidRequest
 			}
 		} else if i.ClientChange.Overlap != 0 {
@@ -412,7 +412,7 @@ func (p *phase) buildCommand() error {
 			return oauth.ErrInvalidRequest
 		}
 		if i.Transition == updateManagedClient {
-			if !p.store.config.ClientMetadataUpdates || i.ClientChange.SecretVersion == 0 {
+			if p.client.Public || !p.store.config.ClientMetadataUpdates || i.ClientChange.SecretVersion == 0 {
 				return oauth.ErrInvalidRequest
 			}
 			if _, err := p.store.updatedClient(p.client, i.ClientChange.Replacement); err != nil {
@@ -992,7 +992,7 @@ func (p *phase) GenerateFeaturePreparation(ctx context.Context, c identity.Comma
 		owned := *p.deviceCodes
 		out.DeviceCodes = &owned
 	}
-	if i.Transition == createManagedClient || i.Transition == rotateManagedSecret {
+	if i.Transition == createManagedClient && !p.client.Public || i.Transition == rotateManagedSecret {
 		token, err := oauth.NewToken()
 		if err != nil {
 			return nil, err
@@ -1253,7 +1253,7 @@ func (p *phase) restore(ctx context.Context, generation uint64, wire []byte, ini
 			return oauth.ErrUnavailable
 		}
 	}
-	if out.Input.Transition == createManagedClient || out.Input.Transition == rotateManagedSecret {
+	if out.Input.Transition == createManagedClient && !p.client.Public || out.Input.Transition == rotateManagedSecret {
 		// Authenticate the originally captured generation, not a registration
 		// version advanced by metadata replacement. Legacy absent fields retain
 		// their original coupled interpretation in managementSecretVersion.

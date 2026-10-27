@@ -2,11 +2,41 @@ package oauthpostgres
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	oauth "github.com/faustbrian/go-oauth-server"
 )
+
+func TestManagedRegistrationPreservesPublicClassAndLegacyConfidentialEncoding(t *testing.T) {
+	owner, _ := oauth.NewPlatformOwner("platform")
+	client := oauth.Client{ID: "managed.abcdefghijklmnopqrstuw", Owner: owner, Version: 1, Public: true, AuthenticationMethod: "none", Resource: "https://api.example", Redirects: []string{"https://client.example/cb"}, Scopes: []string{"identity:read"}}
+	wire, err := json.Marshal(registrationWire(client))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := decodeRegistration(wire)
+	if err != nil || !decoded.Public || decoded.AuthenticationMethod != "none" {
+		t.Fatal("durable public metadata lost class", err)
+	}
+	client.Public, client.AuthenticationMethod = false, "client_secret_basic"
+	wire, err = json.Marshal(registrationWire(client))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(wire, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := fields["Public"]; ok {
+		t.Fatal("unchanged confidential registration bytes gained a field")
+	}
+	decoded, err = decodeRegistration(wire)
+	if err != nil || decoded.Public || decoded.AuthenticationMethod != "client_secret_basic" {
+		t.Fatal("legacy confidential class changed", err)
+	}
+}
 
 func TestCurrentClientOwnsEveryStaticProjection(t *testing.T) {
 	owner, _ := oauth.NewPlatformOwner("platform")

@@ -68,6 +68,9 @@ func (s *Store) managementPolicy() [32]byte {
 	if p == nil {
 		return [32]byte{}
 	}
+	// Enabling a new class must not strand original confidential preparation.
+	// PublicClients is deliberately outside this retained policy identity;
+	// each create's class is bound in clientIntent and sealed registration.
 	wire, _ := json.Marshal(struct {
 		Configuration       [32]byte
 		Platform            string
@@ -193,14 +196,17 @@ func (s *Store) ManageClient(ctx context.Context, c oauth.ClientManagementExecut
 	if c.ValidateAt(s.now()) != nil || !s.now().Before(p.input.ObservationUntil) {
 		return oauth.ClientManagementResult{Completion: out.Completion}, oauth.ErrAccessDenied
 	}
-	if p.applied && result.Outcome == identity.CommitOutcomeCommitted && !c.Delete {
+	if p.applied && result.Outcome == identity.CommitOutcomeCommitted && !c.Delete && !p.client.Public {
 		out.Secret, err = oauth.ParseToken(p.output.ClientSecret)
 	}
 	return out, err
 }
 func (s *Store) clientManagementPhase(ctx context.Context, c oauth.ClientManagementExecution, action string) (*phase, error) {
 	r := c.Request
-	client := oauth.Client{ID: oauth.ManagedClientPrefix + "pending", Owner: s.config.Protocol.ManagedClients.Owner, Version: 1, Resource: s.config.Protocol.Resource, AuthenticationMethod: "client_secret_basic", Redirects: r.Redirects, PostLogoutRedirects: r.PostLogoutRedirects, Scopes: r.Scopes, DeviceAuthorization: r.DeviceAuthorization}
+	client := oauth.Client{ID: oauth.ManagedClientPrefix + "pending", Owner: s.config.Protocol.ManagedClients.Owner, Version: 1, Public: r.Public, Resource: s.config.Protocol.Resource, AuthenticationMethod: "client_secret_basic", Redirects: r.Redirects, PostLogoutRedirects: r.PostLogoutRedirects, Scopes: r.Scopes, DeviceAuthorization: r.DeviceAuthorization}
+	if r.Public {
+		client.AuthenticationMethod = "none"
+	}
 	version := uint64(0)
 	secretVersion := uint64(0)
 	if s.config.ClientMetadataUpdates {
@@ -214,6 +220,9 @@ func (s *Store) clientManagementPhase(ctx context.Context, c oauth.ClientManagem
 			return nil, err
 		}
 		client = existing.Client
+		if client.Public && action != "identity.oauth-server.client-delete" {
+			return nil, oauth.ErrAccessDenied
+		}
 		if s.config.ClientMetadataUpdates {
 			secretVersion = existing.SecretVersion
 		}
@@ -244,7 +253,8 @@ func (p *phase) clientIntent(r oauth.ClientManagementRequest) (identity.RequestI
 		Replacement         *clientReplacement `json:",omitempty"`
 		PostLogoutRedirects []string           `json:",omitempty"`
 		DeviceAuthorization bool               `json:",omitempty"`
-	}{p.store.managementPolicy(), p.input.Transition == deleteManagedClient, r.ClientID, r.Version, r.Redirects, r.Scopes, r.Origin, r.Network, p.input.Grant.Source, p.rotationOverlap(), p.input.ClientChange.Replacement, r.PostLogoutRedirects, r.DeviceAuthorization})
+		Public              bool               `json:",omitempty"`
+	}{p.store.managementPolicy(), p.input.Transition == deleteManagedClient, r.ClientID, r.Version, r.Redirects, r.Scopes, r.Origin, r.Network, p.input.Grant.Source, p.rotationOverlap(), p.input.ClientChange.Replacement, r.PostLogoutRedirects, r.DeviceAuthorization, r.Public})
 	if err != nil {
 		return identity.RequestIntent{}, err
 	}

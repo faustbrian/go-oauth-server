@@ -54,6 +54,45 @@ refresh histories require reauthorization. See the linked profile for withdrawal
 and original-lineage freshness semantics.
 
 
+## Optional platform-owned public client management
+
+The same genuine platform-manager, owner/tenant, session, origin/CSRF and keyed
+management authority can create public human-web clients with `Public=true`.
+Select both native `Config.PublicClients` and
+`Config.Protocol.ManagedClients.PublicClients`; mismatched activation denies
+construction. Append `ClientPublicMigrationSource` at a new version after the
+installed client history (including any selected rotation/update histories).
+Stop issuance, install this forward history, and replace every accepting
+instance with a public-aware version before enabling either flag. Never rewrite
+installed history or roll back to unaware binaries after public rows exist.
+Unchanged confidential-only deployments require neither the history nor flags.
+Plan a read/write-blocking maintenance window: the single `ALTER TABLE` validates
+existing rows under `ACCESS EXCLUSIVE`. Bound lock acquisition and execution
+with `lock_timeout`/`statement_timeout` or equivalent operator command deadlines.
+Complete schema installation and the public-aware rollout before enabling flags.
+See [PostgreSQL18 ALTER TABLE](https://www.postgresql.org/docs/18/sql-altertable.html).
+
+Public registrations persist `Public=true`, method `none`, and a NULL secret
+digest. No public secret is generated, encrypted, stored or revealed, including
+unknown results and original retries/recovery. Public clients use the existing
+explicit consent/S256 code, refresh and client-bound revocation flow without
+Basic credentials; supplied Basic credentials deny. Fresh get/list and protocol
+services read the current native registration, not a creation-response cache.
+Deletion accepts the discovered ID/version with the ordinary closed delete
+request (`Public` omitted/false); it withdraws descendants under existing client
+fences. Public secret rotation and metadata replacement remain unselected and
+deny; `Public=false` confidential creation and rotation are unchanged.
+
+The forward schema preserves existing confidential metadata/digests and denies
+public rows carrying a secret. Activation does not change the original native
+configuration/management-policy identity for unchanged confidential commands;
+the class is bound separately in each create intent and encrypted registration.
+Old confidential grant and metadata-only recovery custody therefore remains
+original, while using one request key for another class conflicts.
+
+This profile selects no RFC7591 registration, OIDC/device management, HTTP,
+organization delegation or token exchange.
+
 ## Optional platform-owned confidential client management
 
 Select `Config.Protocol.ManagedClients` with one exact platform owner, tenant,

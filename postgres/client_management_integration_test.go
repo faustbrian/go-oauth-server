@@ -487,6 +487,11 @@ func TestNativeManagedClientExactManagerCSRFAndImmutablePolicyDenials(t *testing
 }
 
 func TestNativeManagedClientRequiredEffectsRollbackAndOriginalRecovery(t *testing.T) {
+	testNativeManagedClientRequiredEffectsRollbackAndOriginalRecovery(t, false)
+}
+
+func testNativeManagedClientRequiredEffectsRollbackAndOriginalRecovery(t *testing.T, public bool) {
+	t.Helper()
 	for _, mode := range []string{"audit", "outbox", "unknown", "before"} {
 		t.Run(mode, func(t *testing.T) {
 			var provisional atomic.Bool
@@ -497,6 +502,9 @@ func TestNativeManagedClientRequiredEffectsRollbackAndOriginalRecovery(t *testin
 			}}
 			f := passwordFixture(t, fault)
 			enableClientManagement(t, &f)
+			if public {
+				installPublicClients(t, &f)
+			}
 			service, err := oauthpostgres.NewService(f.pool, f.oauth, f.keys)
 			if err != nil {
 				t.Fatal(err)
@@ -514,6 +522,7 @@ func TestNativeManagedClientRequiredEffectsRollbackAndOriginalRecovery(t *testin
 				fault.armed.Store(true)
 			}
 			r := clientCreateRequest(t, f, "client-required-effects-"+mode)
+			r.Public = public
 			out, err := service.ClientCreate(f.ctx, r)
 			if err == nil || !provisional.Load() {
 				t.Fatal("required failure reported success")

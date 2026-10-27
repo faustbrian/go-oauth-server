@@ -39,6 +39,14 @@ func (s *Store) authenticateClientSnapshot(ctx context.Context, c oauth.Client, 
 	if r.State != "active" || clientFingerprint(r.Client) != clientFingerprint(c) {
 		return nil, oauth.ErrInvalidClient
 	}
+	if c.Public {
+		if a.Method() != "none" {
+			return nil, oauth.ErrInvalidClient
+		}
+		// No credential snapshot is invented for none. The existing exact
+		// registration SHARE/version fence still serializes issuance with delete.
+		return nil, nil
+	}
 	var digest oauth.ClientSecretDigest
 	copy(digest[:], r.Digest)
 	matched := a.VerifySecretDigest(c.ID, r.SecretVersion, digest) == nil

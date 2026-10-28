@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add explicit `ManagedClientPolicy.PublicOIDC` selection for no-secret managed
+  public browser clients requesting `openid` alone with the existing default
+  public subject. Creation, safe reads, authorization and token issuance require
+  the composed OIDC extension and matching native support; the actual child can
+  still read trusted `UserInfoSource` through its original core. OAuth scope
+  ceilings and existing static/confidential profiles remain unchanged;
+  additional claims, pairwise, device and confidential OIDC management are
+  not selected.
+
 - Accept explicit managed public-client creation and safe private metadata with
   registered `none` authentication. Public creation never reveals a secret;
   existing confidential Basic creation, rotation and custody stay unchanged.

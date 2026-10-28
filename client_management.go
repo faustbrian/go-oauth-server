@@ -37,6 +37,13 @@ type ManagedClientPolicy struct {
 	// Zero retains confidential-only management; native storage needs its
 	// separately installed forward history before selecting this capability.
 	PublicClients bool `json:",omitempty"`
+	// PublicOIDC separately permits openid-only managed public browser clients
+	// with the existing default public subject. It requires PublicClients and
+	// configured OIDCScopes containing openid. Creation, private reads,
+	// authorization and token issuance require the composed OIDC extension;
+	// the actual child still reads trusted UserInfoSource through its original
+	// core. OAuth Scopes and retained policy stay unchanged.
+	PublicOIDC bool `json:",omitempty"`
 	// DeviceAuthorization is an explicit ceiling for newly managed device
 	// registrations; false preserves the existing browser-only namespace.
 	DeviceAuthorization bool
@@ -45,6 +52,9 @@ type ManagedClientPolicy struct {
 func (p ManagedClientPolicy) validated(c Config) (ManagedClientPolicy, error) {
 	redirects, err := NewRedirectPolicy(p.Redirects)
 	if err != nil || !identifier(p.Owner.PlatformID()) || !identifier(string(p.TenantID)) || len(p.Scopes.values) == 0 || hasExtensionScope(p.Scopes.values) || !scopeSubset(p.Scopes.values, c.Scopes.values) {
+		return ManagedClientPolicy{}, ErrInvalidRequest
+	}
+	if p.PublicOIDC && (!p.PublicClients || !c.OIDCScopes.Contains("openid")) {
 		return ManagedClientPolicy{}, ErrInvalidRequest
 	}
 	p.Redirects = slices.Clone(redirects.targets)
@@ -61,6 +71,26 @@ func (p ManagedClientPolicy) validated(c Config) (ManagedClientPolicy, error) {
 		}
 	}
 	return p, nil
+}
+
+// AllowsRegistrationScopes checks immutable scope/class ceilings only, never
+// registration existence, authentication or management authority. OAuth-only
+// registrations retain Scopes; PublicOIDC separately selects exactly openid for
+// public browser clients, not confidential/device or additional-claim profiles.
+// Native registries use this same admission rule on every restored projection.
+func (p ManagedClientPolicy) AllowsRegistrationScopes(public, device bool, scopes []string) bool {
+	values, err := validatedScopes(scopes)
+	if err != nil || public && !p.PublicClients || device && !p.DeviceAuthorization {
+		return false
+	}
+	if hasExtensionScope(values) {
+		return p.PublicOIDC && minimalManagedPublicOIDC(public, device, values)
+	}
+	return scopeSubset(values, p.Scopes.values)
+}
+
+func minimalManagedPublicOIDC(public, device bool, scopes []string) bool {
+	return public && !device && len(scopes) == 1 && scopes[0] == "openid"
 }
 
 // CurrentClientRegistry is a trusted optional native current-client owner, not
@@ -183,6 +213,9 @@ func (s *Service) manageClient(ctx context.Context, r ClientManagementRequest, r
 	if err != nil {
 		return out, err
 	}
+	if hasExtensionScope(r.Scopes) && nilDependency(s.deps.OIDC) {
+		return out, ErrAccessDenied
+	}
 	manager, ok := s.deps.Store.(ClientManager)
 	if !ok || nilDependency(manager) {
 		return out, ErrAccessDenied
@@ -263,7 +296,7 @@ func ValidateClientManagementRequest(r ClientManagementRequest, remove bool, p M
 		r.PostLogoutRedirects = slices.Clone(logout.targets)
 	}
 	scopes, err := validatedScopes(r.Scopes)
-	if err != nil || !scopeSubset(scopes, p.Scopes.values) {
+	if err != nil || !p.AllowsRegistrationScopes(r.Public, r.DeviceAuthorization, scopes) {
 		return ClientManagementRequest{}, ErrInvalidScope
 	}
 	r.Redirects = slices.Clone(redirects.targets)
@@ -280,7 +313,7 @@ func (s *Service) currentClient(ctx context.Context, id string) (Client, error) 
 		return Client{}, err
 	}
 	c, err = ValidateClient(c)
-	if err != nil || c.ID != id || c.Owner != s.config.ManagedClients.Owner || c.Public && !s.config.ManagedClients.PublicClients || c.Workload != nil || c.SubjectRegistration != nil || c.Resource != s.config.Resource || !scopeSubset(c.Scopes, s.config.ManagedClients.Scopes.values) || c.DeviceAuthorization && !s.config.ManagedClients.DeviceAuthorization {
+	if err != nil || c.ID != id || c.Owner != s.config.ManagedClients.Owner || c.Workload != nil || c.SubjectRegistration != nil || c.Resource != s.config.Resource || !s.config.ManagedClients.AllowsRegistrationScopes(c.Public, c.DeviceAuthorization, c.Scopes) {
 		return Client{}, ErrAccessDenied
 	}
 	for _, redirect := range c.Redirects {

@@ -90,6 +90,16 @@ replacement authentication engine.
   Public creation requires `ManagedClientPolicy.PublicClients` and matching
   native `PublicClients` activation and its
   forward schema; unchanged confidential-only deployments need neither.
+  Separately selecting `ManagedClientPolicy.PublicOIDC` permits exactly
+  `Public=true`, browser-only, `openid`-alone registrations with the existing
+  default public subject. Configure `OIDCScopes` containing `openid` and use
+  the actual composed OIDC service for creation, safe reads, authorization and
+  token issuance. Trusted `UserInfoSource` remains usable through the original
+  core passed to the actual child before composition.
+  The OAuth-only managed `Scopes` ceiling stays unchanged. This selector adds
+  no confidential OIDC, pairwise subjects, extra identity scopes, device flow
+  or managed metadata replacement/secret rotation. Use matching native support;
+  core selection alone supplies neither persistence nor signing.
   Existing warm services resolve actual registry status on every
   call; terminal deletion denies all descendants without token fanout.
   Selected OAuth discovery includes the managed human-web/Basic capability,

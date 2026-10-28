@@ -585,6 +585,9 @@ func (s *Service) Continue(ctx context.Context, request ContinueRequest) (out Au
 	if s.config.ManagedClients != nil && strings.HasPrefix(client.ID, ManagedClientPrefix) && request.TenantID != s.config.ManagedClients.TenantID {
 		return out, ErrAccessDenied
 	}
+	if s.config.ManagedClients != nil && strings.HasPrefix(client.ID, ManagedClientPrefix) && hasExtensionScope(client.Scopes) && nilDependency(s.deps.OIDC) {
+		return out, ErrAccessDenied
+	}
 	if request.Scopes != nil {
 		request.Scopes, err = validatedScopes(request.Scopes)
 		if err != nil || !scopeSubset(request.Scopes, client.Scopes) {
@@ -684,6 +687,12 @@ func (s *Service) Token(ctx context.Context, request TokenRequest) (out TokenRes
 	}
 	if err != nil || !visible(request.Network, 128) {
 		return out, ErrInvalidRequest
+	}
+	// The OIDC child reads native UserInfo through the original uncomposed
+	// core. Select issuance here instead of registry lookup, before a missing
+	// optional refresh scope can reach native rotation and consume its bearer.
+	if s.config.ManagedClients != nil && strings.HasPrefix(client.ID, ManagedClientPrefix) && hasExtensionScope(client.Scopes) && nilDependency(s.deps.OIDC) {
+		return out, ErrAccessDenied
 	}
 	if request.Resource != "" && request.Resource != client.Resource {
 		return out, ErrInvalidRequest

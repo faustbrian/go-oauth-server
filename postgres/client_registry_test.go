@@ -38,6 +38,39 @@ func TestManagedRegistrationPreservesPublicClassAndLegacyConfidentialEncoding(t 
 	}
 }
 
+func TestManagedPublicOIDCMetadataUsesSelectedRootScopeCeiling(t *testing.T) {
+	owner, _ := oauth.NewPlatformOwner("platform")
+	resourceScopes, _ := oauth.NewScopeCatalog([]string{"identity:read"})
+	for _, variant := range []string{"selected", "default", "confidential", "extra-claim", "mixed-oauth", "device"} {
+		t.Run(variant, func(t *testing.T) {
+			policy := &oauth.ManagedClientPolicy{Owner: owner, TenantID: "tenant", Redirects: []string{"https://client.example/cb"}, Scopes: resourceScopes, PublicClients: true, PublicOIDC: variant != "default", DeviceAuthorization: true}
+			client := oauth.Client{ID: "managed.abcdefghijklmnopqrstuw", Owner: owner, Version: 1, Public: true, AuthenticationMethod: "none", Resource: "https://api.example", Redirects: policy.Redirects, Scopes: []string{"openid"}}
+			switch variant {
+			case "confidential":
+				client.Public, client.AuthenticationMethod = false, "client_secret_basic"
+			case "extra-claim":
+				client.Scopes = []string{"openid", "email"}
+			case "mixed-oauth":
+				client.Scopes = []string{"openid", "identity:read"}
+			case "device":
+				client.DeviceAuthorization = true
+			}
+			store := &Store{config: Config{PublicClients: true, Protocol: oauth.Config{Resource: client.Resource, ManagedClients: policy}}}
+			wire, err := json.Marshal(registrationWire(client))
+			if err != nil {
+				t.Fatal(err)
+			}
+			restored, err := decodeRegistration(wire)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if store.managedMetadata(restored) != (variant == "selected") {
+				t.Fatal("durable metadata did not retain the exact selected managed OIDC class")
+			}
+		})
+	}
+}
+
 func TestCurrentClientOwnsEveryStaticProjection(t *testing.T) {
 	owner, _ := oauth.NewPlatformOwner("platform")
 	registration, _ := oauth.NewOIDCSubjectRegistration("pairwise", "client.example", "subjects", 1)

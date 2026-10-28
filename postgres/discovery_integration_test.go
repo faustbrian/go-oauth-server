@@ -30,6 +30,7 @@ type discoveryConsumerTransport struct {
 	endpoints                                                        oauth.DiscoveryConfig
 	metadataReads, authorizations, exchanges, refreshes, revocations int
 	oidc                                                             *op.Service
+	userInfoClientID                                                 string
 }
 
 func discoveryResponse(r *http.Request, status int, value any) (*http.Response, error) {
@@ -63,7 +64,11 @@ func (p *discoveryConsumerTransport) RoundTrip(r *http.Request) (*http.Response,
 			if !ok {
 				return discoveryResponse(r, 401, map[string]string{"error": "invalid_token"})
 			}
-			out, err := p.oidc.UserInfo(r.Context(), oauth.UserInfoRequest{ClientID: p.f.oauth.Protocol.Clients[0].ID, AccessToken: access})
+			clientID := p.userInfoClientID
+			if clientID == "" {
+				clientID = p.f.oauth.Protocol.Clients[0].ID
+			}
+			out, err := p.oidc.UserInfo(r.Context(), oauth.UserInfoRequest{ClientID: clientID, AccessToken: access})
 			if err != nil {
 				return discoveryResponse(r, 401, map[string]string{"error": "invalid_token"})
 			}

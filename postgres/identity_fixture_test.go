@@ -20,12 +20,15 @@ import (
 	"time"
 
 	auth "github.com/faustbrian/go-authentication/v2"
+	"github.com/faustbrian/go-authorization/v3"
 	"github.com/faustbrian/go-clock"
 	identity "github.com/faustbrian/go-identity"
 	"github.com/faustbrian/go-identity/delivery"
+	identityhttp "github.com/faustbrian/go-identity/http"
 	emailhttp "github.com/faustbrian/go-identity/http/email"
 	passwordhttp "github.com/faustbrian/go-identity/http/password"
 	sessionhttp "github.com/faustbrian/go-identity/http/session"
+	"github.com/faustbrian/go-identity/password"
 	kernel "github.com/faustbrian/go-identity/postgres"
 	"github.com/faustbrian/go-identity/reference"
 	"github.com/faustbrian/go-identity/risk"
@@ -102,6 +105,10 @@ func passwordFixtureWithChange(t *testing.T, change bool, faults ...*oauthCommit
 // The optional schema is selected before genuine signup. Existing immutable
 // stored schemas are never rewritten to make a later profile read compatible.
 func passwordFixtureWithProfileSchema(t *testing.T, change bool, profileSchema *identity.AttributeSchema, faults ...*oauthCommitFault) authenticatedPasswordFixture {
+	return passwordFixtureWithSignupRecovery(t, change, profileSchema, true, faults...)
+}
+
+func passwordFixtureWithSignupRecovery(t *testing.T, change bool, profileSchema *identity.AttributeSchema, observeOriginalSignup bool, faults ...*oauthCommitFault) authenticatedPasswordFixture {
 	t.Helper()
 	ctx, pool, sqlDB := isolatedPostgres(t, true, faults...)
 	keyNames := []string{"fingerprint", "request", "counter", "risk-evidence", "risk-seal", "preauth-cookie", "session-token", "session-csrf", "http-device", "delivery-envelope", "dummy-password", "capability-binding", "capability-signing", "signin-proof", "migration", "counter-replay", "http-rate", "otp-lockout", "otp-wrap", "otp-attempt", "otp-code", "otp-intent", "identifier", "delivery-digest", "delivery-namespace", "password-flow", "signup-binding", "signup-intent", "verification-scope", "capability-replay", "capability-envelope", "counter-envelope", "verification-http", "oauth-intent", "oauth-token", "oauth-envelope"}
@@ -134,9 +141,9 @@ func passwordFixtureWithProfileSchema(t *testing.T, change bool, profileSchema *
 	if err != nil {
 		var invalid identity.InvalidInputError
 		if errors.As(err, &invalid) && len(invalid.Field) <= 128 && strings.IndexFunc(invalid.Field, func(r rune) bool { return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '.') }) < 0 {
-			t.Fatal("real public identity graph rejected configuration field", invalid.Field)
+			t.Fatalf("real public identity graph rejected configuration: field=%s deadline=%t canceled=%t invalid_input=%t parent_done=%t", invalid.Field, errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled), errors.Is(err, identityhttp.ErrInvalidInput), ctx.Err() != nil)
 		}
-		t.Fatal("real public identity graph rejected", err)
+		t.Fatalf("real public identity graph rejected: deadline=%t canceled=%t invalid_input=%t parent_done=%t error_type=%T", errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled), errors.Is(err, identityhttp.ErrInvalidInput), ctx.Err() != nil, err)
 	}
 	t.Cleanup(func() {
 		bounded, stop := context.WithTimeout(context.Background(), 5*time.Second)
@@ -207,7 +214,7 @@ func passwordFixtureWithProfileSchema(t *testing.T, change bool, profileSchema *
 		}
 		response, err := client.Do(r)
 		if err != nil {
-			t.Fatal("identity HTTPS request unavailable")
+			t.Fatalf("identity HTTPS request unavailable: deadline=%t canceled=%t parent_done=%t error_type=%T", errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled), ctx.Err() != nil, err)
 		}
 		payload, readErr := io.ReadAll(io.LimitReader(response.Body, 16385))
 		closeErr := response.Body.Close()
@@ -233,10 +240,45 @@ func passwordFixtureWithProfileSchema(t *testing.T, change bool, profileSchema *
 	candidate := hex.EncodeToString(random[:])
 	clear(random[:])
 	flow := preauth("signup")
+	var originalSignupCookies []*http.Cookie
+	if observeOriginalSignup {
+		originalURL, err := url.Parse(origin)
+		if err != nil {
+			t.Fatal("original signup origin unavailable")
+		}
+		originalSignupCookies = client.Jar.Cookies(originalURL)
+		defer func() {
+			for _, cookie := range originalSignupCookies {
+				cookie.Value = ""
+			}
+		}()
+	}
+	expectSignupUnknown := observeOriginalSignup && len(faults) == 1 && faults[0].signup
+	if expectSignupUnknown {
+		faults[0].armed.Store(true)
+	}
 	status, body, _, cookies := call("/v1/password/signup", map[string]any{"flowID": string(flow.FlowID), "email": address, "password": candidate, "callbackURL": origin + "/confirm"}, "oauth-original-signup")
 	var signup passwordhttp.SignupResponse
-	if status != 200 || json.Unmarshal(body, &signup) != nil || !signup.VerificationRequired || signup.CommitOutcome != "committed" || len(cookies) != 0 {
-		t.Fatal("real signup did not require verification", status)
+	signupDecode := json.Unmarshal(body, &signup)
+	if expectSignupUnknown && (!faults[0].hit.Load() || status != 503 || signupDecode != nil || signup.CommitOutcome != "unknown" || signup.Recovery == nil) {
+		t.Fatalf("original signup did not reach unknown COMMIT boundary: hit=%t status=%d decoded=%t unknown=%t recovery_present=%t", faults[0].hit.Load(), status, signupDecode == nil, signup.CommitOutcome == "unknown", signup.Recovery != nil)
+	}
+	var signupEffects [4]int
+	if expectSignupUnknown {
+		signupEffects = originalSignupEffectCounts(t, ctx, pool)
+		if signupEffects != ([4]int{1, 1, 1, 1}) {
+			t.Fatal("unknown original signup did not retain exactly one registration, credential, delivery and capability")
+		}
+	}
+	knownSignup := status == 200 && signupDecode == nil && signup.VerificationRequired && signup.CommitOutcome == "committed"
+	if observeOriginalSignup && signupDecode == nil && signup.CommitOutcome == "unknown" {
+		knownSignup = observeOriginalSignupRecovery(t, ctx, graph, origin, secrets["http-device"], flow.FlowID, originalSignupCookies, signup)
+	}
+	if !knownSignup || len(cookies) != 0 {
+		t.Fatalf("real signup did not require verification: status=%d decoded=%t unavailable=%t outcome_unknown=%t outcome_none=%t command_present=%t recovery_present=%t parent_done=%t", status, signupDecode == nil, signup.Error == "unavailable", signup.CommitOutcome == "unknown", signup.CommitOutcome == "none", signup.CommandID != "", signup.Recovery != nil, ctx.Err() != nil)
+	}
+	if expectSignupUnknown && originalSignupEffectCounts(t, ctx, pool) != signupEffects {
+		t.Fatal("original signup recovery duplicated or changed protected effects")
 	}
 	if _, err := graph.workers.ProcessDeliveryOne(ctx, 0); err != nil {
 		t.Fatal("native registration worker failed", err)
@@ -260,8 +302,9 @@ func passwordFixtureWithProfileSchema(t *testing.T, change bool, profileSchema *
 	flow = preauth("password")
 	status, body, headers, cookies := call("/v1/password/signin", map[string]any{"flowID": string(flow.FlowID), "identifier": address, "password": candidate, "callbackURL": origin + "/confirm"}, "")
 	var signed passwordhttp.SigninResponse
-	if status != 200 || json.Unmarshal(body, &signed) != nil || !signed.SignedIn || signed.CommitOutcome != "committed" || len(cookies) != 1 {
-		t.Fatal("real password sign-in failed", status)
+	signinDecode := json.Unmarshal(body, &signed)
+	if status != 200 || signinDecode != nil || !signed.SignedIn || signed.CommitOutcome != "committed" || len(cookies) != 1 {
+		t.Fatalf("real password sign-in failed: status=%d decoded=%t unavailable=%t outcome_unknown=%t outcome_none=%t command_present=%t recovery_present=%t parent_done=%t", status, signinDecode == nil, signed.Error == "unavailable", signed.CommitOutcome == "unknown", signed.CommitOutcome == "none", signed.CommandID != "", signed.Recovery != nil, ctx.Err() != nil)
 	}
 	// These are the existing native owners' standalone allocations, also used
 	// by the reference password-change/enrollment composition. Selecting OAuth
@@ -484,6 +527,75 @@ func passwordFixtureWithProfileSchema(t *testing.T, change bool, profileSchema *
 	t.Cleanup(func() { clear(phoneCandidate); clear(phoneSessionKey) })
 	return authenticatedPasswordFixture{ctx: ctx, pool: pool, tenant: baselineTenant, browser: browser, csrf: csrf, sessions: sessions, keys: keys, oauth: config, signOut: signOut, changePassword: changePassword, signInAgain: signInAgain, anotherUser: anotherUser,
 		phoneInput: &nativePhoneInput{signin: graph.signin, signup: graph.signup, hibp: graph.hibp, keys: phoneKeys, password: phoneCandidate, sessionKey: phoneSessionKey}}
+}
+
+func originalSignupEffectCounts(t *testing.T, ctx context.Context, pool *database.Pool) (counts [4]int) {
+	t.Helper()
+	if err := pool.Raw().QueryRow(ctx, `SELECT (SELECT count(*) FROM identity.registration_bindings),(SELECT count(*) FROM identity_password.credentials),(SELECT count(*) FROM identity.delivery_intents),(SELECT count(*) FROM capability_identity_one_use)`).Scan(&counts[0], &counts[1], &counts[2], &counts[3]); err != nil {
+		t.Fatal("original signup protected effect counts unavailable")
+	}
+	return counts
+}
+
+// The public SignupService permits unknown; RecoverSignup authenticates original
+// cookie possession without a password or reexecution (password@19670fe0ec13).
+// A committed acknowledgement or this exact-original observation must precede
+// verification; an uncertain observation cannot authorize fixture continuation.
+func observeOriginalSignupRecovery(t *testing.T, ctx context.Context, graph *baselineGraph, origin string, deviceMaterial [32]byte, flow identity.PreAuthTransactionID, cookies []*http.Cookie, first passwordhttp.SignupResponse) bool {
+	t.Helper()
+	q := first.Recovery
+	if q == nil || q.CommandID != first.CommandID || q.FlowID != flow || q.TenantID != baselineTenant || q.ActorID != baselineActor || q.ActorKind != authorization.SubjectServiceAccount {
+		t.Fatal("unknown signup omitted original recovery binding")
+	}
+	recovery, err := password.NewSignupRecovery(identity.RecoveryQuery{CommandID: q.CommandID, TenantID: q.TenantID, AnonymousFlowID: string(flow), ActorID: q.ActorID, ActorKind: q.ActorKind, OperationID: "identity.password.signup"}, flow)
+	if err != nil {
+		t.Fatal("unknown signup recovery shape invalid")
+	}
+	var possessed auth.BearerCredential
+	var deviceToken string
+	for _, cookie := range cookies {
+		switch cookie.Name {
+		case "__Host-identity_flow":
+			possessed = auth.NewBearerCredential(cookie.Value)
+		case "__Host-identity_device":
+			deviceToken = cookie.Value
+		}
+	}
+	deviceCookie, err := session.NewCookiePolicy(session.CookieConfig{Name: "__Host-identity_device", SameSite: http.SameSiteLaxMode})
+	if err != nil {
+		t.Fatal("original device policy unavailable")
+	}
+	deviceKey, err := session.NewBrowserDeviceKey(1, deviceMaterial[:])
+	if err != nil {
+		t.Fatal("original device key unavailable")
+	}
+	// This is the unchanged HTTPPreAuth device configuration in fixtureGraph;
+	// Resolve authenticates the possessed cookie and cannot issue or renew it.
+	devices, err := session.NewBrowserDeviceCodec(session.BrowserDeviceConfig{Namespace: "local-baseline", Keys: []session.BrowserDeviceKey{deviceKey}, ActiveVersion: 1, Lifetime: 24 * time.Hour, Cookie: deviceCookie})
+	if err != nil {
+		t.Fatal("original device codec unavailable")
+	}
+	device, err := devices.Resolve(ctx, time.Now().UTC(), baselineTenant, origin, deviceToken)
+	if err != nil {
+		t.Fatal("original device possession unavailable")
+	}
+	trustedOrigin, err := url.Parse(origin)
+	if err != nil {
+		t.Fatal("original signup provenance unavailable")
+	}
+	owner, err := graph.features.PasswordSignup()
+	if err != nil {
+		t.Fatal("original signup owner unavailable")
+	}
+	caller := authorization.DecisionContext{CorrelationID: "oauth-original-signup-recovery", PolicyRevision: authorization.Revision(graph.signup.Coordinator.QueryPolicy.PolicyVersion), Request: authorization.Request{Subject: authorization.Subject{Kind: authorization.SubjectServiceAccount, ID: authorization.SubjectID(baselineActor)}, Tenant: authorization.TenantID(baselineTenant), Action: "identity.password.signup", Resource: authorization.Resource{Type: "identity.request-admission", ID: "identity.password.signup"}}}
+	history, recoveryErr := owner.RecoverSignup(ctx, password.SignupRecoveryRequest{Recovery: recovery, Cookie: possessed, Caller: caller, Origin: origin, Network: trustedOrigin.Hostname(), Device: device.DeviceID()})
+	historyQuery, historyFlow, bindingErr := history.Recovery.Bindings()
+	originalQuery, _, _ := recovery.Bindings()
+	valid := history.Validate() == nil && bindingErr == nil && historyQuery == originalQuery && historyFlow == flow
+	noCredentials := history.SubjectID == "" && history.SessionID == "" && history.Session.CommandID == "" && history.Session.Token == (session.Token{}) && history.CSRFToken == (session.CSRFToken{})
+	committed := recoveryErr == nil && valid && noCredentials && history.Replayed && history.VerificationRequired && history.Outcome == identity.CommitOutcomeCommitted
+	t.Logf("original signup recovery: valid=%t committed=%t not_committed=%t unknown=%t in_progress=%t replayed=%t no_credentials=%t error_type=%T parent_done=%t", valid, committed, history.Outcome == identity.CommitOutcomeNotCommitted, history.Outcome == identity.CommitOutcomeUnknown, history.Outcome == identity.CommitOutcomeInProgress, history.Replayed, noCredentials, recoveryErr, ctx.Err() != nil)
+	return committed
 }
 
 // This bounded test-only Source composes immutable Migration values returned

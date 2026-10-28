@@ -103,7 +103,7 @@ func oidcFixtureWithLifecycle(t *testing.T, f *authenticatedPasswordFixture, chi
 	if err != nil {
 		t.Fatal(err)
 	}
-	core, err := oauth.NewService(f.oauth.Protocol, oauth.Dependencies{Sessions: f.sessions, Store: store})
+	core, err := oauth.NewService(f.oauth.Protocol, oauth.Dependencies{Sessions: f.sessions, Store: store, Clients: store})
 	if err != nil {
 		t.Fatal(err)
 	}

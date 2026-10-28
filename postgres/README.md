@@ -90,8 +90,46 @@ the class is bound separately in each create intent and encrypted registration.
 Old confidential grant and metadata-only recovery custody therefore remains
 original, while using one request key for another class conflicts.
 
-This profile selects no RFC7591 registration, OIDC/device management, HTTP,
-organization delegation or token exchange.
+This OAuth-only selection adds no RFC7591 registration, OIDC/device management,
+HTTP, organization delegation or token exchange. Minimal managed OIDC requires
+the separate selection below.
+
+## Optional minimal managed public OIDC
+
+With public management enabled, separately set
+`Config.Protocol.ManagedClients.PublicOIDC=true` and configure the existing
+`Protocol.OIDCScopes` with `openid`. Keep `ManagedClients.Scopes` OAuth-only and
+unchanged. This permits exactly a managed `Public=true`, browser-only client
+requesting `openid` alone, with nil `SubjectRegistration` selecting the existing
+default public subject. It does not select confidential OIDC, pairwise subjects,
+additional identity claims, device flow, RFC7591 or managed public replacement
+and secret rotation. Existing independently configured OAuth/static profiles
+retain their own settings.
+
+Use matching published root/native versions. Preserve the existing public-client
+history and append the existing `SigningMigrationSource` to the exact selected
+history when signing is not already installed; no new migration is introduced.
+Construct the actual core signing owner and OIDC child, publish its public JWKS,
+activate the published key, and use `core.WithOIDC(child)` for client creation,
+private get/list, authorization/continuation and token issuance. The actual child
+still reads trusted `UserInfoSource` through its original core. An uncomposed
+service denies this profile before creating a client, approving an interaction
+or consuming a code/refresh bearer. Consumers must independently validate
+discovery, issuer, audience, signature, nonce and expiry, then require equal
+ID-token/UserInfo subjects.
+
+Public OIDC registration persists the existing public/none metadata and NULL
+secret digest. Fresh services resolve it from native current authority. The
+selector leaves existing configuration/management identities unchanged: each
+new intent binds its exact class/scopes separately, while original command
+recovery retains original configuration, keys and current manager authority.
+Keep that original custody; changing other configuration is not this selector.
+Current client/consent/credential/owner and original freshness fences remain
+mandatory. Refresh retains the original subject, revocation withdraws its
+access, and terminal deletion never falls back to static authority or revives
+through original retry/recovery. Recovery is metadata-only, never token delivery.
+This native profile registers no HTTP/Reference routes or private substitute
+authority and is not full M31 or whole-platform qualification.
 
 ## Optional platform-owned confidential client management
 

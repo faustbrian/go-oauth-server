@@ -15,8 +15,16 @@ func clientReadRequest(f authenticatedPasswordFixture, limit uint16) oauth.Clien
 	return oauth.ClientReadRequest{Owner: f.oauth.Protocol.ManagedClients.Owner, TenantID: f.tenant, Session: f.browser, Limit: limit}
 }
 
+func TestNativeClientReadOriginalSignupUnknownRecoveryDoesNotRepeatDelivery(t *testing.T) {
+	fault := &oauthCommitFault{signup: true}
+	f := passwordFixtureWithSignupRecovery(t, false, nil, true, fault)
+	if !fault.hit.Load() || originalSignupEffectCounts(t, f.ctx, f.pool) != ([4]int{1, 1, 1, 1}) {
+		t.Fatal("original unknown signup was resubmitted or duplicated its delivery")
+	}
+}
+
 func TestNativeClientReadFreshInstanceDiscoversCurrentVersionsForExistingMutations(t *testing.T) {
-	f := passwordFixture(t)
+	f := passwordFixtureWithSignupRecovery(t, false, nil, true)
 	enableClientRotation(t, &f)
 	seed, err := oauthpostgres.NewService(f.pool, f.oauth, f.keys)
 	if err != nil {

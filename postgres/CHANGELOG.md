@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Support explicitly selected managed public browser clients requesting `openid`
+  alone with the existing default public subject. Current metadata, real
+  consent/S256 grants, signed ID tokens, UserInfo, refresh, revocation and
+  terminal deletion use the existing owners. Select matching root
+  `ManagedClientPolicy.PublicOIDC` and compose the actual OIDC child; no new
+  migration or change to the OAuth management scope ceiling is required.
+  Confidential OIDC, pairwise/additional claims and managed public metadata
+  replacement/secret rotation remain unselected.
+
 - Add opt-in platform-managed public clients with `none` authentication and no
   generated or persisted secret. Genuine manager creation, current metadata,
   consent/S256 code, refresh, revocation, terminal deletion and original

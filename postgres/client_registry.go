@@ -140,7 +140,7 @@ func (s *Store) readManagedClient(ctx context.Context, id string) (managedClient
 }
 func (s *Store) managedMetadata(c oauth.Client) bool {
 	p := s.config.Protocol.ManagedClients
-	if p == nil || c.Owner != p.Owner || !strings.HasPrefix(c.ID, oauth.ManagedClientPrefix) || c.Public && (!s.config.PublicClients || !p.PublicClients) || c.Workload != nil || c.SubjectRegistration != nil || c.Resource != s.config.Protocol.Resource || !scopeSubset(c.Scopes, p.Scopes.Scopes()) || c.DeviceAuthorization && !p.DeviceAuthorization {
+	if p == nil || c.Owner != p.Owner || !strings.HasPrefix(c.ID, oauth.ManagedClientPrefix) || c.Public && (!s.config.PublicClients || !p.PublicClients) || c.Workload != nil || c.SubjectRegistration != nil || c.Resource != s.config.Protocol.Resource || !p.AllowsRegistrationScopes(c.Public, c.DeviceAuthorization, c.Scopes) {
 		return false
 	}
 	if _, err := oauth.ValidateClient(c); err != nil {

@@ -491,6 +491,10 @@ func TestNativeManagedClientRequiredEffectsRollbackAndOriginalRecovery(t *testin
 }
 
 func testNativeManagedClientRequiredEffectsRollbackAndOriginalRecovery(t *testing.T, public bool) {
+	testNativeManagedClientRequiredEffectsProfile(t, public, false)
+}
+
+func testNativeManagedClientRequiredEffectsProfile(t *testing.T, public, managedOIDC bool) {
 	t.Helper()
 	for _, mode := range []string{"audit", "outbox", "unknown", "before"} {
 		t.Run(mode, func(t *testing.T) {
@@ -501,11 +505,21 @@ func testNativeManagedClientRequiredEffectsRollbackAndOriginalRecovery(t *testin
 				}
 			}}
 			f := passwordFixture(t, fault)
-			enableClientManagement(t, &f)
-			if public {
-				installPublicClients(t, &f)
+			var service *oauth.Service
+			var signer *oauth.SigningService
+			var subjectKey [32]byte
+			var err error
+			if managedOIDC {
+				signer, subjectKey = managedOIDCFixture(t, &f, false)
+				f.oauth.Protocol.ManagedClients.PublicOIDC = true
+				service, _, _ = managedOIDCServices(t, f, signer, subjectKey)
+			} else {
+				enableClientManagement(t, &f)
+				if public {
+					installPublicClients(t, &f)
+				}
+				service, err = oauthpostgres.NewService(f.pool, f.oauth, f.keys)
 			}
-			service, err := oauthpostgres.NewService(f.pool, f.oauth, f.keys)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -523,8 +537,11 @@ func testNativeManagedClientRequiredEffectsRollbackAndOriginalRecovery(t *testin
 			}
 			r := clientCreateRequest(t, f, "client-required-effects-"+mode)
 			r.Public = public
-			out, err := service.ClientCreate(f.ctx, r)
-			if err == nil || !provisional.Load() {
+			if managedOIDC {
+				r.Scopes = []string{"openid"}
+			}
+			out, createErr := service.ClientCreate(f.ctx, r)
+			if createErr == nil || !provisional.Load() {
 				t.Fatal("required failure reported success")
 			}
 			if _, err := out.Secret.Reveal(); err == nil {
@@ -536,7 +553,7 @@ func testNativeManagedClientRequiredEffectsRollbackAndOriginalRecovery(t *testin
 			}
 			if mode == "unknown" || mode == "before" {
 				if !fault.hit.Load() || out.Completion.Outcome != identity.CommitOutcomeUnknown || out.Completion.CommandID == "" {
-					t.Fatal("real COMMIT seam missed")
+					t.Fatalf("real COMMIT seam missed: hit=%t provisional=%t outcome_unknown=%t command_present=%t unavailable=%t deadline=%t canceled=%t error_type=%T", fault.hit.Load(), provisional.Load(), out.Completion.Outcome == identity.CommitOutcomeUnknown, out.Completion.CommandID != "", errors.Is(createErr, oauth.ErrUnavailable), errors.Is(createErr, context.DeadlineExceeded), errors.Is(createErr, context.Canceled), createErr)
 				}
 				rr := oauthpostgres.RecoveryRequest{OperationID: "identity.oauth-server.client-create", CommandID: out.Completion.CommandID, ClientID: oauth.ManagedClientPrefix + string(out.Completion.CommandID), TenantID: f.tenant, Session: f.browser}
 				metadata, err := store.Recover(f.ctx, rr)
@@ -587,7 +604,12 @@ func testNativeManagedClientRequiredEffectsRollbackAndOriginalRecovery(t *testin
 			if clients != want || effects != want || audits != want || events != want {
 				t.Fatal("atomic client effects violated")
 			}
-			restarted, err := oauthpostgres.NewService(f.pool, f.oauth, f.keys)
+			var restarted *oauth.Service
+			if managedOIDC {
+				restarted, _, _ = managedOIDCServices(t, f, signer, subjectKey)
+			} else {
+				restarted, err = oauthpostgres.NewService(f.pool, f.oauth, f.keys)
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -603,26 +625,49 @@ func testNativeManagedClientRequiredEffectsRollbackAndOriginalRecovery(t *testin
 }
 
 func TestNativeManagedClientDeletionFencesLateApprovalExchangeAndRefresh(t *testing.T) {
+	testNativeManagedClientDeletionFences(t, false)
+}
+
+func testNativeManagedClientDeletionFences(t *testing.T, managedOIDC bool) {
+	t.Helper()
 	for _, mode := range []string{"approval", "exchange", "refresh"} {
 		t.Run(mode, func(t *testing.T) {
 			f := passwordFixture(t)
-			enableClientManagement(t, &f)
-			service, err := oauthpostgres.NewService(f.pool, f.oauth, f.keys)
+			var service *oauth.Service
+			var signer *oauth.SigningService
+			var subjectKey [32]byte
+			var err error
+			scopes := []string{"identity:read"}
+			if managedOIDC {
+				signer, subjectKey = managedOIDCFixture(t, &f, false)
+				f.oauth.Protocol.ManagedClients.PublicOIDC = true
+				service, _, _ = managedOIDCServices(t, f, signer, subjectKey)
+				scopes = []string{"openid"}
+			} else {
+				enableClientManagement(t, &f)
+				service, err = oauthpostgres.NewService(f.pool, f.oauth, f.keys)
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
 			r := clientCreateRequest(t, f, "race-create")
+			if managedOIDC {
+				r.Public, r.Scopes = true, scopes
+			}
 			created, err := service.ClientCreate(f.ctx, r)
 			if err != nil {
 				t.Fatal(err)
 			}
-			secret, _ := created.Secret.Reveal()
-			basic := confidentialBasic(t, created.Client.ID, secret)
+			var basic oauth.ClientAuthentication
+			if !managedOIDC {
+				secret, _ := created.Secret.Reveal()
+				basic = confidentialBasic(t, created.Client.ID, secret)
+			}
 			var tokenRequest oauth.TokenRequest
 			var continuation string
 			if mode == "approval" {
 				challenge, _ := oauth.S256Challenge(strings.Repeat("a", 43))
-				begin, err := service.Authorize(f.ctx, oauth.AuthorizeRequest{TenantID: f.tenant, Session: f.browser, Network: "192.0.2.1", Request: oauth.AuthorizationRequest{ClientID: created.Client.ID, RedirectURI: created.Client.Redirects[0], Resource: created.Client.Resource, Scopes: []string{"identity:read"}, CodeChallenge: challenge}})
+				begin, err := service.Authorize(f.ctx, oauth.AuthorizeRequest{TenantID: f.tenant, Session: f.browser, Network: "192.0.2.1", Request: oauth.AuthorizationRequest{ClientID: created.Client.ID, RedirectURI: created.Client.Redirects[0], Resource: created.Client.Resource, Scopes: scopes, CodeChallenge: challenge}})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -630,12 +675,20 @@ func TestNativeManagedClientDeletionFencesLateApprovalExchangeAndRefresh(t *test
 				if err != nil {
 					t.Fatal(err)
 				}
-			} else if mode == "exchange" {
-				code, proof := confidentialCode(t, f, service, created.Client)
-				tokenRequest = oauth.TokenRequest{GrantType: oauth.AuthorizationCodeGrant, ClientID: created.Client.ID, ClientAuthentication: basic, Code: code, CodeVerifier: proof, RedirectURI: created.Client.Redirects[0], Network: "192.0.2.1"}
 			} else {
-				_, refresh := issuedConfidentialTokens(t, f, service, created.Client, basic)
-				tokenRequest = oauth.TokenRequest{GrantType: oauth.RefreshTokenGrant, ClientID: created.Client.ID, ClientAuthentication: basic, RefreshToken: refresh, Network: "192.0.2.1"}
+				code, proof := confidentialCodeScopes(t, f, service, created.Client, scopes)
+				tokenRequest = oauth.TokenRequest{GrantType: oauth.AuthorizationCodeGrant, ClientID: created.Client.ID, ClientAuthentication: basic, Code: code, CodeVerifier: proof, RedirectURI: created.Client.Redirects[0], Network: "192.0.2.1"}
+				if mode == "refresh" {
+					issued, err := service.Token(f.ctx, tokenRequest)
+					if err != nil {
+						t.Fatal(err)
+					}
+					refresh, err := issued.RefreshToken.Reveal()
+					if err != nil {
+						t.Fatal(err)
+					}
+					tokenRequest = oauth.TokenRequest{GrantType: oauth.RefreshTokenGrant, ClientID: created.Client.ID, ClientAuthentication: basic, RefreshToken: refresh, Network: "192.0.2.1"}
+				}
 			}
 			var before int
 			if err := f.pool.Raw().QueryRow(f.ctx, `SELECT count(*) FROM oauth_store.effects`).Scan(&before); err != nil {
@@ -649,7 +702,12 @@ func TestNativeManagedClientDeletionFencesLateApprovalExchangeAndRefresh(t *test
 			admission := *f.oauth.Coordinator.AdmissionPolicy
 			admission.Authorization = barrier
 			f.oauth.Coordinator.AdmissionPolicy = &admission
-			late, err := oauthpostgres.NewService(f.pool, f.oauth, f.keys)
+			var late *oauth.Service
+			if managedOIDC {
+				late, _, _ = managedOIDCServices(t, f, signer, subjectKey)
+			} else {
+				late, err = oauthpostgres.NewService(f.pool, f.oauth, f.keys)
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -670,7 +728,7 @@ func TestNativeManagedClientDeletionFencesLateApprovalExchangeAndRefresh(t *test
 			}()
 			go func() {
 				if mode == "approval" {
-					out, err := late.Continue(ctx, oauth.ContinueRequest{TenantID: f.tenant, Session: f.browser, CSRF: f.csrf, Origin: f.oauth.Protocol.Issuer.String(), Network: "192.0.2.1", ClientID: created.Client.ID, Continuation: continuation, Approve: true, Scopes: []string{"identity:read"}})
+					out, err := late.Continue(ctx, oauth.ContinueRequest{TenantID: f.tenant, Session: f.browser, CSRF: f.csrf, Origin: f.oauth.Protocol.Issuer.String(), Network: "192.0.2.1", ClientID: created.Client.ID, Continuation: continuation, Approve: true, Scopes: scopes})
 					if _, deliveryErr := out.Location(); deliveryErr == nil {
 						done <- errors.New("late deleted client received redirect")
 						return
@@ -696,6 +754,7 @@ func TestNativeManagedClientDeletionFencesLateApprovalExchangeAndRefresh(t *test
 			remove := r
 			remove.ClientID = created.Client.ID
 			remove.Version = 1
+			remove.Public = false
 			remove.Redirects = nil
 			remove.Scopes = nil
 			remove.RequestKey, _ = identity.NewIdempotencyKey([]byte("race-delete"))

@@ -120,9 +120,14 @@ replacement authentication engine.
   Updated adapters explicitly consume `ValidatePairwiseClientManagementRequest`;
   the original validator rejects non-nil subject registrations so older writers
   cannot silently commit a default-subject client instead.
-  Managed-public pairwise, sector-identifier URI, additional claims and metadata
-  replacement remain unselected. Safe metadata returns independent copies of
-  this nonsecret registration, never derivation or wrapping keys.
+  Root support for managed-public pairwise additionally requires the separate
+  exact `ManagedClientPolicy.PublicPairwiseRegistrations` ceiling and both
+  `PublicClients` and `PublicOIDC`; the confidential ceiling never selects it.
+  Matching native public-pairwise support and its actual consumer outcome remain
+  pending; root selection alone does not deliver that journey. Sector-identifier
+  URI, additional claims and metadata replacement remain unselected. Safe
+  metadata returns independent copies of this nonsecret registration, never
+  derivation or wrapping keys.
   Existing warm services resolve actual registry status on every
   call; terminal deletion denies all descendants without token fanout.
   Selected OAuth discovery includes the managed human-web/Basic capability,

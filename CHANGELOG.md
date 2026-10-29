@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add independent `ManagedClientPolicy.PublicPairwiseRegistrations` selection
+  for secretless managed public browser clients requesting `openid` alone.
+  Exact single-host registration survives creation, safe reads and authorization;
+  existing public/default and confidential-only selections remain unchanged.
+  Matching native key/persistence support and OIDC composition are required.
+  Sector-identifier URIs, additional claims and metadata replacement remain
+  unselected.
+
 - Add an exact trusted pairwise-registration ceiling for managed confidential
   Basic/openid browser clients. Selected creation, safe reads and authorization
   preserve the immutable single-host registration; nil retains the default

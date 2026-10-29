@@ -53,6 +53,10 @@ type ManagedClientPolicy struct {
 	// openid-only single-host registrations. It requires ConfidentialOIDC and
 	// selects no key material or subject derivation. Nil retains default subjects.
 	PairwiseRegistrations []OIDCSubjectRegistration `json:",omitempty"`
+	// PublicPairwiseRegistrations independently selects exact public, openid-only
+	// single-host registrations. It requires PublicClients and PublicOIDC; nil
+	// preserves the existing public-default and confidential-only selections.
+	PublicPairwiseRegistrations []OIDCSubjectRegistration `json:",omitempty"`
 	// DeviceAuthorization is an explicit ceiling for newly managed device
 	// registrations; false preserves the existing browser-only namespace.
 	DeviceAuthorization bool
@@ -71,15 +75,21 @@ func (p ManagedClientPolicy) validated(c Config) (ManagedClientPolicy, error) {
 	}
 	// Match Config's bounded startup client catalog: each exact registration is
 	// a trusted selection, not an unbounded request-controlled policy search.
-	if len(p.PairwiseRegistrations) > 64 || len(p.PairwiseRegistrations) != 0 && !p.ConfidentialOIDC {
+	if len(p.PairwiseRegistrations) != 0 && !p.ConfidentialOIDC || len(p.PublicPairwiseRegistrations) != 0 && !p.PublicOIDC {
 		return ManagedClientPolicy{}, ErrInvalidRequest
 	}
-	for i, registration := range p.PairwiseRegistrations {
-		if !singleHostManagedPairwise(&registration) || slices.Contains(p.PairwiseRegistrations[:i], registration) {
+	for _, registrations := range [][]OIDCSubjectRegistration{p.PairwiseRegistrations, p.PublicPairwiseRegistrations} {
+		if len(registrations) > 64 {
 			return ManagedClientPolicy{}, ErrInvalidRequest
+		}
+		for i, registration := range registrations {
+			if !singleHostManagedPairwise(&registration) || slices.Contains(registrations[:i], registration) {
+				return ManagedClientPolicy{}, ErrInvalidRequest
+			}
 		}
 	}
 	p.PairwiseRegistrations = slices.Clone(p.PairwiseRegistrations)
+	p.PublicPairwiseRegistrations = slices.Clone(p.PublicPairwiseRegistrations)
 	p.Redirects = slices.Clone(redirects.targets)
 	if len(p.PostLogoutRedirects) != 0 {
 		logout, err := NewRedirectPolicy(p.PostLogoutRedirects)
@@ -126,7 +136,11 @@ func (p ManagedClientPolicy) AllowsRegistration(public, device bool, scopes []st
 	if registration == nil {
 		return true
 	}
-	return !public && p.ConfidentialOIDC && minimalManagedBrowserOIDC(device, scopes) && singleHostManagedPairwise(registration) && slices.Contains(p.PairwiseRegistrations, *registration)
+	registrations := p.PairwiseRegistrations
+	if public {
+		registrations = p.PublicPairwiseRegistrations
+	}
+	return minimalManagedBrowserOIDC(device, scopes) && singleHostManagedPairwise(registration) && slices.Contains(registrations, *registration)
 }
 
 func singleHostManagedPairwise(registration *OIDCSubjectRegistration) bool {
@@ -160,8 +174,9 @@ type ClientManagementRequest struct {
 	DeviceAuthorization bool
 	Redirects, Scopes   []string
 	PostLogoutRedirects []string
-	// SubjectRegistration selects only an exact trusted PairwiseRegistrations
-	// member. Nil preserves default subjects. Delete accepts no registration edits.
+	// SubjectRegistration selects only an exact member of the client class's
+	// trusted pairwise allowlist. Nil preserves default subjects. Delete accepts
+	// no registration edits.
 	SubjectRegistration *OIDCSubjectRegistration
 }
 
@@ -306,7 +321,7 @@ func ValidateClientManagementRequest(r ClientManagementRequest, remove bool, p M
 }
 
 // ValidatePairwiseClientManagementRequest is the explicit create-only adapter
-// opt-in for exact trusted confidential single-host pairwise registration. New
+// opt-in for exact trusted class-bound single-host pairwise registration. New
 // native owners must preserve this registration in their existing preparation
 // and persistence. It grants no manager authority or key/binding custody.
 func ValidatePairwiseClientManagementRequest(r ClientManagementRequest, p ManagedClientPolicy, issuer Issuer) (ClientManagementRequest, error) {

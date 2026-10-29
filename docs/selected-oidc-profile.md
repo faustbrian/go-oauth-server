@@ -216,6 +216,30 @@ authentication. Nil registration preserves the original public subject and
 client/grant/preparation framing; explicit registration includes all four policy
 dimensions in validated JSON and client fingerprints.
 
+### Managed public single-host pairwise registration
+
+Select `ManagedClientPolicy.PublicClients` and `PublicOIDC`, then supply exact
+trusted registrations in `PublicPairwiseRegistrations`. A public browser
+`ClientCreate` request with `Public=true`, `Scopes: []string{"openid"}` and
+`SubjectRegistration` may select only its own class's allowlist. The existing
+`PairwiseRegistrations` remains confidential-only; enabling public/default OIDC
+or confidential pairwise alone never selects public pairwise. Both allowlists
+are copied and bounded to 64 distinct single-host registrations per class.
+Nil subject registration retains the original default subject and canonical
+registration/intent bytes. Additional claims, device registrations, sector URIs
+and metadata replacement remain unselected for this managed profile.
+
+Use matching native support with installed public-client, signing and pairwise
+histories. A public-only allowlist must select the actual native subject-key
+owner without a fabricated static client. Install and activate its authenticated
+encrypted custody, compose the existing OIDC child with that `SubjectPolicy`,
+and use `core.WithOIDC(child)`. Manager session/CSRF/current owner authorization,
+genuine consent and code/S256 remain mandatory. Safe get/list preserves the
+exact immutable registration; public creation, retries and unknown recovery
+never reveal a client secret. Public code/refresh/revocation uses registered
+`none`; supplied Basic credentials deny. The existing child/key/binding owners,
+not client creation, derive and retain the equal ID-token/UserInfo subject.
+
 ### HTTPS sector identifier URI registration
 
 [OIDC Core 1.0 errata2 section8.1](https://openid.net/specs/openid-connect-core-1_0.html#PairwiseAlg)

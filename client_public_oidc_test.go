@@ -33,14 +33,14 @@ func TestManagedPublicOIDCSafePagePreservesMinimalRegistration(t *testing.T) {
 
 func TestManagedPublicOIDCSafePageRejectsUnselectedClasses(t *testing.T) {
 	c := coreConfig(t, time.Now())
-	for _, variant := range []string{"extra-claim", "mixed-oauth", "device"} {
+	for _, variant := range []string{"unsupported-claim", "mixed-oauth", "device"} {
 		t.Run(variant, func(t *testing.T) {
 			client := c.Clients[0]
 			client.ID = "managed.abcdefghijklmnopqrstuw"
 			client.Scopes = []string{"openid"}
 			switch variant {
-			case "extra-claim":
-				client.Scopes = []string{"openid", "email"}
+			case "unsupported-claim":
+				client.Scopes = []string{"openid", "address"}
 			case "mixed-oauth":
 				client.Scopes = []string{"openid", "identity:read"}
 			case "device":

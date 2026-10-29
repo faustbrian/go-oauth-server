@@ -590,7 +590,7 @@ func (s *Service) Continue(ctx context.Context, request ContinueRequest) (out Au
 	}
 	if request.Scopes != nil {
 		request.Scopes, err = validatedScopes(request.Scopes)
-		if err != nil || !scopeSubset(request.Scopes, client.Scopes) {
+		if err != nil || !scopeSubset(request.Scopes, client.Scopes) || !OIDCScopesComplete(request.Scopes) {
 			return out, ErrInvalidScope
 		}
 	}
@@ -730,7 +730,7 @@ func (s *Service) Token(ctx context.Context, request TokenRequest) (out TokenRes
 		}
 		if request.Scopes != nil {
 			request.Scopes, err = validatedScopes(request.Scopes)
-			if err != nil || !scopeSubset(request.Scopes, client.Scopes) {
+			if err != nil || !scopeSubset(request.Scopes, client.Scopes) || !OIDCScopesComplete(request.Scopes) {
 				return out, ErrInvalidScope
 			}
 		}
@@ -898,6 +898,16 @@ func operationError(ctx context.Context, err error) error {
 	}
 	return ErrUnavailable
 }
+
+// OIDCScopesComplete reports only whether a scope selection retains openid
+// whenever it contains any reserved OIDC scope (OIDC Core1.0 errata2 section
+// 3.1.2.1). Pure OAuth selections remain valid without openid. Callers must
+// separately resolve inherited scopes and enforce syntax, catalog, client,
+// consent and current authority; this predicate grants none of those permissions.
+func OIDCScopesComplete(scopes []string) bool {
+	return !hasExtensionScope(scopes) || slices.Contains(scopes, "openid")
+}
+
 func validatedScopes(input []string) ([]string, error) {
 	if len(input) < 1 || len(input) > 16 {
 		return nil, ErrInvalidScope

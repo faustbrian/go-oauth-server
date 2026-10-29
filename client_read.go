@@ -125,7 +125,7 @@ func (p ClientListPage) Items() []Client {
 }
 
 func clientReadProjection(c Client) (Client, error) {
-	if !strings.HasPrefix(c.ID, ManagedClientPrefix) || c.Workload != nil || hasExtensionScope(c.Scopes) && !minimalManagedBrowserOIDC(c.DeviceAuthorization, c.Scopes) || c.SubjectRegistration != nil && (!minimalManagedBrowserOIDC(c.DeviceAuthorization, c.Scopes) || !singleHostManagedPairwise(c.SubjectRegistration)) {
+	if !strings.HasPrefix(c.ID, ManagedClientPrefix) || c.Workload != nil || hasExtensionScope(c.Scopes) && !minimalManagedBrowserOIDC(c.DeviceAuthorization, c.Scopes) && !(c.Public && c.SubjectRegistration == nil && managedPublicClaimScopes(c.DeviceAuthorization, c.Scopes)) || c.SubjectRegistration != nil && (!minimalManagedBrowserOIDC(c.DeviceAuthorization, c.Scopes) || !singleHostManagedPairwise(c.SubjectRegistration)) {
 		return Client{}, ErrInvalidRequest
 	}
 	if _, err := identity.ParseSubjectID(strings.TrimPrefix(c.ID, ManagedClientPrefix)); err != nil {

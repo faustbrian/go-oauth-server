@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Reject explicit consent and refresh selections that retain OIDC claim scopes
+  without `openid` before delegating to a consuming adapter. Valid OIDC subsets
+  retain `openid`; intentional pure OAuth narrowing stays supported. Native
+  direct-store enforcement requires the matching adapter update.
+
+- Add explicit `ManagedClientPolicy.PublicOIDCScopes` selection for managed
+  public browser clients requesting `openid` plus trusted `profile`, `email`
+  and/or `phone` scopes with the default subject. Nil retains openid-only
+  admission; existing OAuth, confidential and pairwise policy stays unchanged.
+  Matching native composition and the existing child-owned consented claim
+  sources are required; root registration support does not project claims or
+  select address, offline access, custom fields or metadata replacement.
+
 - Add independent `ManagedClientPolicy.PublicPairwiseRegistrations` selection
   for secretless managed public browser clients requesting `openid` alone.
   Exact single-host registration survives creation, safe reads and authorization;

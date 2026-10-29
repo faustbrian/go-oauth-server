@@ -39,6 +39,45 @@ authority read without positive caching, then the child compares the persisted
 grant/client subject. Ordinary browser signout keeps the existing approved-grant policy;
 credential/owner withdrawal and grant/access revocation deny UserInfo.
 
+## Optional managed public account-claims registration
+
+With `ManagedClientPolicy.PublicClients` and `PublicOIDC` selected, optionally
+set `PublicOIDCScopes` to an exact trusted scope ceiling containing `openid`
+and only the selected `profile`, `email` and `phone` additions. Validation copies
+and sorts this bounded unique ceiling and requires every scope in configured
+`OIDCScopes`. Nil preserves the original openid-only selection and omitted
+configuration bytes; the separate OAuth management `Scopes` stays unchanged.
+
+This profile permits only public browser registrations with the default subject
+(`SubjectRegistration=nil`). A manager may register a subset of the ceiling
+containing `openid`; real authorization and consent may narrow it further.
+Confidential or pairwise claims, device registrations, address/offline access,
+custom attributes and metadata replacement remain unselected. Safe get/list
+retains independently owned scope metadata, not claim values or new authority.
+Genuine manager/session/CSRF, immutable owner/tenant, code/S256 and current
+grant/client/consent fences remain the existing owners. No public client secret
+is generated or disclosed. Retain the established genuine configured-client
+catalog; this selection does not introduce zero-static-client support.
+
+The existing child alone owns claim meanings and minimization. Select its
+`ProfileUserInfo`, `EmailUserInfo` and `PhoneUserInfo` options only as required
+by the ceiling, with matching native primary custody and the exact real profile
+schema described below. ID tokens remain subject/authentication-only. UserInfo
+must retain equal `sub`, disclose only consented fields and preserve original
+nonrenewing authority deadlines; a scope name is not identity verification.
+Matching native managed-claims composition and independent-RP acceptance remain
+pending at this root prerequisite. Existing static claims profiles below remain
+separately supported; no new claim-source callback, engine or schema is selected.
+
+Explicit consent or refresh narrowing must retain `openid` whenever another
+reserved OIDC scope remains. Core rejects incomplete sets with `ErrInvalidScope`
+before adapter delegation, preserving the original interaction/refresh custody.
+The native owner must enforce the same root-owned `OIDCScopesComplete` predicate
+after resolving inherited scopes and before preparation or consumption. It checks
+scope-set completeness only, not syntax, catalog membership, consent or authority.
+Pure OAuth-only narrowing remains supported, including removal of `openid` while
+retaining an existing static grant's `identity:read` scope.
+
 ## Optional consented profile name UserInfo
 
 Select child `oidc.Config.ProfileUserInfo=true`, allow `openid` and `profile`

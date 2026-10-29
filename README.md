@@ -100,6 +100,22 @@ replacement authentication engine.
   no confidential OIDC, pairwise subjects, extra identity scopes, device flow
   or managed metadata replacement/secret rotation. Use matching native support;
   core selection alone supplies neither persistence nor signing.
+  To separately select public account-claim scopes, set
+  `ManagedClientPolicy.PublicOIDCScopes` to an exact ceiling containing `openid`
+  and only the desired `profile`, `email` and `phone` additions. This copied,
+  canonical ceiling applies only to public browser/default-subject registrations;
+  nil leaves `PublicOIDC` exactly openid-only. It neither changes the OAuth
+  `Scopes` ceiling nor enables confidential/pairwise claims, device, address,
+  offline access or custom fields. Retain the genuine configured-client catalog.
+  The existing OIDC child and native primary profile/identifier owners still
+  determine consented UserInfo claims; ID tokens stay minimized. Matching native
+  managed-claims composition and actual consumer acceptance remain pending;
+  this root prerequisite alone does not deliver that journey.
+  Explicit consent/refresh narrowing that retains an OIDC scope must retain
+  `openid`; incomplete selections return `ErrInvalidScope` before reaching the
+  consuming adapter. Native owners must check inherited scope selections too.
+  Pure OAuth narrowing, including an existing static grant retaining only
+  `identity:read`, does not acquire an `openid` requirement.
   Independently select `ManagedClientPolicy.ConfidentialOIDC` for the same
   minimal browser/default-subject `openid` profile with `Public=false` and
   existing `client_secret_basic` custody. It requires the configured OIDC scope
@@ -126,7 +142,7 @@ replacement authentication engine.
   Matching [native public-pairwise support](postgres/README.md#optional-public-single-host-managed-pairwise-subjects)
   composes encrypted subject custody and stable bindings without a confidential
   or static client; root selection alone does not deliver that journey. Sector-identifier
-  URI, additional claims and metadata replacement remain unselected. Safe
+  URI, additional pairwise claims and metadata replacement remain unselected. Safe
   metadata returns independent copies of this nonsecret registration, never
   derivation or wrapping keys.
   Existing warm services resolve actual registry status on every

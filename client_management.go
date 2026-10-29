@@ -44,6 +44,11 @@ type ManagedClientPolicy struct {
 	// the actual child still reads trusted UserInfoSource through its original
 	// core. OAuth Scopes and retained policy stay unchanged.
 	PublicOIDC bool `json:",omitempty"`
+	// PublicOIDCScopes optionally selects an exact additional scope ceiling for
+	// default-subject public browser clients. It requires PublicOIDC, includes
+	// openid, and may additionally contain profile, email and phone. Nil retains
+	// openid-only admission; child/native claim custody remains independently required.
+	PublicOIDCScopes []string `json:",omitempty"`
 	// ConfidentialOIDC independently permits openid-only managed confidential
 	// browser clients using their existing Basic secret custody and default public
 	// subject. It requires configured OIDCScopes containing openid, not PublicClients.
@@ -72,6 +77,16 @@ func (p ManagedClientPolicy) validated(c Config) (ManagedClientPolicy, error) {
 	}
 	if p.ConfidentialOIDC && !c.OIDCScopes.Contains("openid") {
 		return ManagedClientPolicy{}, ErrInvalidRequest
+	}
+	if len(p.PublicOIDCScopes) != 0 {
+		if !p.PublicOIDC || len(p.PublicOIDCScopes) > 4 {
+			return ManagedClientPolicy{}, ErrInvalidRequest
+		}
+		values, err := validatedScopes(p.PublicOIDCScopes)
+		if err != nil || !managedPublicClaimScopes(false, values) || !scopeSubset(values, c.OIDCScopes.values) {
+			return ManagedClientPolicy{}, ErrInvalidRequest
+		}
+		p.PublicOIDCScopes = values
 	}
 	// Match Config's bounded startup client catalog: each exact registration is
 	// a trusted selection, not an unbounded request-controlled policy search.
@@ -109,7 +124,8 @@ func (p ManagedClientPolicy) validated(c Config) (ManagedClientPolicy, error) {
 // AllowsRegistrationScopes checks immutable scope/class ceilings only, never
 // registration existence, authentication or management authority. OAuth-only
 // registrations retain Scopes; PublicOIDC and ConfidentialOIDC independently
-// select exactly openid for their browser class, not device/additional claims.
+// select openid for their browser class. Only the explicit PublicOIDCScopes
+// ceiling additionally selects public account-claim scopes, never device claims.
 // Native registries use this same admission rule on every restored projection.
 func (p ManagedClientPolicy) AllowsRegistrationScopes(public, device bool, scopes []string) bool {
 	values, err := validatedScopes(scopes)
@@ -117,13 +133,33 @@ func (p ManagedClientPolicy) AllowsRegistrationScopes(public, device bool, scope
 		return false
 	}
 	if hasExtensionScope(values) {
-		return (public && p.PublicOIDC || !public && p.ConfidentialOIDC) && minimalManagedBrowserOIDC(device, values)
+		if public && p.PublicOIDC {
+			return minimalManagedBrowserOIDC(device, values) || len(p.PublicOIDCScopes) != 0 && managedPublicClaimScopes(device, values) && scopeSubset(values, p.PublicOIDCScopes)
+		}
+		return !public && p.ConfidentialOIDC && minimalManagedBrowserOIDC(device, values)
 	}
 	return scopeSubset(values, p.Scopes.values)
 }
 
 func minimalManagedBrowserOIDC(device bool, scopes []string) bool {
 	return !device && len(scopes) == 1 && scopes[0] == "openid"
+}
+
+// This finite registration profile selects scope names, not claim meanings.
+// OIDC Core1.0 errata2 sections5.1/5.4 and the composed child retain projection
+// ownership; address/offline/custom scopes are not selected by this profile.
+func managedPublicClaimScopes(device bool, scopes []string) bool {
+	if device || len(scopes) < 1 || len(scopes) > 4 || !slices.Contains(scopes, "openid") {
+		return false
+	}
+	for _, scope := range scopes {
+		switch scope {
+		case "openid", "profile", "email", "phone":
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // AllowsRegistration checks exact immutable class/scope/subject ceilings. It

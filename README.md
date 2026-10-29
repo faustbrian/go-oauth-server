@@ -123,8 +123,9 @@ replacement authentication engine.
   Root support for managed-public pairwise additionally requires the separate
   exact `ManagedClientPolicy.PublicPairwiseRegistrations` ceiling and both
   `PublicClients` and `PublicOIDC`; the confidential ceiling never selects it.
-  Matching native public-pairwise support and its actual consumer outcome remain
-  pending; root selection alone does not deliver that journey. Sector-identifier
+  Matching [native public-pairwise support](postgres/README.md#optional-public-single-host-managed-pairwise-subjects)
+  composes encrypted subject custody and stable bindings without a confidential
+  or static client; root selection alone does not deliver that journey. Sector-identifier
   URI, additional claims and metadata replacement remain unselected. Safe
   metadata returns independent copies of this nonsecret registration, never
   derivation or wrapping keys.

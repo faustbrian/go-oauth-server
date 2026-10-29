@@ -64,7 +64,7 @@ The existing child alone owns claim meanings and minimization. Select its
 by the ceiling, with matching native primary custody and the exact real profile
 schema described below. ID tokens remain subject/authentication-only. UserInfo
 must retain equal `sub`, disclose only consented fields and preserve original
-nonrenewing authority deadlines; a scope name is not identity verification.
+authority deadlines without renewal; a scope name is not identity verification.
 Matching native managed-claims composition and independent-RP acceptance remain
 pending at this root prerequisite. Existing static claims profiles below remain
 separately supported; no new claim-source callback, engine or schema is selected.

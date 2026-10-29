@@ -87,7 +87,7 @@ type ClientListResult struct {
 	NextCursor Cursor
 }
 
-// ClientListPage owns up to 100 safe managed human-web registrations in
+// ClientListPage owns up to 100 safe managed web or machine registrations in
 // ascending ID order. Zero is invalid; an explicitly constructed empty page is
 // valid. Items returns independent copies, including nested collections.
 type ClientListPage struct {
@@ -95,17 +95,21 @@ type ClientListPage struct {
 	valid bool
 }
 
-// NewClientListPage checks the finite metadata class and deep-copies its items.
-// Static/workload clients, unselected OIDC classes and unsorted/duplicate IDs
-// are invalid. Minimal public/confidential openid metadata requires service selection.
+// NewClientListPage checks the finite human-web metadata class and deep-copies
+// its items. Static/workload clients, unsupported OIDC classes and unsorted or
+// duplicate IDs are invalid. OIDC metadata requires explicit service selection.
 func NewClientListPage(items []Client) (ClientListPage, error) {
+	return newClientListPage(items, false)
+}
+
+func newClientListPage(items []Client, workloads bool) (ClientListPage, error) {
 	if len(items) > 100 {
 		return ClientListPage{}, ErrInvalidRequest
 	}
 	owned := make([]Client, len(items))
 	for i, c := range items {
 		var err error
-		owned[i], err = clientReadProjection(c)
+		owned[i], err = clientReadProjection(c, workloads)
 		if err != nil || i > 0 && items[i-1].ID >= c.ID {
 			return ClientListPage{}, ErrInvalidRequest
 		}
@@ -113,9 +117,16 @@ func NewClientListPage(items []Client) (ClientListPage, error) {
 	return ClientListPage{items: owned, valid: true}, nil
 }
 
+// NewWorkloadClientListPage explicitly selects a mixed web/machine metadata
+// page. It grants no permission: Service private reads still enforce the exact
+// current owner and configured workload allowlist. All nested policy is copied.
+func NewWorkloadClientListPage(items []Client) (ClientListPage, error) {
+	return newClientListPage(items, true)
+}
+
 // Items returns owned mutable projections; changing them cannot alter the page
-// or native registration authority. The safe managed class has no nested secret,
-// workload policy. Selected pairwise registrations contain nonsecret metadata.
+// or native registration authority. Nested workload/pairwise policy is copied
+// metadata, never a credential or permission assertion.
 func (p ClientListPage) Items() []Client {
 	items := make([]Client, len(p.items))
 	for i, c := range p.items {
@@ -124,8 +135,8 @@ func (p ClientListPage) Items() []Client {
 	return items
 }
 
-func clientReadProjection(c Client) (Client, error) {
-	if !strings.HasPrefix(c.ID, ManagedClientPrefix) || c.Workload != nil || hasExtensionScope(c.Scopes) && !minimalManagedBrowserOIDC(c.DeviceAuthorization, c.Scopes) && !(c.Public && c.SubjectRegistration == nil && managedPublicClaimScopes(c.DeviceAuthorization, c.Scopes)) || c.SubjectRegistration != nil && (!minimalManagedBrowserOIDC(c.DeviceAuthorization, c.Scopes) || !singleHostManagedPairwise(c.SubjectRegistration)) {
+func clientReadProjection(c Client, workloads bool) (Client, error) {
+	if !strings.HasPrefix(c.ID, ManagedClientPrefix) || c.Workload != nil && (!workloads || hasExtensionScope(c.Scopes)) || hasExtensionScope(c.Scopes) && !minimalManagedBrowserOIDC(c.DeviceAuthorization, c.Scopes) && !(c.Public && c.SubjectRegistration == nil && managedPublicClaimScopes(c.DeviceAuthorization, c.Scopes)) || c.SubjectRegistration != nil && (!minimalManagedBrowserOIDC(c.DeviceAuthorization, c.Scopes) || !singleHostManagedPairwise(c.SubjectRegistration)) {
 		return Client{}, ErrInvalidRequest
 	}
 	if _, err := identity.ParseSubjectID(strings.TrimPrefix(c.ID, ManagedClientPrefix)); err != nil {
@@ -185,8 +196,17 @@ func (s *Service) clientReadAdmission(ctx context.Context, r ClientReadRequest, 
 }
 
 func (s *Service) selectedClientReadProjection(c Client) (Client, error) {
-	c, err := clientReadProjection(c)
-	if err != nil || c.Owner != s.config.ManagedClients.Owner || c.Resource != s.config.Resource || !s.config.ManagedClients.AllowsRegistration(c.Public, c.DeviceAuthorization, c.Scopes, c.SubjectRegistration) || hasExtensionScope(c.Scopes) && nilDependency(s.deps.OIDC) {
+	c, err := clientReadProjection(c, len(s.config.ManagedClients.Workloads) != 0)
+	if err != nil || c.Owner != s.config.ManagedClients.Owner || c.Resource != s.config.Resource {
+		return Client{}, ErrAccessDenied
+	}
+	if c.Workload != nil {
+		if !s.config.ManagedClients.AllowsWorkloadRegistration(c.Public, c.DeviceAuthorization, c.Scopes, c.Workload) {
+			return Client{}, ErrAccessDenied
+		}
+		return c, nil
+	}
+	if !s.config.ManagedClients.AllowsRegistration(c.Public, c.DeviceAuthorization, c.Scopes, c.SubjectRegistration) || hasExtensionScope(c.Scopes) && nilDependency(s.deps.OIDC) {
 		return Client{}, ErrAccessDenied
 	}
 	for _, redirect := range c.Redirects {
@@ -273,7 +293,7 @@ func (s *Service) ClientList(ctx context.Context, r ClientReadRequest) (out Clie
 			return ClientListResult{}, err
 		}
 	}
-	out.Page, err = NewClientListPage(items)
+	out.Page, err = newClientListPage(items, len(s.config.ManagedClients.Workloads) != 0)
 	if err != nil {
 		return ClientListResult{}, ErrUnavailable
 	}

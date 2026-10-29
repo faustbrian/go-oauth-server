@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add an explicit exact managed-workload allowlist and create-only machine
+  registration branch. Fresh authorized managers can select confidential
+  access-only clients without caller-selected tenants or human actors. Native
+  adapters must opt into the new validator and preserve its workload binding.
+  Owner-authorized private inventory supports explicitly selected machine
+  metadata; existing browser/device admission stays unchanged.
+
 - Reject explicit consent and refresh selections that retain OIDC claim scopes
   without `openid` before delegating to a consuming adapter. Valid OIDC subsets
   retain `openid`; intentional pure OAuth narrowing stays supported. Native

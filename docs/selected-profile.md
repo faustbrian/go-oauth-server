@@ -7,6 +7,22 @@ platform-owned public or configured confidential client a narrow resource author
 consent, S256 code exchange, refresh rotation and revocation.
 An additional explicit startup workload policy selects confidential
 client-credentials access without a human/session/consent substitute.
+`ManagedClientPolicy.Workloads` additionally selects a bounded exact allowlist
+for `ClientCreate`: the request's `Workload` must match the trusted management
+tenant, service-account ID and access lifetime. The existing fresh manager,
+current platform authorization, same-browser CSRF and reveal-once Basic secret
+custody remain mandatory. Machine creation rejects redirect, public, device and
+OIDC metadata; tokens contain access only, never codes, refresh or ID tokens.
+`ValidateWorkloadClientManagementRequest` is the explicit native-adapter opt-in;
+older validators reject rather than discard the new field. Native persistence,
+current workload/client authority and terminal deletion require a matching
+adapter. Existing owner-authorized private `ClientGet`/`ClientList` can include
+only explicitly selected workload metadata, with independent snapshot copies.
+`NewClientListPage` retains its human-only default; a matching native adapter
+explicitly selects `NewWorkloadClientListPage` for mixed web/machine pages.
+Unselected compositions cannot disclose machine metadata. This addition does not select
+machine public/prelogin reads, metadata replacement, secret rotation, dynamic
+registration or token exchange variants.
 The separately selected [human code-access exchange](human-code-exchange.md)
 preserves that existing human grant rather than manufacturing a workload.
 

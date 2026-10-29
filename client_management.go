@@ -65,9 +65,18 @@ type ManagedClientPolicy struct {
 	// DeviceAuthorization is an explicit ceiling for newly managed device
 	// registrations; false preserves the existing browser-only namespace.
 	DeviceAuthorization bool
+	// Workloads is an optional exact trusted ceiling for managed confidential
+	// machine registrations. Each entry binds this management tenant, service
+	// account and access lifetime; construction snapshots independent scalars.
+	Workloads []*Workload `json:",omitempty"`
 }
 
 func (p ManagedClientPolicy) validated(c Config) (ManagedClientPolicy, error) {
+	var workloadErr error
+	p.Workloads, workloadErr = p.validatedWorkloads(c.AccessTTL)
+	if workloadErr != nil {
+		return ManagedClientPolicy{}, workloadErr
+	}
 	redirects, err := NewRedirectPolicy(p.Redirects)
 	if err != nil || !identifier(p.Owner.PlatformID()) || !identifier(string(p.TenantID)) || len(p.Scopes.values) == 0 || hasExtensionScope(p.Scopes.values) || !scopeSubset(p.Scopes.values, c.Scopes.values) {
 		return ManagedClientPolicy{}, ErrInvalidRequest
@@ -214,6 +223,9 @@ type ClientManagementRequest struct {
 	// trusted pairwise allowlist. Nil preserves default subjects. Delete accepts
 	// no registration edits.
 	SubjectRegistration *OIDCSubjectRegistration
+	// Workload selects an exact trusted machine registration. It is create-only
+	// and cannot be mixed with browser, public, device or OIDC registration.
+	Workload *Workload
 }
 
 func (ClientManagementRequest) Format(f fmt.State, _ rune) {
@@ -303,7 +315,9 @@ func (s *Service) manageClient(ctx context.Context, r ClientManagementRequest, r
 		return out, ErrAccessDenied
 	}
 	p := s.config.ManagedClients
-	if !remove && r.SubjectRegistration != nil {
+	if !remove && r.Workload != nil {
+		r, err = ValidateWorkloadClientManagementRequest(r, *p, s.config.Issuer)
+	} else if !remove && r.SubjectRegistration != nil {
 		r, err = ValidatePairwiseClientManagementRequest(r, *p, s.config.Issuer)
 	} else {
 		r, err = ValidateClientManagementRequest(r, remove, *p, s.config.Issuer)
@@ -368,11 +382,11 @@ func ValidatePairwiseClientManagementRequest(r ClientManagementRequest, p Manage
 }
 
 func validateClientManagementRequest(r ClientManagementRequest, remove bool, p ManagedClientPolicy, issuer Issuer) (ClientManagementRequest, error) {
-	if r.Owner != p.Owner || r.TenantID != p.TenantID || r.Origin != issuer.String() || r.CSRF == (session.CSRFToken{}) || !visible(r.Network, 128) || r.RequestKey == (identity.IdempotencyKey{}) {
-		return ClientManagementRequest{}, ErrAccessDenied
-	}
-	if _, err := session.ParseToken(r.Session.Token()); err != nil {
+	if r.Workload != nil {
 		return ClientManagementRequest{}, ErrInvalidRequest
+	}
+	if err := validateClientManagementBinding(r, p, issuer); err != nil {
+		return ClientManagementRequest{}, err
 	}
 	if remove {
 		if r.Public {
@@ -429,6 +443,16 @@ func validateClientManagementRequest(r ClientManagementRequest, remove bool, p M
 	return r, nil
 }
 
+func validateClientManagementBinding(r ClientManagementRequest, p ManagedClientPolicy, issuer Issuer) error {
+	if r.Owner != p.Owner || r.TenantID != p.TenantID || r.Origin != issuer.String() || r.CSRF == (session.CSRFToken{}) || !visible(r.Network, 128) || r.RequestKey == (identity.IdempotencyKey{}) {
+		return ErrAccessDenied
+	}
+	if _, err := session.ParseToken(r.Session.Token()); err != nil {
+		return ErrInvalidRequest
+	}
+	return nil
+}
+
 func (s *Service) currentClient(ctx context.Context, id string) (Client, error) {
 	if s.config.ManagedClients == nil || !strings.HasPrefix(id, ManagedClientPrefix) {
 		return s.client(id)
@@ -438,7 +462,16 @@ func (s *Service) currentClient(ctx context.Context, id string) (Client, error) 
 		return Client{}, err
 	}
 	c, err = ValidateClient(c)
-	if err != nil || c.ID != id || c.Owner != s.config.ManagedClients.Owner || c.Workload != nil || c.Resource != s.config.Resource || !s.config.ManagedClients.AllowsRegistration(c.Public, c.DeviceAuthorization, c.Scopes, c.SubjectRegistration) {
+	if err != nil || c.ID != id || c.Owner != s.config.ManagedClients.Owner || c.Resource != s.config.Resource {
+		return Client{}, ErrAccessDenied
+	}
+	if c.Workload != nil {
+		if !s.config.ManagedClients.AllowsWorkloadRegistration(c.Public, c.DeviceAuthorization, c.Scopes, c.Workload) {
+			return Client{}, ErrAccessDenied
+		}
+		return c, nil
+	}
+	if !s.config.ManagedClients.AllowsRegistration(c.Public, c.DeviceAuthorization, c.Scopes, c.SubjectRegistration) {
 		return Client{}, ErrAccessDenied
 	}
 	for _, redirect := range c.Redirects {

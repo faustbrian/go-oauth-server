@@ -101,6 +101,7 @@ func discoveryProfiles(c Config) (web, workload, basic, public bool) {
 	// today's registration count or a stale snapshot of only static clients.
 	if c.ManagedClients != nil {
 		web, basic = true, true
+		workload = workload || len(c.ManagedClients.Workloads) != 0
 		public = public || c.ManagedClients.PublicClients
 	}
 	return

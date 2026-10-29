@@ -41,13 +41,23 @@ func TestManagedRegistrationPreservesPublicClassAndLegacyConfidentialEncoding(t 
 func TestManagedPublicOIDCMetadataUsesSelectedRootScopeCeiling(t *testing.T) {
 	owner, _ := oauth.NewPlatformOwner("platform")
 	resourceScopes, _ := oauth.NewScopeCatalog([]string{"identity:read"})
-	for _, variant := range []string{"selected", "default", "confidential", "extra-claim", "mixed-oauth", "device"} {
+	for _, variant := range []string{"selected", "default", "confidential", "confidential-selected", "confidential-extra-claim", "confidential-mixed-oauth", "confidential-device", "extra-claim", "mixed-oauth", "device"} {
 		t.Run(variant, func(t *testing.T) {
 			policy := &oauth.ManagedClientPolicy{Owner: owner, TenantID: "tenant", Redirects: []string{"https://client.example/cb"}, Scopes: resourceScopes, PublicClients: true, PublicOIDC: variant != "default", DeviceAuthorization: true}
 			client := oauth.Client{ID: "managed.abcdefghijklmnopqrstuw", Owner: owner, Version: 1, Public: true, AuthenticationMethod: "none", Resource: "https://api.example", Redirects: policy.Redirects, Scopes: []string{"openid"}}
 			switch variant {
 			case "confidential":
 				client.Public, client.AuthenticationMethod = false, "client_secret_basic"
+			case "confidential-selected", "confidential-extra-claim", "confidential-mixed-oauth", "confidential-device":
+				client.Public, client.AuthenticationMethod = false, "client_secret_basic"
+				policy.PublicClients, policy.PublicOIDC, policy.ConfidentialOIDC = false, false, true
+				if variant == "confidential-extra-claim" {
+					client.Scopes = []string{"openid", "email"}
+				} else if variant == "confidential-mixed-oauth" {
+					client.Scopes = []string{"openid", "identity:read"}
+				} else if variant == "confidential-device" {
+					client.DeviceAuthorization = true
+				}
 			case "extra-claim":
 				client.Scopes = []string{"openid", "email"}
 			case "mixed-oauth":
@@ -55,7 +65,7 @@ func TestManagedPublicOIDCMetadataUsesSelectedRootScopeCeiling(t *testing.T) {
 			case "device":
 				client.DeviceAuthorization = true
 			}
-			store := &Store{config: Config{PublicClients: true, Protocol: oauth.Config{Resource: client.Resource, ManagedClients: policy}}}
+			store := &Store{config: Config{PublicClients: policy.PublicClients, Protocol: oauth.Config{Resource: client.Resource, ManagedClients: policy}}}
 			wire, err := json.Marshal(registrationWire(client))
 			if err != nil {
 				t.Fatal(err)
@@ -64,7 +74,7 @@ func TestManagedPublicOIDCMetadataUsesSelectedRootScopeCeiling(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if store.managedMetadata(restored) != (variant == "selected") {
+			if store.managedMetadata(restored) != (variant == "selected" || variant == "confidential-selected") {
 				t.Fatal("durable metadata did not retain the exact selected managed OIDC class")
 			}
 		})

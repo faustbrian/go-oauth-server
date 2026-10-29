@@ -303,13 +303,25 @@ func TestNativeManagedPublicOIDCFreshAndPopulatedIndependentConsumer(t *testing.
 }
 
 func TestNativeManagedPublicOIDCUnknownCreateRetainsCurrentAuthorizedRecovery(t *testing.T) {
+	testNativeManagedOIDCUnknownCreateRetainsCurrentAuthorizedRecovery(t, true)
+}
+
+func testNativeManagedOIDCUnknownCreateRetainsCurrentAuthorizedRecovery(t *testing.T, public bool) {
+	t.Helper()
 	fault := &oauthCommitFault{}
 	f := passwordFixture(t, fault)
-	signer, subjectKey := managedOIDCFixture(t, &f, false)
-	f.oauth.Protocol.ManagedClients.PublicOIDC = true
+	var signer *oauth.SigningService
+	var subjectKey [32]byte
+	if public {
+		signer, subjectKey = managedOIDCFixture(t, &f, false)
+		f.oauth.Protocol.ManagedClients.PublicOIDC = true
+	} else {
+		signer, subjectKey = managedConfidentialOIDCFixture(t, &f, false)
+		f.oauth.Protocol.ManagedClients.ConfidentialOIDC = true
+	}
 	service, _, store := managedOIDCServices(t, f, signer, subjectKey)
 	r := clientCreateRequest(t, f, "managed-oidc-unknown")
-	r.Public, r.Scopes = true, []string{"openid"}
+	r.Public, r.Scopes = public, []string{"openid"}
 	fault.armed.Store(true)
 	lost, err := service.ClientCreate(f.ctx, r)
 	if err == nil || !fault.hit.Load() || lost.Completion.Outcome != identity.CommitOutcomeUnknown {
@@ -340,7 +352,7 @@ func TestNativeManagedPublicOIDCUnknownCreateRetainsCurrentAuthorizedRecovery(t 
 		t.Fatal("recovered managed OIDC result exposed secret")
 	}
 	var clients, effects int
-	if err := f.pool.Raw().QueryRow(f.ctx, `SELECT count(*) FROM oauth_store.managed_clients WHERE client_id=$1 AND secret_digest IS NULL`, rr.ClientID).Scan(&clients); err != nil {
+	if err := f.pool.Raw().QueryRow(f.ctx, `SELECT count(*) FROM oauth_store.managed_clients WHERE client_id=$1 AND (secret_digest IS NULL)=$2`, rr.ClientID, public).Scan(&clients); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.pool.Raw().QueryRow(f.ctx, `SELECT count(*) FROM oauth_store.effects WHERE operation_id='identity.oauth-server.client-create' AND client_id=$1`, rr.ClientID).Scan(&effects); err != nil || clients != 1 || effects != 1 {
@@ -353,7 +365,7 @@ func TestNativeManagedPublicOIDCRequiredEffectsRollbackAndOriginalRecovery(t *te
 }
 
 func TestNativeManagedPublicOIDCDeletionFencesLateApprovalExchangeAndRefresh(t *testing.T) {
-	testNativeManagedClientDeletionFences(t, true)
+	testNativeManagedClientDeletionFences(t, true, true)
 }
 
 func TestNativeManagedPublicOIDCUncomposedContinuationPreservesOriginalInteraction(t *testing.T) {

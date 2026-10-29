@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/faustbrian/go-audit"
@@ -41,14 +42,93 @@ import (
 )
 
 type baselineGraph struct {
-	stores   reference.StoreSet
-	features reference.FeatureSet
-	workers  reference.WorkerSet
-	server   *reference.Server
-	hibp     *hibp.Client
-	http     *httpclient.Client
-	signin   passwordpg.SigninConfig
-	signup   passwordpg.SignupConfig
+	stores            reference.StoreSet
+	features          reference.FeatureSet
+	workers           reference.WorkerSet
+	server            *reference.Server
+	hibp              *hibp.Client
+	http              *httpclient.Client
+	signin            passwordpg.SigninConfig
+	signup            passwordpg.SignupConfig
+	signupObservation *signupFixtureObservation
+}
+
+// The primitive's existing observer reports no credential material. Keep only
+// this invocation's last closed event so a failed pre-OAuth fixture can locate
+// screening/hash work without replacing an owner or retaining caller context.
+type signupFixtureObservation struct {
+	mu     sync.Mutex
+	active bool
+	value  signupFixtureObservationValue
+}
+
+type signupFixtureObservationValue struct {
+	active                                                                                                   bool
+	hashObserved, hashOperation, hashSuccess, hashCanceled, hashResourceRejected, hashFailed, hashUnexpected bool
+	verifyOperation                                                                                          bool
+	hashMismatch, hashMalformed, hashUnsupported, hashUpgraded                                               bool
+	hashDeadline, hashContextCanceled                                                                        bool
+	hashDuration                                                                                             time.Duration
+	collectEntered, collectReturned, collectFailed, collectDeadline, collectCanceled                         bool
+	collectDuration                                                                                          time.Duration
+}
+
+func (o *signupFixtureObservation) begin() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.value, o.active = signupFixtureObservationValue{}, true
+}
+
+func (o *signupFixtureObservation) end() signupFixtureObservationValue {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if !o.active {
+		return signupFixtureObservationValue{}
+	}
+	o.active = false
+	value := o.value
+	value.active = true
+	return value
+}
+
+func (o *signupFixtureObservation) Observe(ctx context.Context, event primitive.Observation) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if !o.active {
+		return
+	}
+	v := &o.value
+	v.hashObserved, v.hashOperation = true, event.Operation == primitive.OperationHash
+	v.verifyOperation = event.Operation == primitive.OperationVerify || event.Operation == primitive.OperationVerifyAndUpgrade
+	v.hashSuccess, v.hashCanceled = event.Outcome == primitive.OutcomeSuccess, event.Outcome == primitive.OutcomeCanceled
+	v.hashResourceRejected, v.hashFailed = event.Outcome == primitive.OutcomeResourceRejected, event.Outcome == primitive.OutcomeFailed
+	v.hashMismatch, v.hashMalformed = event.Outcome == primitive.OutcomeMismatch, event.Outcome == primitive.OutcomeMalformed
+	v.hashUnsupported, v.hashUpgraded = event.Outcome == primitive.OutcomeUnsupported, event.Outcome == primitive.OutcomeUpgraded
+	v.hashUnexpected = !(v.hashOperation || v.verifyOperation) || !(v.hashSuccess || v.hashCanceled || v.hashResourceRejected || v.hashFailed || v.hashMismatch || v.hashMalformed || v.hashUnsupported || v.hashUpgraded)
+	v.hashDuration = event.Duration
+	v.hashDeadline, v.hashContextCanceled = errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(ctx.Err(), context.Canceled)
+}
+
+func (o *signupFixtureObservation) collect(ctx context.Context, original func() ([]risk.Signal, error)) (facts []risk.Signal, err error) {
+	started := time.Now()
+	o.mu.Lock()
+	if o.active {
+		o.value.collectEntered = true
+	}
+	o.mu.Unlock()
+	returned := false
+	defer func() {
+		o.mu.Lock()
+		defer o.mu.Unlock()
+		if o.active {
+			o.value.collectReturned, o.value.collectFailed = returned, err != nil
+			o.value.collectDuration = time.Since(started)
+			o.value.collectDeadline, o.value.collectCanceled = errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(ctx.Err(), context.Canceled)
+		}
+	}()
+	facts, err = original()
+	returned = true
+	return facts, err
 }
 
 func (g *baselineGraph) close(ctx context.Context) error {
@@ -166,7 +246,8 @@ func fixtureGraph(ctx context.Context, origin string, fixtureKeys map[string][32
 		return nil, err
 	}
 	profile := primitive.DefaultPolicy()
-	crypto, err := primitive.New(profile)
+	observation := &signupFixtureObservation{}
+	crypto, err := primitive.New(profile, primitive.WithObserver(observation))
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +264,7 @@ func fixtureGraph(ctx context.Context, origin string, fixtureKeys map[string][32
 		_ = transport.Close()
 		return nil, err
 	}
-	g := &baselineGraph{hibp: checker.(*hibp.Client), http: transport}
+	g := &baselineGraph{hibp: checker.(*hibp.Client), http: transport, signupObservation: observation}
 	defer func() {
 		if err != nil {
 			cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
@@ -196,12 +277,14 @@ func fixtureGraph(ctx context.Context, origin string, fixtureKeys map[string][32
 		return nil, err
 	}
 	collect := func(ctx context.Context, b risk.Context, candidate primitive.Secret) ([]risk.Signal, error) {
-		command, err := identity.ParseCommandID(b.Attempt)
-		if err != nil {
-			return nil, err
-		}
-		signal, err := provider.Assess(ctx, hibp.CheckRequest{OperationID: "identity.password.signup", TenantID: identity.TenantID(b.Tenant), Action: b.Operation, Purpose: "identity.password.signup", SubjectScope: "password-screening", PolicyVersion: "local-baseline-v1", ReplayID: command, Candidate: candidate})
-		return []risk.Signal{signal}, err
+		return observation.collect(ctx, func() ([]risk.Signal, error) {
+			command, err := identity.ParseCommandID(b.Attempt)
+			if err != nil {
+				return nil, err
+			}
+			signal, err := provider.Assess(ctx, hibp.CheckRequest{OperationID: "identity.password.signup", TenantID: identity.TenantID(b.Tenant), Action: b.Operation, Purpose: "identity.password.signup", SubjectScope: "password-screening", PolicyVersion: "local-baseline-v1", ReplayID: command, Candidate: candidate})
+			return []risk.Signal{signal}, err
+		})
 	}
 	normalization, err := identifier.NewNormalizationProfile(identifier.NormalizationProfileSpec{ID: "local-email-nfc", Version: 1, Unicode: identifier.UnicodeNormalizationNFC, MaximumBytes: 512})
 	if err != nil {

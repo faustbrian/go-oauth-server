@@ -118,6 +118,34 @@ or consuming a code/refresh bearer. Consumers must independently validate
 discovery, issuer, audience, signature, nonce and expiry, then require equal
 ID-token/UserInfo subjects.
 
+## Optional minimal managed confidential OIDC
+
+Separately select `Config.Protocol.ManagedClients.ConfidentialOIDC=true` with
+the existing `Protocol.OIDCScopes` containing `openid`, matching published root
+support and the actual composed OIDC child. This permits `Public=false`, Basic
+browser clients requesting `openid` alone with the existing default public
+subject. It does not require `PublicClients`, `PublicOIDC` or their public-client
+schema. Keep the managed OAuth-only `Scopes` ceiling unchanged. Pairwise/additional
+claims, device registration and OIDC metadata replacement remain unselected.
+
+Use the existing client/consent/signing history and signing lifecycle; this
+selector introduces no schema or new custody owner. Creation reveals its random
+secret only on a fresh known commitment. Safe get/list, original retries and
+unknown recovery expose metadata only; lost committed secret delivery cannot be
+recovered as plaintext. Required audit/outbox effects remain atomic with the
+existing protected client mutation and exact original recovery.
+
+For rotation, install the existing `ClientRotationMigrationSource` at a new
+forward version without rewriting or reordering any installed history, replace
+all unaware writers, then select `ClientSecretRotation`.
+Rotate using a currently authorized fresh manager and the discovered exact
+version. Zero overlap immediately rejects the old Basic secret. Every rotation
+withdraws prior consent/code/access/refresh authority even when overlap is
+nonzero; obtain a new explicit consent/S256 grant with the current client
+version before refreshing. Reconstruct services with the same existing signing
+and subject custody to preserve the ID-token/UserInfo subject. Terminal deletion
+uses the existing exact-version mutation and denies warm descendants.
+
 Public OIDC registration persists the existing public/none metadata and NULL
 secret digest. Fresh services resolve it from native current authority. The
 selector leaves existing configuration/management identities unchanged: each

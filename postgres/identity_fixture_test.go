@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -212,9 +213,11 @@ func passwordFixtureWithSignupRecovery(t *testing.T, change bool, profileSchema 
 		if len(csrf) == 1 {
 			r.Header.Set("X-CSRF-Token", csrf[0])
 		}
+		started := time.Now()
 		response, err := client.Do(r)
 		if err != nil {
-			t.Fatalf("identity HTTPS request unavailable: deadline=%t canceled=%t parent_done=%t error_type=%T", errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled), ctx.Err() != nil, err)
+			logPasswordFixtureObservation(t, graph.signupObservation.end())
+			t.Fatalf("identity HTTPS request unavailable: signup=%t signin=%t preauth=%t confirmation=%t duration=%s deadline=%t canceled=%t parent_done=%t", path == "/v1/password/signup", path == "/v1/password/signin", path == "/v1/session/preauth-issue", path == "/v1/email/verification-confirm", time.Since(started), errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled), ctx.Err() != nil)
 		}
 		payload, readErr := io.ReadAll(io.LimitReader(response.Body, 16385))
 		closeErr := response.Body.Close()
@@ -257,7 +260,9 @@ func passwordFixtureWithSignupRecovery(t *testing.T, change bool, profileSchema 
 	if expectSignupUnknown {
 		faults[0].armed.Store(true)
 	}
+	graph.signupObservation.begin()
 	status, body, _, cookies := call("/v1/password/signup", map[string]any{"flowID": string(flow.FlowID), "email": address, "password": candidate, "callbackURL": origin + "/confirm"}, "oauth-original-signup")
+	signupObservation := graph.signupObservation.end()
 	var signup passwordhttp.SignupResponse
 	signupDecode := json.Unmarshal(body, &signup)
 	if expectSignupUnknown && (!faults[0].hit.Load() || status != 503 || signupDecode != nil || signup.CommitOutcome != "unknown" || signup.Recovery == nil) {
@@ -275,6 +280,10 @@ func passwordFixtureWithSignupRecovery(t *testing.T, change bool, profileSchema 
 		knownSignup = observeOriginalSignupRecovery(t, ctx, graph, origin, secrets["http-device"], flow.FlowID, originalSignupCookies, signup)
 	}
 	if !knownSignup || len(cookies) != 0 {
+		if signupDecode == nil && signup.CommitOutcome == "unknown" {
+			observeUnresolvedSignupJournal(t, ctx, pool, signup.CommandID)
+			logPasswordFixtureObservation(t, signupObservation)
+		}
 		t.Fatalf("real signup did not require verification: status=%d decoded=%t unavailable=%t outcome_unknown=%t outcome_none=%t command_present=%t recovery_present=%t parent_done=%t", status, signupDecode == nil, signup.Error == "unavailable", signup.CommitOutcome == "unknown", signup.CommitOutcome == "none", signup.CommandID != "", signup.Recovery != nil, ctx.Err() != nil)
 	}
 	if expectSignupUnknown && originalSignupEffectCounts(t, ctx, pool) != signupEffects {
@@ -300,10 +309,13 @@ func passwordFixtureWithSignupRecovery(t *testing.T, change bool, profileSchema 
 		t.Fatal("real confirmation failed or minted a session", status)
 	}
 	flow = preauth("password")
+	graph.signupObservation.begin()
 	status, body, headers, cookies := call("/v1/password/signin", map[string]any{"flowID": string(flow.FlowID), "identifier": address, "password": candidate, "callbackURL": origin + "/confirm"}, "")
+	signinObservation := graph.signupObservation.end()
 	var signed passwordhttp.SigninResponse
 	signinDecode := json.Unmarshal(body, &signed)
 	if status != 200 || signinDecode != nil || !signed.SignedIn || signed.CommitOutcome != "committed" || len(cookies) != 1 {
+		logPasswordFixtureObservation(t, signinObservation)
 		t.Fatalf("real password sign-in failed: status=%d decoded=%t unavailable=%t outcome_unknown=%t outcome_none=%t command_present=%t recovery_present=%t parent_done=%t", status, signinDecode == nil, signed.Error == "unavailable", signed.CommitOutcome == "unknown", signed.CommitOutcome == "none", signed.CommandID != "", signed.Recovery != nil, ctx.Err() != nil)
 	}
 	// These are the existing native owners' standalone allocations, also used
@@ -529,12 +541,57 @@ func passwordFixtureWithSignupRecovery(t *testing.T, change bool, profileSchema 
 		phoneInput: &nativePhoneInput{signin: graph.signin, signup: graph.signup, hibp: graph.hibp, keys: phoneKeys, password: phoneCandidate, sessionKey: phoneSessionKey}}
 }
 
+func logPasswordFixtureObservation(t *testing.T, o signupFixtureObservationValue) {
+	t.Helper()
+	t.Logf("password primitive observation: active=%t observed=%t hash_operation=%t verify_operation=%t success=%t canceled=%t resource_rejected=%t failed=%t mismatch=%t malformed=%t unsupported=%t upgraded=%t unexpected=%t duration=%s context_deadline=%t context_canceled=%t", o.active, o.hashObserved, o.hashOperation, o.verifyOperation, o.hashSuccess, o.hashCanceled, o.hashResourceRejected, o.hashFailed, o.hashMismatch, o.hashMalformed, o.hashUnsupported, o.hashUpgraded, o.hashUnexpected, o.hashDuration, o.hashDeadline, o.hashContextCanceled)
+	t.Logf("password collect observation: active=%t entered=%t returned=%t failed=%t duration=%s context_deadline=%t context_canceled=%t", o.active, o.collectEntered, o.collectReturned, o.collectFailed, o.collectDuration, o.collectDeadline, o.collectCanceled)
+}
+
 func originalSignupEffectCounts(t *testing.T, ctx context.Context, pool *database.Pool) (counts [4]int) {
 	t.Helper()
 	if err := pool.Raw().QueryRow(ctx, `SELECT (SELECT count(*) FROM identity.registration_bindings),(SELECT count(*) FROM identity_password.credentials),(SELECT count(*) FROM identity.delivery_intents),(SELECT count(*) FROM capability_identity_one_use)`).Scan(&counts[0], &counts[1], &counts[2], &counts[3]); err != nil {
 		t.Fatal("original signup protected effect counts unavailable")
 	}
 	return counts
+}
+
+// An unresolved original observation must fail, but the fixture drops its DB
+// during cleanup. Retain only closed state and custody-presence diagnostics so
+// a failed signup can be located without retaining its input or retrying it.
+func observeUnresolvedSignupJournal(t *testing.T, ctx context.Context, pool *database.Pool, command identity.CommandID) {
+	t.Helper()
+	if _, err := identity.ParseCommandID(string(command)); err != nil {
+		t.Log("unresolved signup journal: command_valid=false")
+		return
+	}
+	id, err := base64.RawURLEncoding.DecodeString(string(command))
+	if err != nil {
+		t.Log("unresolved signup journal: command_encoding_valid=false")
+		return
+	}
+	defer clear(id)
+	bounded, stop := context.WithTimeout(ctx, time.Second)
+	defer stop()
+	var state string
+	var plan, profile, started, preparation, terminal, result, class, liveLease bool
+	var counts [4]int
+	err = pool.Raw().QueryRow(bounded, `SELECT
+		CASE state WHEN 'pending' THEN 'pending' WHEN 'committed' THEN 'committed' WHEN 'aborted' THEN 'aborted' ELSE 'unexpected' END,
+		command_plan IS NOT NULL,preparation_profile IS NOT NULL,preparation_started_generation IS NOT NULL,preparation_ciphertext IS NOT NULL,
+		terminal_at IS NOT NULL,result IS NOT NULL,terminal_class IS NOT NULL,lease_until>clock_timestamp(),
+		(SELECT count(*) FROM identity.registration_bindings),(SELECT count(*) FROM identity_password.credentials),
+		(SELECT count(*) FROM identity.delivery_intents),(SELECT count(*) FROM capability_identity_one_use)
+		FROM identity.commands WHERE command_id=$1 AND tenant_id=$2 AND purpose='identity.password.signup'`, id, baselineTenant).Scan(&state, &plan, &profile, &started, &preparation, &terminal, &result, &class, &liveLease, &counts[0], &counts[1], &counts[2], &counts[3])
+	if err != nil {
+		t.Logf("unresolved signup journal: read=false deadline=%t canceled=%t error_type=%T", errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled), err)
+		return
+	}
+	switch state {
+	case "pending", "committed", "aborted":
+	default:
+		state = "unexpected"
+	}
+	t.Logf("unresolved signup journal: read=true state=%s plan=%t profile=%t started=%t preparation=%t terminal=%t result=%t class=%t live_lease=%t registration_count=%d credential_count=%d delivery_count=%d capability_count=%d", state, plan, profile, started, preparation, terminal, result, class, liveLease, counts[0], counts[1], counts[2], counts[3])
 }
 
 // The public SignupService permits unknown; RecoverSignup authenticates original

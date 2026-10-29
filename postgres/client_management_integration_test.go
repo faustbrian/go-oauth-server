@@ -510,8 +510,13 @@ func testNativeManagedClientRequiredEffectsProfile(t *testing.T, public, managed
 			var subjectKey [32]byte
 			var err error
 			if managedOIDC {
-				signer, subjectKey = managedOIDCFixture(t, &f, false)
-				f.oauth.Protocol.ManagedClients.PublicOIDC = true
+				if public {
+					signer, subjectKey = managedOIDCFixture(t, &f, false)
+					f.oauth.Protocol.ManagedClients.PublicOIDC = true
+				} else {
+					signer, subjectKey = managedConfidentialOIDCFixture(t, &f, false)
+					f.oauth.Protocol.ManagedClients.ConfidentialOIDC = true
+				}
 				service, _, _ = managedOIDCServices(t, f, signer, subjectKey)
 			} else {
 				enableClientManagement(t, &f)
@@ -625,10 +630,10 @@ func testNativeManagedClientRequiredEffectsProfile(t *testing.T, public, managed
 }
 
 func TestNativeManagedClientDeletionFencesLateApprovalExchangeAndRefresh(t *testing.T) {
-	testNativeManagedClientDeletionFences(t, false)
+	testNativeManagedClientDeletionFences(t, false, false)
 }
 
-func testNativeManagedClientDeletionFences(t *testing.T, managedOIDC bool) {
+func testNativeManagedClientDeletionFences(t *testing.T, managedOIDC, public bool) {
 	t.Helper()
 	for _, mode := range []string{"approval", "exchange", "refresh"} {
 		t.Run(mode, func(t *testing.T) {
@@ -639,8 +644,13 @@ func testNativeManagedClientDeletionFences(t *testing.T, managedOIDC bool) {
 			var err error
 			scopes := []string{"identity:read"}
 			if managedOIDC {
-				signer, subjectKey = managedOIDCFixture(t, &f, false)
-				f.oauth.Protocol.ManagedClients.PublicOIDC = true
+				if public {
+					signer, subjectKey = managedOIDCFixture(t, &f, false)
+					f.oauth.Protocol.ManagedClients.PublicOIDC = true
+				} else {
+					signer, subjectKey = managedConfidentialOIDCFixture(t, &f, false)
+					f.oauth.Protocol.ManagedClients.ConfidentialOIDC = true
+				}
 				service, _, _ = managedOIDCServices(t, f, signer, subjectKey)
 				scopes = []string{"openid"}
 			} else {
@@ -652,14 +662,14 @@ func testNativeManagedClientDeletionFences(t *testing.T, managedOIDC bool) {
 			}
 			r := clientCreateRequest(t, f, "race-create")
 			if managedOIDC {
-				r.Public, r.Scopes = true, scopes
+				r.Public, r.Scopes = public, scopes
 			}
 			created, err := service.ClientCreate(f.ctx, r)
 			if err != nil {
 				t.Fatal(err)
 			}
 			var basic oauth.ClientAuthentication
-			if !managedOIDC {
+			if !created.Client.Public {
 				secret, _ := created.Secret.Reveal()
 				basic = confidentialBasic(t, created.Client.ID, secret)
 			}

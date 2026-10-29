@@ -69,7 +69,7 @@ func (s *Store) managementPolicy() [32]byte {
 		return [32]byte{}
 	}
 	// Enabling a new class must not strand original confidential preparation.
-	// PublicClients/PublicOIDC are deliberately outside this retained identity;
+	// PublicClients and both OIDC selectors are outside this retained identity;
 	// each create's class/scopes are bound in clientIntent and sealed registration.
 	wire, _ := json.Marshal(struct {
 		Configuration       [32]byte

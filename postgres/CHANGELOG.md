@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Support independently selected managed confidential Basic browser clients
+  requesting `openid` alone with the default public subject. Genuine manager
+  creation, safe reads, consent/S256, signed ID tokens, UserInfo, secret rotation,
+  refresh and deletion reuse existing owners. Adopt matching root support and
+  existing signing/rotation histories; no new schema or public-client activation
+  is required. Metadata replacement and additional/pairwise claims stay unselected.
+
 - Support explicitly selected managed public browser clients requesting `openid`
   alone with the existing default public subject. Current metadata, real
   consent/S256 grants, signed ID tokens, UserInfo, refresh, revocation and

@@ -115,7 +115,7 @@ func NewClientListPage(items []Client) (ClientListPage, error) {
 
 // Items returns owned mutable projections; changing them cannot alter the page
 // or native registration authority. The safe managed class has no nested secret,
-// workload or subject-registration policy.
+// workload policy. Selected pairwise registrations contain nonsecret metadata.
 func (p ClientListPage) Items() []Client {
 	items := make([]Client, len(p.items))
 	for i, c := range p.items {
@@ -125,7 +125,7 @@ func (p ClientListPage) Items() []Client {
 }
 
 func clientReadProjection(c Client) (Client, error) {
-	if !strings.HasPrefix(c.ID, ManagedClientPrefix) || c.Workload != nil || c.SubjectRegistration != nil || hasExtensionScope(c.Scopes) && !minimalManagedBrowserOIDC(c.DeviceAuthorization, c.Scopes) {
+	if !strings.HasPrefix(c.ID, ManagedClientPrefix) || c.Workload != nil || hasExtensionScope(c.Scopes) && !minimalManagedBrowserOIDC(c.DeviceAuthorization, c.Scopes) || c.SubjectRegistration != nil && (c.Public || !minimalManagedBrowserOIDC(c.DeviceAuthorization, c.Scopes) || !singleHostManagedPairwise(c.SubjectRegistration)) {
 		return Client{}, ErrInvalidRequest
 	}
 	if _, err := identity.ParseSubjectID(strings.TrimPrefix(c.ID, ManagedClientPrefix)); err != nil {
@@ -186,7 +186,7 @@ func (s *Service) clientReadAdmission(ctx context.Context, r ClientReadRequest, 
 
 func (s *Service) selectedClientReadProjection(c Client) (Client, error) {
 	c, err := clientReadProjection(c)
-	if err != nil || c.Owner != s.config.ManagedClients.Owner || c.Resource != s.config.Resource || !s.config.ManagedClients.AllowsRegistrationScopes(c.Public, c.DeviceAuthorization, c.Scopes) || hasExtensionScope(c.Scopes) && nilDependency(s.deps.OIDC) {
+	if err != nil || c.Owner != s.config.ManagedClients.Owner || c.Resource != s.config.Resource || !s.config.ManagedClients.AllowsRegistration(c.Public, c.DeviceAuthorization, c.Scopes, c.SubjectRegistration) || hasExtensionScope(c.Scopes) && nilDependency(s.deps.OIDC) {
 		return Client{}, ErrAccessDenied
 	}
 	for _, redirect := range c.Redirects {

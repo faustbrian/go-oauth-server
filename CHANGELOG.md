@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add an exact trusted pairwise-registration ceiling for managed confidential
+  Basic/openid browser clients. Selected creation, safe reads and authorization
+  preserve the immutable single-host registration; nil retains the default
+  subject profile. Matching native persistence/key support and OIDC composition
+  are required. This does not select managed-public pairwise, sector-identifier
+  URI, additional claims or metadata replacement.
+
 - Add independent `ManagedClientPolicy.ConfidentialOIDC` selection for managed
   Basic browser clients requesting `openid` alone with the default public
   subject. Creation, safe reads, authorization and issuance require the actual

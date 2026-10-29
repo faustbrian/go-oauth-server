@@ -107,8 +107,22 @@ replacement authentication engine.
   native support before selection; existing confidential rotation history and
   signing history remain their separate prerequisites. Confidential rotation
   retains its existing grant invalidation and fresh-authorization rules.
-  Neither selector permits pairwise/additional claims, managed OIDC metadata
+  Neither selector alone permits pairwise/additional claims, managed OIDC metadata
   replacement or device flow; turning one on does not select the other class.
+  To select confidential single-host pairwise registration, additionally supply
+  an exact trusted `ManagedClientPolicy.PairwiseRegistrations` ceiling built
+  with `NewOIDCSubjectRegistration`, and select one member through
+  `ClientManagementRequest.SubjectRegistration`. Every redirect must use that
+  registered sector host. Nil preserves default public subjects. The ceiling
+  grants no manager authority and contains no key material; the existing OIDC
+  `SubjectPolicy` and native encrypted key installation, activation and stable
+  binding owners remain required. Use matching native support before selection.
+  Updated adapters explicitly consume `ValidatePairwiseClientManagementRequest`;
+  the original validator rejects non-nil subject registrations so older writers
+  cannot silently commit a default-subject client instead.
+  Managed-public pairwise, sector-identifier URI, additional claims and metadata
+  replacement remain unselected. Safe metadata returns independent copies of
+  this nonsecret registration, never derivation or wrapping keys.
   Existing warm services resolve actual registry status on every
   call; terminal deletion denies all descendants without token fanout.
   Selected OAuth discovery includes the managed human-web/Basic capability,

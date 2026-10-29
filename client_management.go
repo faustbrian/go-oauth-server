@@ -49,6 +49,10 @@ type ManagedClientPolicy struct {
 	// subject. It requires configured OIDCScopes containing openid, not PublicClients.
 	// Creation, private reads, authorization and issuance require OIDC composition.
 	ConfidentialOIDC bool `json:",omitempty"`
+	// PairwiseRegistrations is an explicit trusted ceiling for confidential,
+	// openid-only single-host registrations. It requires ConfidentialOIDC and
+	// selects no key material or subject derivation. Nil retains default subjects.
+	PairwiseRegistrations []OIDCSubjectRegistration `json:",omitempty"`
 	// DeviceAuthorization is an explicit ceiling for newly managed device
 	// registrations; false preserves the existing browser-only namespace.
 	DeviceAuthorization bool
@@ -65,6 +69,17 @@ func (p ManagedClientPolicy) validated(c Config) (ManagedClientPolicy, error) {
 	if p.ConfidentialOIDC && !c.OIDCScopes.Contains("openid") {
 		return ManagedClientPolicy{}, ErrInvalidRequest
 	}
+	// Match Config's bounded startup client catalog: each exact registration is
+	// a trusted selection, not an unbounded request-controlled policy search.
+	if len(p.PairwiseRegistrations) > 64 || len(p.PairwiseRegistrations) != 0 && !p.ConfidentialOIDC {
+		return ManagedClientPolicy{}, ErrInvalidRequest
+	}
+	for i, registration := range p.PairwiseRegistrations {
+		if !singleHostManagedPairwise(&registration) || slices.Contains(p.PairwiseRegistrations[:i], registration) {
+			return ManagedClientPolicy{}, ErrInvalidRequest
+		}
+	}
+	p.PairwiseRegistrations = slices.Clone(p.PairwiseRegistrations)
 	p.Redirects = slices.Clone(redirects.targets)
 	if len(p.PostLogoutRedirects) != 0 {
 		logout, err := NewRedirectPolicy(p.PostLogoutRedirects)
@@ -101,6 +116,23 @@ func minimalManagedBrowserOIDC(device bool, scopes []string) bool {
 	return !device && len(scopes) == 1 && scopes[0] == "openid"
 }
 
+// AllowsRegistration checks exact immutable class/scope/subject ceilings. It
+// does not establish manager authority, key custody or durable registration.
+// Nil subject registration retains the original default-subject selection.
+func (p ManagedClientPolicy) AllowsRegistration(public, device bool, scopes []string, registration *OIDCSubjectRegistration) bool {
+	if !p.AllowsRegistrationScopes(public, device, scopes) {
+		return false
+	}
+	if registration == nil {
+		return true
+	}
+	return !public && p.ConfidentialOIDC && minimalManagedBrowserOIDC(device, scopes) && singleHostManagedPairwise(registration) && slices.Contains(p.PairwiseRegistrations, *registration)
+}
+
+func singleHostManagedPairwise(registration *OIDCSubjectRegistration) bool {
+	return registration != nil && registration.valid() && registration.kind == "pairwise" && registration.uri == ""
+}
+
 // CurrentClientRegistry is a trusted optional native current-client owner, not
 // caller-provided authentication. Each read/authentication must fence actual
 // status/version/owner and never cache positives or fall back on tombstones.
@@ -128,6 +160,9 @@ type ClientManagementRequest struct {
 	DeviceAuthorization bool
 	Redirects, Scopes   []string
 	PostLogoutRedirects []string
+	// SubjectRegistration selects only an exact trusted PairwiseRegistrations
+	// member. Nil preserves default subjects. Delete accepts no registration edits.
+	SubjectRegistration *OIDCSubjectRegistration
 }
 
 func (ClientManagementRequest) Format(f fmt.State, _ rune) {
@@ -217,7 +252,11 @@ func (s *Service) manageClient(ctx context.Context, r ClientManagementRequest, r
 		return out, ErrAccessDenied
 	}
 	p := s.config.ManagedClients
-	r, err = ValidateClientManagementRequest(r, remove, *p, s.config.Issuer)
+	if !remove && r.SubjectRegistration != nil {
+		r, err = ValidatePairwiseClientManagementRequest(r, *p, s.config.Issuer)
+	} else {
+		r, err = ValidateClientManagementRequest(r, remove, *p, s.config.Issuer)
+	}
 	if err != nil {
 		return out, err
 	}
@@ -255,9 +294,29 @@ func (s *Service) manageClient(ctx context.Context, r ClientManagementRequest, r
 	return out, nil
 }
 
-// ValidateClientManagementRequest copies the finite registration variant and
-// checks immutable policy preconditions, never authentication or authorization.
+// ValidateClientManagementRequest copies the original default-subject variants
+// and checks immutable preconditions, never authentication or authorization.
+// It rejects subject registrations so existing native writers cannot accept a
+// new field they would discard before persistence.
 func ValidateClientManagementRequest(r ClientManagementRequest, remove bool, p ManagedClientPolicy, issuer Issuer) (ClientManagementRequest, error) {
+	if r.SubjectRegistration != nil {
+		return ClientManagementRequest{}, ErrInvalidRequest
+	}
+	return validateClientManagementRequest(r, remove, p, issuer)
+}
+
+// ValidatePairwiseClientManagementRequest is the explicit create-only adapter
+// opt-in for exact trusted confidential single-host pairwise registration. New
+// native owners must preserve this registration in their existing preparation
+// and persistence. It grants no manager authority or key/binding custody.
+func ValidatePairwiseClientManagementRequest(r ClientManagementRequest, p ManagedClientPolicy, issuer Issuer) (ClientManagementRequest, error) {
+	if r.SubjectRegistration == nil {
+		return ClientManagementRequest{}, ErrInvalidRequest
+	}
+	return validateClientManagementRequest(r, false, p, issuer)
+}
+
+func validateClientManagementRequest(r ClientManagementRequest, remove bool, p ManagedClientPolicy, issuer Issuer) (ClientManagementRequest, error) {
 	if r.Owner != p.Owner || r.TenantID != p.TenantID || r.Origin != issuer.String() || r.CSRF == (session.CSRFToken{}) || !visible(r.Network, 128) || r.RequestKey == (identity.IdempotencyKey{}) {
 		return ClientManagementRequest{}, ErrAccessDenied
 	}
@@ -268,7 +327,7 @@ func ValidateClientManagementRequest(r ClientManagementRequest, remove bool, p M
 		if r.Public {
 			return ClientManagementRequest{}, ErrAccessDenied
 		}
-		if !strings.HasPrefix(r.ClientID, ManagedClientPrefix) || !identifier(r.ClientID) || r.Version == 0 || r.Version == ^uint64(0) || len(r.Redirects) != 0 || len(r.Scopes) != 0 || len(r.PostLogoutRedirects) != 0 || r.DeviceAuthorization {
+		if !strings.HasPrefix(r.ClientID, ManagedClientPrefix) || !identifier(r.ClientID) || r.Version == 0 || r.Version == ^uint64(0) || len(r.Redirects) != 0 || len(r.Scopes) != 0 || len(r.PostLogoutRedirects) != 0 || r.DeviceAuthorization || r.SubjectRegistration != nil {
 			return ClientManagementRequest{}, ErrInvalidRequest
 		}
 		return r, nil
@@ -307,6 +366,13 @@ func ValidateClientManagementRequest(r ClientManagementRequest, remove bool, p M
 	if err != nil || !p.AllowsRegistrationScopes(r.Public, r.DeviceAuthorization, scopes) {
 		return ClientManagementRequest{}, ErrInvalidScope
 	}
+	if !p.AllowsRegistration(r.Public, r.DeviceAuthorization, scopes, r.SubjectRegistration) || !validSubjectRegistration(Client{SubjectRegistration: r.SubjectRegistration, Redirects: redirects.targets}) {
+		return ClientManagementRequest{}, ErrAccessDenied
+	}
+	if r.SubjectRegistration != nil {
+		registration := *r.SubjectRegistration
+		r.SubjectRegistration = &registration
+	}
 	r.Redirects = slices.Clone(redirects.targets)
 	r.Scopes = scopes
 	return r, nil
@@ -321,7 +387,7 @@ func (s *Service) currentClient(ctx context.Context, id string) (Client, error) 
 		return Client{}, err
 	}
 	c, err = ValidateClient(c)
-	if err != nil || c.ID != id || c.Owner != s.config.ManagedClients.Owner || c.Workload != nil || c.SubjectRegistration != nil || c.Resource != s.config.Resource || !s.config.ManagedClients.AllowsRegistrationScopes(c.Public, c.DeviceAuthorization, c.Scopes) {
+	if err != nil || c.ID != id || c.Owner != s.config.ManagedClients.Owner || c.Workload != nil || c.Resource != s.config.Resource || !s.config.ManagedClients.AllowsRegistration(c.Public, c.DeviceAuthorization, c.Scopes, c.SubjectRegistration) {
 		return Client{}, ErrAccessDenied
 	}
 	for _, redirect := range c.Redirects {

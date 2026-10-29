@@ -36,6 +36,13 @@ func (s *Store) subjectPolicySelected(id string, version uint64) bool {
 			return true
 		}
 	}
+	if managed := s.config.Protocol.ManagedClients; managed != nil {
+		for _, registration := range managed.PairwiseRegistrations {
+			if registration.SubjectType() == "pairwise" && registration.PolicyID() == id && registration.PolicyVersion() == version {
+				return true
+			}
+		}
+	}
 	return false
 }
 

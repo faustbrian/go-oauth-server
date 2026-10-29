@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Select immutable single-host pairwise subjects for managed confidential
+  `openid` browser clients through an exact trusted registration allowlist.
+  Creation, safe reads and original recovery retain that selection; existing
+  encrypted subject-key custody and stable native bindings preserve equal-sub
+  identity across reconstruction and key rotation without fabricating a static
+  client. Adopt matching root/native support and append existing pairwise
+  history before activation. Omitted selection retains original registration
+  and request-intent bytes; managed public/multi-host/additional-claim and
+  metadata-replacement profiles remain unselected.
+
 - Support independently selected managed confidential Basic browser clients
   requesting `openid` alone with the default public subject. Genuine manager
   creation, safe reads, consent/S256, signed ID tokens, UserInfo, secret rotation,

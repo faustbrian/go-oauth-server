@@ -69,8 +69,9 @@ func (s *Store) managementPolicy() [32]byte {
 		return [32]byte{}
 	}
 	// Enabling a new class must not strand original confidential preparation.
-	// PublicClients and both OIDC selectors are outside this retained identity;
-	// each create's class/scopes are bound in clientIntent and sealed registration.
+	// PublicClients and OIDC selectors are outside this retained identity; each
+	// create's class/scopes/subject policy are bound in clientIntent and sealed
+	// registration instead, retaining original default-subject preparations.
 	wire, _ := json.Marshal(struct {
 		Configuration       [32]byte
 		Platform            string
@@ -94,7 +95,13 @@ func (s *Store) managementObservation(ctx context.Context, c oauth.ClientManagem
 	if p == nil {
 		return c, oauth.ErrAccessDenied
 	}
-	r, err := oauth.ValidateClientManagementRequest(c.Request, c.Delete, *p, s.config.Protocol.Issuer)
+	var r oauth.ClientManagementRequest
+	var err error
+	if !c.Delete && c.Request.SubjectRegistration != nil {
+		r, err = oauth.ValidatePairwiseClientManagementRequest(c.Request, *p, s.config.Protocol.Issuer)
+	} else {
+		r, err = oauth.ValidateClientManagementRequest(c.Request, c.Delete, *p, s.config.Protocol.Issuer)
+	}
 	if err != nil {
 		return c, err
 	}
@@ -203,7 +210,7 @@ func (s *Store) ManageClient(ctx context.Context, c oauth.ClientManagementExecut
 }
 func (s *Store) clientManagementPhase(ctx context.Context, c oauth.ClientManagementExecution, action string) (*phase, error) {
 	r := c.Request
-	client := oauth.Client{ID: oauth.ManagedClientPrefix + "pending", Owner: s.config.Protocol.ManagedClients.Owner, Version: 1, Public: r.Public, Resource: s.config.Protocol.Resource, AuthenticationMethod: "client_secret_basic", Redirects: r.Redirects, PostLogoutRedirects: r.PostLogoutRedirects, Scopes: r.Scopes, DeviceAuthorization: r.DeviceAuthorization}
+	client := oauth.Client{ID: oauth.ManagedClientPrefix + "pending", Owner: s.config.Protocol.ManagedClients.Owner, Version: 1, Public: r.Public, Resource: s.config.Protocol.Resource, AuthenticationMethod: "client_secret_basic", Redirects: r.Redirects, PostLogoutRedirects: r.PostLogoutRedirects, Scopes: r.Scopes, DeviceAuthorization: r.DeviceAuthorization, SubjectRegistration: r.SubjectRegistration}
 	if r.Public {
 		client.AuthenticationMethod = "none"
 	}
@@ -249,12 +256,13 @@ func (p *phase) clientIntent(r oauth.ClientManagementRequest) (identity.RequestI
 		Redirects, Scopes   []string
 		Origin, Network     string
 		Source              []identity.FeatureField
-		RotationOverlap     *time.Duration     `json:",omitempty"`
-		Replacement         *clientReplacement `json:",omitempty"`
-		PostLogoutRedirects []string           `json:",omitempty"`
-		DeviceAuthorization bool               `json:",omitempty"`
-		Public              bool               `json:",omitempty"`
-	}{p.store.managementPolicy(), p.input.Transition == deleteManagedClient, r.ClientID, r.Version, r.Redirects, r.Scopes, r.Origin, r.Network, p.input.Grant.Source, p.rotationOverlap(), p.input.ClientChange.Replacement, r.PostLogoutRedirects, r.DeviceAuthorization, r.Public})
+		RotationOverlap     *time.Duration                 `json:",omitempty"`
+		Replacement         *clientReplacement             `json:",omitempty"`
+		PostLogoutRedirects []string                       `json:",omitempty"`
+		DeviceAuthorization bool                           `json:",omitempty"`
+		Public              bool                           `json:",omitempty"`
+		SubjectRegistration *oauth.OIDCSubjectRegistration `json:",omitempty"`
+	}{p.store.managementPolicy(), p.input.Transition == deleteManagedClient, r.ClientID, r.Version, r.Redirects, r.Scopes, r.Origin, r.Network, p.input.Grant.Source, p.rotationOverlap(), p.input.ClientChange.Replacement, r.PostLogoutRedirects, r.DeviceAuthorization, r.Public, r.SubjectRegistration})
 	if err != nil {
 		return identity.RequestIntent{}, err
 	}

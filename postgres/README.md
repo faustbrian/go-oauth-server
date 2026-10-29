@@ -146,6 +146,42 @@ version before refreshing. Reconstruct services with the same existing signing
 and subject custody to preserve the ID-token/UserInfo subject. Terminal deletion
 uses the existing exact-version mutation and denies warm descendants.
 
+### Optional single-host managed pairwise subjects
+
+With confidential OIDC selected, configure the exact trusted
+`Protocol.ManagedClients.PairwiseRegistrations` allowlist using existing
+`oauth.NewOIDCSubjectRegistration("pairwise", host, policyID, policyVersion)`
+registrations. A manager's `ClientManagementRequest.SubjectRegistration` may
+select only one exact allowed registration; every redirect must use its single
+registered host. Selection is immutable, confidential Basic/browser/`openid`
+only. Nil retains the original default public subject and canonical persisted
+registration/request-intent bytes. Additional claims, multi-host sector URIs,
+managed public pairwise clients and metadata replacement are not selected.
+
+Append the existing `PairwiseMigrationSource` after the deployment's actual
+client/consent/signing history at a fresh version. Compose the existing OIDC
+child with its `SubjectPolicy`; install authenticated encrypted key custody
+using `Store.InstallSubjectKey` and activate its writer explicitly. The trusted
+managed allowlist selects the existing key-policy owner without requiring a
+static pairwise client. Neither client requests nor manager authority supply
+derivation material or create key custody. Missing, foreign and retired writer
+custody fail closed at native authorization.
+
+`ClientCreate`, safe get/list and original metadata-only recovery retain the
+exact subject registration. Existing durable subject bindings keep the same
+subject for the same actual tenant/user/sector across clients, reconstruction
+and derivation-key rotation; different sectors remain isolated. Reconstruct the
+child from `SubjectKeyRegistrations` and retain the original signing, envelope,
+command and subject-binding owners. Retiring an inactive derivation key does
+not delete bindings or renew existing grant lifetimes.
+
+Adopt matching root and native adapter support before activation; older native
+adapters deliberately reject the new non-nil registration instead of dropping
+it. Retain the original exact registration allowlist and custody needed for
+outstanding commands. Withdrawal of current manager/session/user/client
+authority still denies the corresponding operation, and required client
+audit/outbox effects remain in the original atomic coordinator work.
+
 Public OIDC registration persists the existing public/none metadata and NULL
 secret digest. Fresh services resolve it from native current authority. The
 selector leaves existing configuration/management identities unchanged: each

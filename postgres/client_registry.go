@@ -34,20 +34,21 @@ type managedRegistration struct {
 	ID, Platform, Resource, AuthenticationMethod string
 	Version                                      uint64
 	Redirects, Scopes                            []string
-	PostLogoutRedirects                          []string `json:",omitempty"`
-	DeviceAuthorization                          bool     `json:",omitempty"`
-	Public                                       bool     `json:",omitempty"`
+	PostLogoutRedirects                          []string                       `json:",omitempty"`
+	DeviceAuthorization                          bool                           `json:",omitempty"`
+	Public                                       bool                           `json:",omitempty"`
+	SubjectRegistration                          *oauth.OIDCSubjectRegistration `json:",omitempty"`
 }
 
 func registrationWire(c oauth.Client) managedRegistration {
-	return managedRegistration{c.ID, c.Owner.PlatformID(), c.Resource, c.AuthenticationMethod, c.Version, c.Redirects, c.Scopes, c.PostLogoutRedirects, c.DeviceAuthorization, c.Public}
+	return managedRegistration{c.ID, c.Owner.PlatformID(), c.Resource, c.AuthenticationMethod, c.Version, c.Redirects, c.Scopes, c.PostLogoutRedirects, c.DeviceAuthorization, c.Public, c.SubjectRegistration}
 }
 func registrationClient(r managedRegistration) (oauth.Client, error) {
 	owner, err := oauth.NewPlatformOwner(r.Platform)
 	if err != nil {
 		return oauth.Client{}, err
 	}
-	return oauth.ValidateClient(oauth.Client{ID: r.ID, Owner: owner, Version: r.Version, Public: r.Public, Resource: r.Resource, AuthenticationMethod: r.AuthenticationMethod, Redirects: r.Redirects, PostLogoutRedirects: r.PostLogoutRedirects, Scopes: r.Scopes, DeviceAuthorization: r.DeviceAuthorization})
+	return oauth.ValidateClient(oauth.Client{ID: r.ID, Owner: owner, Version: r.Version, Public: r.Public, Resource: r.Resource, AuthenticationMethod: r.AuthenticationMethod, Redirects: r.Redirects, PostLogoutRedirects: r.PostLogoutRedirects, Scopes: r.Scopes, DeviceAuthorization: r.DeviceAuthorization, SubjectRegistration: r.SubjectRegistration})
 }
 func decodeRegistration(wire []byte) (oauth.Client, error) {
 	var r managedRegistration
@@ -140,7 +141,7 @@ func (s *Store) readManagedClient(ctx context.Context, id string) (managedClient
 }
 func (s *Store) managedMetadata(c oauth.Client) bool {
 	p := s.config.Protocol.ManagedClients
-	if p == nil || c.Owner != p.Owner || !strings.HasPrefix(c.ID, oauth.ManagedClientPrefix) || c.Public && (!s.config.PublicClients || !p.PublicClients) || c.Workload != nil || c.SubjectRegistration != nil || c.Resource != s.config.Protocol.Resource || !p.AllowsRegistrationScopes(c.Public, c.DeviceAuthorization, c.Scopes) {
+	if p == nil || c.Owner != p.Owner || !strings.HasPrefix(c.ID, oauth.ManagedClientPrefix) || c.Public && (!s.config.PublicClients || !p.PublicClients) || c.Workload != nil || c.Resource != s.config.Protocol.Resource || !p.AllowsRegistration(c.Public, c.DeviceAuthorization, c.Scopes, c.SubjectRegistration) {
 		return false
 	}
 	if _, err := oauth.ValidateClient(c); err != nil {

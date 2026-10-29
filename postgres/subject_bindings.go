@@ -76,9 +76,10 @@ func subjectClaims(client oauth.Client, grant grantRecord) (*oauth.OIDCSubjectRe
 
 func (p *phase) checkSubjectBinding(ctx context.Context, w kernel.Work, final bool) error {
 	i := p.input
-	if i.Transition == deleteConsent {
-		// Consent withdrawal owns no individual grant/subject association and
-		// must remain possible independently of derivation-key custody.
+	if i.ClientChange != nil || i.Transition == deleteConsent {
+		// Registration lifecycle and consent withdrawal own no individual
+		// grant/subject association. They must remain possible independently
+		// of derivation-key custody; authenticated Authorize owns bindings.
 		return nil
 	}
 	candidate := i.SubjectCandidate

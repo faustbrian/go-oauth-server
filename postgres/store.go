@@ -419,7 +419,7 @@ func (s *Store) Continue(ctx context.Context, c oauth.ContinuationCommand) (oaut
 	if selected == nil {
 		selected = slices.Clone(target.Payload.Scopes)
 	}
-	if !scopeSubset(selected, target.Payload.Scopes) {
+	if !scopeSubset(selected, target.Payload.Scopes) || !oauth.OIDCScopesComplete(selected) {
 		return oauth.AuthorizeResult{}, oauth.ErrInvalidScope
 	}
 	p := s.targetPhase(target, client, approveInteraction, "identity.oauth-server.continue", target.Transition, s.intent("continue", c.Request.Continuation, fmt.Sprint(c.Request.Approve), strings.Join(selected, " "), c.Request.Network), c.Request.Network)
@@ -540,7 +540,7 @@ func (s *Store) Token(ctx context.Context, c oauth.TokenCommand) (out oauth.Toke
 	if selected == nil {
 		selected = slices.Clone(target.Payload.Scopes)
 	}
-	if !scopeSubset(selected, target.Payload.Scopes) || !scopeSubset(selected, client.Scopes) {
+	if !scopeSubset(selected, target.Payload.Scopes) || !scopeSubset(selected, client.Scopes) || !oauth.OIDCScopesComplete(selected) {
 		return oauth.TokenResult{}, oauth.ErrInvalidScope
 	}
 	// Omitted refresh scopes inherit original authority. Admission therefore

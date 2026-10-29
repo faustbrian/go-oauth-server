@@ -118,6 +118,48 @@ or consuming a code/refresh bearer. Consumers must independently validate
 discovery, issuer, audience, signature, nonce and expiry, then require equal
 ID-token/UserInfo subjects.
 
+## Optional managed public account claims
+
+Separately select `Protocol.ManagedClients.PublicOIDCScopes` as an exact ceiling
+containing `openid` and only the desired `profile`, `email` and `phone` additions.
+It requires native/protocol public-client activation and `PublicOIDC`; that
+Boolean alone remains openid-only. Keep the managed OAuth `Scopes` ceiling and
+the established genuine configured-client catalog unchanged. This profile selects
+only default-subject public browser clients, never confidential/pairwise claims,
+device, address/offline access, custom fields or metadata replacement.
+
+Adopt the matching published root and compose the actual child with the selected
+`ProfileUserInfo`, `EmailUserInfo` and `PhoneUserInfo` options. Name requires the
+exact existing native `ProfileUserInfoConfig` schema; email uses current native
+email/verification selection, including verified non-primary contacts, while
+phone uses the existing verified-phone owner. Retain public-client/signing and actual
+identity profile/identifier/phone histories; no new migration is introduced.
+Genuine manager/session/CSRF creation, current safe reads and native
+consent/code/S256 remain the original public paths. Public registration retains
+`none` authentication and NULL secret custody; retry/unknown recovery is
+metadata-only and rechecks current manager authority.
+
+RPs independently verify discovery/JWKS/signature/issuer/audience/nonce/expiry,
+then require equal ID-token/UserInfo `sub`. ID tokens remain minimized.
+UserInfo exposes only approved current display name and contact fields; image
+and custom profile values remain private. Actual email verification state is
+preserved, and pending/unverified phone contacts disclose no phone claims.
+Committed name changes may appear on the next authorized read. Contact
+verification/removal/replacement withdraws the old grant rather than silently
+substituting a new contact or renewing original authority. Refresh and
+reconstruction retain the approved scope ceiling and authority deadlines without renewal;
+revocation/deletion denies all claim output.
+
+Consent and refresh narrowing must retain `openid` whenever another reserved
+OIDC scope remains. The core rejects explicit incomplete sets before delegation;
+the native owner uses the same `OIDCScopesComplete` predicate after resolving
+inherited scopes, before preparation/consumption. Rejection preserves original
+interaction/refresh custody for a valid same-source retry. Pure OAuth-only
+narrowing, including the existing static `identity:read` control, remains valid.
+This predicate is not a replacement for scope grammar/catalog, consent or
+current authority checks. Required audit/outbox effects remain atomic; unknown
+completion reconciles the original command without credential disclosure.
+
 ## Optional minimal managed confidential OIDC
 
 Separately select `Config.Protocol.ManagedClients.ConfidentialOIDC=true` with

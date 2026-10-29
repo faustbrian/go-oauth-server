@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Compose explicitly selected default-subject managed public account claims
+  through the existing profile/identifier, consent, signing and grant owners.
+  Select an exact root `PublicOIDCScopes` ceiling for `openid` plus desired
+  `profile`, `email` and `phone` scopes; nil remains openid-only. Native current
+  display name, authoritative email verification and verified phone claims stay
+  consented UserInfo-only. Existing public-client/signing/profile/identifier
+  histories and matching published root support are required; no new schema or
+  claim-source callback is introduced.
+
+- Reject incomplete OIDC scope narrowing before native consent/code or refresh
+  consumption, including direct Store calls and inherited scope selections.
+  Scope sets retaining identity claims require `openid`; valid subsets retain
+  it, while intentional pure OAuth narrowing remains unchanged.
+
 - Compose explicitly selected managed public single-host pairwise OIDC clients
   with the existing encrypted subject-key and stable-binding owners. Public-only
   trusted registrations can install, activate and reconstruct subject custody

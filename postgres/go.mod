@@ -34,7 +34,7 @@ require (
 	github.com/faustbrian/go-identity/session v0.0.0-20261024134726-e9528953435b
 	github.com/faustbrian/go-identity/session/postgres v0.0.0-20261025174242-49fde04d4b1b
 	github.com/faustbrian/go-migrations/v3 v3.1.1-0.20261015110643-ca105f265cfc
-	github.com/faustbrian/go-oauth-server v0.0.0-20261029072503-d8d18fb4ddbc
+	github.com/faustbrian/go-oauth-server v0.0.0-20261029102506-5102ba3e77c4
 	github.com/faustbrian/go-oauth-server/device v0.0.0-20261023095306-ca7b0b8a9b26
 	github.com/faustbrian/go-oauth-server/oidc v0.0.0-20261026095351-baa3ff6f2bf5
 	github.com/faustbrian/go-password/v2 v2.0.2-0.20261015050515-4eb0fefa60ff

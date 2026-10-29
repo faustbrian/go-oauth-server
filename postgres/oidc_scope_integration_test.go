@@ -5,6 +5,7 @@ package oauthpostgres_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -289,5 +290,123 @@ func TestNativeOIDCConsentNarrowingNeverIssuesIdentityAuthority(t *testing.T) {
 	}
 	if info, err := child.UserInfo(f.ctx, oauth.UserInfoRequest{ClientID: "public-web", AccessToken: access}); err == nil || info.Subject != "" {
 		t.Fatal("withdrawn openid scope retained UserInfo")
+	}
+}
+
+func TestNativeOIDCClaimsOnlyNarrowingDoesNotConsumeDirectOwner(t *testing.T) {
+	for _, managed := range []bool{false, true} {
+		for _, claim := range []string{"email", "profile", "phone"} {
+			t.Run(map[bool]string{false: "static", true: "managed"}[managed]+"/"+claim, func(t *testing.T) {
+				f := profilePasswordFixture(t, false)
+				signer, key := managedClaimsFixture(t, &f, false)
+				selectManagedClaims(&f)
+				client := f.oauth.Protocol.Clients[0]
+				if !managed {
+					client.Scopes = []string{"identity:read", "openid", "email", "profile", "phone"}
+					f.oauth.Protocol.Clients[0] = client
+				}
+				service, child, store := managedClaimsServices(t, f, signer, key)
+				if managed {
+					client = createManagedClaimsClient(t, f, service, "scope-complete-"+claim)
+				}
+				proof := oauth2.GenerateVerifier()
+				pending, err := service.Authorize(f.ctx, oauth.AuthorizeRequest{TenantID: f.tenant, Session: f.browser, Network: "192.0.2.1", Request: oauth.AuthorizationRequest{ClientID: client.ID, RedirectURI: client.Redirects[0], Resource: client.Resource, Scopes: []string{"openid", claim}, Nonce: "complete-scope-" + claim, CodeChallenge: oauth2.S256ChallengeFromVerifier(proof)}})
+				if err != nil || pending.Outcome != oauth.ConsentRequired {
+					t.Fatal("scope completeness did not reach real consent owner", err)
+				}
+				continuation, _ := pending.Continuation.Reveal()
+				request := oauth.ContinueRequest{TenantID: f.tenant, ClientID: client.ID, Session: f.browser, CSRF: f.csrf, Continuation: continuation, Origin: f.oauth.Protocol.Issuer.String(), Network: "192.0.2.1", Approve: true, Scopes: []string{claim}}
+				observed := originalClientRead(t, f).Session
+				id, artifacts, effects := originalScopeArtifact(t, f, client, oauth.TokenContinuation)
+				denied, err := store.Continue(f.ctx, oauth.ContinuationCommand{Request: request, Client: client, Session: observed, OIDC: child.ValidateAuthorization})
+				if !errors.Is(err, oauth.ErrInvalidScope) || denied.CommandID != "" || denied.Code != (oauth.Token{}) {
+					t.Fatal("direct native claim-only consent reached consuming work", err)
+				}
+				assertScopeArtifactUnconsumed(t, f, id, artifacts, effects)
+				request.Scopes = []string{"openid", claim}
+				approved, err := service.Continue(f.ctx, request)
+				if err != nil || approved.Outcome != oauth.AuthorizationRedirect {
+					t.Fatal("claim-only denial stranded original continuation", err)
+				}
+				code, _ := approved.Code.Reveal()
+				issued, err := service.Token(f.ctx, oauth.TokenRequest{GrantType: oauth.AuthorizationCodeGrant, ClientID: client.ID, Code: code, CodeVerifier: proof, RedirectURI: client.Redirects[0], Network: "192.0.2.1"})
+				if err != nil {
+					t.Fatal("valid original continuation did not yield usable code", err)
+				}
+				refresh, _ := issued.RefreshToken.Reveal()
+				id, artifacts, effects = originalScopeArtifact(t, f, client, oauth.TokenRefresh)
+				refreshRequest := oauth.TokenRequest{GrantType: oauth.RefreshTokenGrant, ClientID: client.ID, RefreshToken: refresh, Scopes: []string{claim}, Network: "192.0.2.1"}
+				bad, err := store.Token(f.ctx, oauth.TokenCommand{Request: refreshRequest, Client: client, OIDC: child.Claims})
+				if !errors.Is(err, oauth.ErrInvalidScope) || bad.CommandID != "" || bad.AccessToken != (oauth.Token{}) || bad.RefreshToken != (oauth.Token{}) {
+					t.Fatal("direct native claim-only refresh reached consuming work", err)
+				}
+				assertScopeArtifactUnconsumed(t, f, id, artifacts, effects)
+				refreshRequest.Scopes = []string{"openid", claim}
+				rotated, err := service.Token(f.ctx, refreshRequest)
+				if err != nil {
+					t.Fatal("claim-only denial consumed original refresh", err)
+				}
+				access, _ := rotated.AccessToken.Reveal()
+				if info, err := child.UserInfo(f.ctx, oauth.UserInfoRequest{ClientID: client.ID, AccessToken: access}); err != nil || info.Subject == "" {
+					t.Fatal("valid same-source complete narrowing lost usable UserInfo", err)
+				}
+			})
+		}
+	}
+}
+
+func TestNativeOIDCInheritedClaimsOnlyContinuationDoesNotConsumeDirectOwner(t *testing.T) {
+	for _, managed := range []bool{false, true} {
+		for _, claim := range []string{"email", "profile", "phone"} {
+			t.Run(map[bool]string{false: "static", true: "managed"}[managed]+"/"+claim, func(t *testing.T) {
+				f := profilePasswordFixture(t, false)
+				signer, key := managedClaimsFixture(t, &f, false)
+				selectManagedClaims(&f)
+				client := f.oauth.Protocol.Clients[0]
+				if !managed {
+					client.Scopes = []string{"identity:read", "openid", "email", "profile", "phone"}
+					f.oauth.Protocol.Clients[0] = client
+				}
+				service, child, store := managedClaimsServices(t, f, signer, key)
+				if managed {
+					client = createManagedClaimsClient(t, f, service, "inherited-scope-"+claim)
+				}
+				observed := originalClientRead(t, f).Session
+				pending, err := store.Authorize(f.ctx, oauth.AuthorizationCommand{Client: client, Browser: f.browser, Session: observed, Network: "192.0.2.1", Request: oauth.AuthorizationRequest{ClientID: client.ID, RedirectURI: client.Redirects[0], Resource: client.Resource, Scopes: []string{claim}, CodeChallenge: oauth2.S256ChallengeFromVerifier(oauth2.GenerateVerifier())}})
+				if err != nil || pending.Outcome != oauth.ConsentRequired || !slices.Equal(pending.Request.Scopes, []string{claim}) {
+					t.Fatal("direct owner did not create genuine claim-only continuation", err)
+				}
+				continuation, err := pending.Continuation.Reveal()
+				if err != nil {
+					t.Fatal(err)
+				}
+				id, artifacts, effects := originalScopeArtifact(t, f, client, oauth.TokenContinuation)
+				request := oauth.ContinueRequest{TenantID: f.tenant, ClientID: client.ID, Session: f.browser, CSRF: f.csrf, Continuation: continuation, Origin: f.oauth.Protocol.Issuer.String(), Network: "192.0.2.1", Approve: true}
+				denied, err := store.Continue(f.ctx, oauth.ContinuationCommand{Request: request, Client: client, Session: observed, OIDC: child.ValidateAuthorization})
+				if !errors.Is(err, oauth.ErrInvalidScope) || denied.CommandID != "" || denied.Code != (oauth.Token{}) {
+					t.Fatal("inherited claim-only scopes reached native consuming work", err)
+				}
+				assertScopeArtifactUnconsumed(t, f, id, artifacts, effects)
+			})
+		}
+	}
+}
+
+func originalScopeArtifact(t *testing.T, f authenticatedPasswordFixture, client oauth.Client, kind oauth.TokenKind) (string, int, int) {
+	t.Helper()
+	var id string
+	var artifacts, effects int
+	if err := f.pool.Raw().QueryRow(f.ctx, `SELECT artifact_id,(SELECT count(*) FROM oauth_store.artifacts),(SELECT count(*) FROM oauth_store.effects) FROM oauth_store.artifacts WHERE client_id=$1 AND kind=$2 AND state='active'`, client.ID, int16(kind)).Scan(&id, &artifacts, &effects); err != nil {
+		t.Fatal("original scope-bearing native custody unavailable", err)
+	}
+	return id, artifacts, effects
+}
+
+func assertScopeArtifactUnconsumed(t *testing.T, f authenticatedPasswordFixture, id string, artifacts, effects int) {
+	t.Helper()
+	var state string
+	var actualArtifacts, actualEffects int
+	if err := f.pool.Raw().QueryRow(f.ctx, `SELECT state,(SELECT count(*) FROM oauth_store.artifacts),(SELECT count(*) FROM oauth_store.effects) FROM oauth_store.artifacts WHERE artifact_id=$1`, id).Scan(&state, &actualArtifacts, &actualEffects); err != nil || state != "active" || actualArtifacts != artifacts || actualEffects != effects {
+		t.Fatal("invalid scope selection consumed custody or created native effects", err)
 	}
 }

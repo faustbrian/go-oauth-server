@@ -33,14 +33,12 @@ func TestManagedPublicOIDCSafePagePreservesMinimalRegistration(t *testing.T) {
 
 func TestManagedPublicOIDCSafePageRejectsUnselectedClasses(t *testing.T) {
 	c := coreConfig(t, time.Now())
-	for _, variant := range []string{"confidential", "extra-claim", "mixed-oauth", "pairwise", "device"} {
+	for _, variant := range []string{"extra-claim", "mixed-oauth", "pairwise", "device"} {
 		t.Run(variant, func(t *testing.T) {
 			client := c.Clients[0]
 			client.ID = "managed.abcdefghijklmnopqrstuw"
 			client.Scopes = []string{"openid"}
 			switch variant {
-			case "confidential":
-				client.Public, client.AuthenticationMethod = false, "client_secret_basic"
 			case "extra-claim":
 				client.Scopes = []string{"openid", "email"}
 			case "mixed-oauth":
@@ -90,18 +88,34 @@ func (s managedOIDCTestStore) Continue(ctx context.Context, c oauth.Continuation
 }
 
 func TestManagedPublicOIDCSelectionOwnsCreateReadAndAuthorization(t *testing.T) {
-	for _, variant := range []string{"selected", "default", "uncomposed"} {
+	testManagedOIDCSelectionOwnsCreateReadAndAuthorization(t, true)
+}
+
+func testManagedOIDCSelectionOwnsCreateReadAndAuthorization(t *testing.T, public bool) {
+	t.Helper()
+	for _, variant := range []string{"selected", "default", "other-class", "uncomposed"} {
 		t.Run(variant, func(t *testing.T) {
 			sessions, bearer, now, _ := coreSessionFixture(t)
 			c := coreConfig(t, now)
 			c.OIDCScopes, _ = oauth.NewOIDCScopeCatalog([]string{"openid"})
 			client := c.Clients[0]
 			client.ID, client.Scopes = "managed.abcdefghijklmnopqrstuw", []string{"openid"}
-			c.ManagedClients = &oauth.ManagedClientPolicy{Owner: client.Owner, TenantID: "tenant", Redirects: client.Redirects, Scopes: c.Scopes, PublicClients: true, PublicOIDC: variant != "default"}
+			client.Public = public
+			if !public {
+				client.AuthenticationMethod = "client_secret_basic"
+			}
+			selectedPublic, selectedConfidential := public, !public
+			switch variant {
+			case "default":
+				selectedPublic, selectedConfidential = false, false
+			case "other-class":
+				selectedPublic, selectedConfidential = !public, public
+			}
+			c.ManagedClients = &oauth.ManagedClientPolicy{Owner: client.Owner, TenantID: "tenant", Redirects: client.Redirects, Scopes: c.Scopes, PublicClients: true, PublicOIDC: selectedPublic, ConfidentialOIDC: selectedConfidential}
 			store := managedOIDCTestStore{client: client}
 			store.call = func(_ context.Context, e oauth.ClientManagementExecution) (oauth.ClientManagementResult, error) {
-				if e.ValidateAt(now) != nil || !e.Request.Public || !slices.Equal(e.Request.Scopes, []string{"openid"}) {
-					t.Fatal("creation lost exact public OIDC intent or original custody")
+				if e.ValidateAt(now) != nil || e.Request.Public != public || !slices.Equal(e.Request.Scopes, []string{"openid"}) {
+					t.Fatal("creation lost exact OIDC client class or original custody")
 				}
 				secret, _ := oauth.NewToken()
 				return oauth.ClientManagementResult{Client: client, Secret: secret, Completion: oauth.Completion{Outcome: identity.CommitOutcomeCommitted}}, nil
@@ -132,7 +146,7 @@ func TestManagedPublicOIDCSelectionOwnsCreateReadAndAuthorization(t *testing.T) 
 			}
 			csrf, _ := session.NewCSRFToken()
 			key, _ := identity.NewIdempotencyKey([]byte("managed-oidc-create"))
-			created, createErr := service.ClientCreate(context.Background(), oauth.ClientManagementRequest{Owner: client.Owner, TenantID: "tenant", Session: bearer, CSRF: csrf, Origin: c.Issuer.String(), Network: "192.0.2.1", RequestKey: key, Public: true, Redirects: client.Redirects, Scopes: []string{"openid"}})
+			created, createErr := service.ClientCreate(context.Background(), oauth.ClientManagementRequest{Owner: client.Owner, TenantID: "tenant", Session: bearer, CSRF: csrf, Origin: c.Issuer.String(), Network: "192.0.2.1", RequestKey: key, Public: public, Redirects: client.Redirects, Scopes: []string{"openid"}})
 			read := oauth.ClientReadRequest{Owner: client.Owner, TenantID: "tenant", Session: bearer, ClientID: client.ID}
 			got, getErr := service.ClientGet(context.Background(), read)
 			read.ClientID, read.Limit = "", 1
@@ -149,8 +163,8 @@ func TestManagedPublicOIDCSelectionOwnsCreateReadAndAuthorization(t *testing.T) 
 			if createErr != nil || getErr != nil || listErr != nil || authErr != nil || created.Client.ID != client.ID || got.Client.ID != client.ID || len(listed.Page.Items()) != 1 || authorized.Outcome != oauth.ConsentRequired {
 				t.Fatal("selected managed OIDC public boundary disconnected", createErr, getErr, listErr, authErr)
 			}
-			if _, err := created.Secret.Reveal(); err == nil {
-				t.Fatal("public OIDC creation exposed secret")
+			if _, err := created.Secret.Reveal(); public != (err != nil) {
+				t.Fatal("OIDC secret disclosure disagrees with selected client class")
 			}
 		})
 	}

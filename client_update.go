@@ -2,6 +2,7 @@ package oauthserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -70,6 +71,11 @@ func ValidateClientUpdateRequest(r ClientUpdateRequest, p ManagedClientPolicy, i
 	if err != nil {
 		return ClientUpdateRequest{}, err
 	}
+	// Managed OIDC metadata replacement is a separate, unselected profile.
+	// A creation selector must not expand this operation's OAuth-only ceiling.
+	if hasExtensionScope(r.Scopes) {
+		return ClientUpdateRequest{}, ErrInvalidScope
+	}
 	if _, err := identity.ParseSubjectID(r.Management.ClientID[len(ManagedClientPrefix):]); err != nil {
 		return ClientUpdateRequest{}, ErrInvalidRequest
 	}
@@ -118,6 +124,23 @@ func (s *Service) ClientUpdate(ctx context.Context, r ClientUpdateRequest) (out 
 	e := ClientUpdateExecution{Request: r, Session: observed}
 	if e.ValidateAt(s.config.Clock.Now()) != nil {
 		return out, ErrAccessDenied
+	}
+	if s.config.ManagedClients.ConfidentialOIDC {
+		// Fence the original class before invoking even an older updater. The
+		// native owner must repeat this against protected current state for races.
+		current, err := s.currentClient(ctx, r.Management.ClientID)
+		if err != nil && !errors.Is(err, ErrInvalidClient) {
+			return out, operationError(ctx, err)
+		}
+		// Missing/tombstoned current metadata cannot invalidate original keyed
+		// history. Only its existing updater may recover that result or deny a
+		// fresh request; this classified absence grants no mutation permission.
+		if hasExtensionScope(current.Scopes) || e.ValidateAt(s.config.Clock.Now()) != nil {
+			return out, ErrAccessDenied
+		}
+		if ctx.Err() != nil {
+			return out, ctx.Err()
+		}
 	}
 	out, err = owner.UpdateClient(ctx, e)
 	if ctx.Err() != nil {

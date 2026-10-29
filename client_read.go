@@ -97,7 +97,7 @@ type ClientListPage struct {
 
 // NewClientListPage checks the finite metadata class and deep-copies its items.
 // Static/workload clients, unselected OIDC classes and unsorted/duplicate IDs
-// are invalid. Minimal public openid metadata still requires service selection.
+// are invalid. Minimal public/confidential openid metadata requires service selection.
 func NewClientListPage(items []Client) (ClientListPage, error) {
 	if len(items) > 100 {
 		return ClientListPage{}, ErrInvalidRequest
@@ -125,7 +125,7 @@ func (p ClientListPage) Items() []Client {
 }
 
 func clientReadProjection(c Client) (Client, error) {
-	if !strings.HasPrefix(c.ID, ManagedClientPrefix) || c.Workload != nil || c.SubjectRegistration != nil || hasExtensionScope(c.Scopes) && !minimalManagedPublicOIDC(c.Public, c.DeviceAuthorization, c.Scopes) {
+	if !strings.HasPrefix(c.ID, ManagedClientPrefix) || c.Workload != nil || c.SubjectRegistration != nil || hasExtensionScope(c.Scopes) && !minimalManagedBrowserOIDC(c.DeviceAuthorization, c.Scopes) {
 		return Client{}, ErrInvalidRequest
 	}
 	if _, err := identity.ParseSubjectID(strings.TrimPrefix(c.ID, ManagedClientPrefix)); err != nil {

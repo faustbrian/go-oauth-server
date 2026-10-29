@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add independent `ManagedClientPolicy.ConfidentialOIDC` selection for managed
+  Basic browser clients requesting `openid` alone with the default public
+  subject. Creation, safe reads, authorization and issuance require the actual
+  OIDC composition and matching native support. Existing confidential secret
+  custody and rotation remain the owners; neither public-client selector,
+  additional claims, pairwise subjects nor metadata replacement is enabled.
+
 - Add explicit `ManagedClientPolicy.PublicOIDC` selection for no-secret managed
   public browser clients requesting `openid` alone with the existing default
   public subject. Creation, safe reads, authorization and token issuance require

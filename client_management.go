@@ -44,6 +44,11 @@ type ManagedClientPolicy struct {
 	// the actual child still reads trusted UserInfoSource through its original
 	// core. OAuth Scopes and retained policy stay unchanged.
 	PublicOIDC bool `json:",omitempty"`
+	// ConfidentialOIDC independently permits openid-only managed confidential
+	// browser clients using their existing Basic secret custody and default public
+	// subject. It requires configured OIDCScopes containing openid, not PublicClients.
+	// Creation, private reads, authorization and issuance require OIDC composition.
+	ConfidentialOIDC bool `json:",omitempty"`
 	// DeviceAuthorization is an explicit ceiling for newly managed device
 	// registrations; false preserves the existing browser-only namespace.
 	DeviceAuthorization bool
@@ -55,6 +60,9 @@ func (p ManagedClientPolicy) validated(c Config) (ManagedClientPolicy, error) {
 		return ManagedClientPolicy{}, ErrInvalidRequest
 	}
 	if p.PublicOIDC && (!p.PublicClients || !c.OIDCScopes.Contains("openid")) {
+		return ManagedClientPolicy{}, ErrInvalidRequest
+	}
+	if p.ConfidentialOIDC && !c.OIDCScopes.Contains("openid") {
 		return ManagedClientPolicy{}, ErrInvalidRequest
 	}
 	p.Redirects = slices.Clone(redirects.targets)
@@ -75,8 +83,8 @@ func (p ManagedClientPolicy) validated(c Config) (ManagedClientPolicy, error) {
 
 // AllowsRegistrationScopes checks immutable scope/class ceilings only, never
 // registration existence, authentication or management authority. OAuth-only
-// registrations retain Scopes; PublicOIDC separately selects exactly openid for
-// public browser clients, not confidential/device or additional-claim profiles.
+// registrations retain Scopes; PublicOIDC and ConfidentialOIDC independently
+// select exactly openid for their browser class, not device/additional claims.
 // Native registries use this same admission rule on every restored projection.
 func (p ManagedClientPolicy) AllowsRegistrationScopes(public, device bool, scopes []string) bool {
 	values, err := validatedScopes(scopes)
@@ -84,13 +92,13 @@ func (p ManagedClientPolicy) AllowsRegistrationScopes(public, device bool, scope
 		return false
 	}
 	if hasExtensionScope(values) {
-		return p.PublicOIDC && minimalManagedPublicOIDC(public, device, values)
+		return (public && p.PublicOIDC || !public && p.ConfidentialOIDC) && minimalManagedBrowserOIDC(device, values)
 	}
 	return scopeSubset(values, p.Scopes.values)
 }
 
-func minimalManagedPublicOIDC(public, device bool, scopes []string) bool {
-	return public && !device && len(scopes) == 1 && scopes[0] == "openid"
+func minimalManagedBrowserOIDC(device bool, scopes []string) bool {
+	return !device && len(scopes) == 1 && scopes[0] == "openid"
 }
 
 // CurrentClientRegistry is a trusted optional native current-client owner, not

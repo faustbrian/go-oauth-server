@@ -100,6 +100,15 @@ replacement authentication engine.
   no confidential OIDC, pairwise subjects, extra identity scopes, device flow
   or managed metadata replacement/secret rotation. Use matching native support;
   core selection alone supplies neither persistence nor signing.
+  Independently select `ManagedClientPolicy.ConfidentialOIDC` for the same
+  minimal browser/default-subject `openid` profile with `Public=false` and
+  existing `client_secret_basic` custody. It requires the configured OIDC scope
+  and composed extension, not `PublicClients` or `PublicOIDC`. Adopt matching
+  native support before selection; existing confidential rotation history and
+  signing history remain their separate prerequisites. Confidential rotation
+  retains its existing grant invalidation and fresh-authorization rules.
+  Neither selector permits pairwise/additional claims, managed OIDC metadata
+  replacement or device flow; turning one on does not select the other class.
   Existing warm services resolve actual registry status on every
   call; terminal deletion denies all descendants without token fanout.
   Selected OAuth discovery includes the managed human-web/Basic capability,

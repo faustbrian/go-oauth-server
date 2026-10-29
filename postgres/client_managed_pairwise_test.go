@@ -124,3 +124,30 @@ func TestManagedPairwiseTrustedPolicyOwnsMetadataAndKeySelection(t *testing.T) {
 		t.Fatal("withdrawn management selection retained metadata or key authority")
 	}
 }
+
+func TestManagedPublicPairwiseTrustedPolicyOwnsMetadataAndKeySelection(t *testing.T) {
+	store, _, id := cursorReadFixture()
+	store.config.Protocol.Resource = "https://api.example"
+	store.config.PublicClients = true
+	policy := store.config.Protocol.ManagedClients
+	policy.PublicClients, policy.PublicOIDC = true, true
+	registration, _ := oauth.NewOIDCSubjectRegistration("pairwise", "client.example", "subjects", 1)
+	policy.PublicPairwiseRegistrations = []oauth.OIDCSubjectRegistration{registration}
+	client := oauth.Client{ID: id, Owner: policy.Owner, Public: true, Version: 1, AuthenticationMethod: "none", Resource: store.config.Protocol.Resource, Redirects: policy.Redirects, Scopes: []string{"openid"}, SubjectRegistration: &registration}
+	if !store.managedMetadata(client) {
+		t.Fatal("trusted public-only pairwise registration is not readable")
+	}
+	if !store.subjectPolicySelected("subjects", 1) {
+		t.Fatal("actual public-only management policy cannot install its subject key")
+	}
+	if policy.ConfidentialOIDC || len(policy.PairwiseRegistrations) != 0 {
+		t.Fatal("public key selection borrowed confidential authority")
+	}
+	if store.subjectPolicySelected("foreign", 1) || store.subjectPolicySelected("subjects", 2) {
+		t.Fatal("unselected public subject policy acquired native key custody")
+	}
+	policy.PublicPairwiseRegistrations = nil
+	if store.managedMetadata(client) || store.subjectPolicySelected("subjects", 1) {
+		t.Fatal("withdrawn public-only selection retained metadata or key authority")
+	}
+}

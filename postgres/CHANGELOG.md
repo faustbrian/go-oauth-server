@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Compose explicitly selected managed public single-host pairwise OIDC clients
+  with the existing encrypted subject-key and stable-binding owners. Public-only
+  trusted registrations can install, activate and reconstruct subject custody
+  without a static or confidential client. Adopt matching root support, retain
+  public-client/signing/pairwise histories and select `PublicClients`,
+  `PublicOIDC` and exact `PublicPairwiseRegistrations`; no new schema is added.
+  Existing public/default and confidential pairwise selection stays unchanged.
+
 - Select immutable single-host pairwise subjects for managed confidential
   `openid` browser clients through an exact trusted registration allowlist.
   Creation, safe reads and original recovery retain that selection; existing

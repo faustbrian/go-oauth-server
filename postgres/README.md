@@ -155,8 +155,9 @@ registrations. A manager's `ClientManagementRequest.SubjectRegistration` may
 select only one exact allowed registration; every redirect must use its single
 registered host. Selection is immutable, confidential Basic/browser/`openid`
 only. Nil retains the original default public subject and canonical persisted
-registration/request-intent bytes. Additional claims, multi-host sector URIs,
-managed public pairwise clients and metadata replacement are not selected.
+registration/request-intent bytes. Additional claims, multi-host sector URIs
+and metadata replacement are not selected. Public pairwise requires the
+separate public-class selection below.
 
 Append the existing `PairwiseMigrationSource` after the deployment's actual
 client/consent/signing history at a fresh version. Compose the existing OIDC
@@ -181,6 +182,36 @@ it. Retain the original exact registration allowlist and custody needed for
 outstanding commands. Withdrawal of current manager/session/user/client
 authority still denies the corresponding operation, and required client
 audit/outbox effects remain in the original atomic coordinator work.
+
+### Optional public single-host managed pairwise subjects
+
+Select native and protocol `PublicClients`, root `ManagedClients.PublicOIDC`,
+and the separate exact `ManagedClients.PublicPairwiseRegistrations` allowlist.
+Use matching root support; public/default OIDC or confidential
+`PairwiseRegistrations` alone never selects this profile. Confidential OIDC
+need not be enabled. Each public registration is browser-only, `openid`-only,
+immutable and bound to its exact trusted single-host sector. Additional claims,
+sector-identifier URIs, device registration and metadata replacement remain
+unselected. Managers supply a permitted registration, never subject/key material.
+
+Retain installed public-client, signing and pairwise migration histories; no new
+schema is introduced. The public-only allowlist selects the same existing
+`InstallSubjectKey`, `ActivateSubjectKey` and `SubjectKeyRegistrations` owners
+without a fabricated static or confidential client. Compose the actual OIDC
+child and `SubjectPolicy`, publish/activate signing custody and use
+`core.WithOIDC(child)`. Genuine manager/session/CSRF authorization, consent and
+code/S256 remain mandatory. Current client metadata uses registered `none` and
+NULL secret digest; creation, retries and unknown recovery disclose no secret.
+Supplied Basic credentials deny rather than downgrading the registered method.
+
+Independent RPs must verify discovery/JWKS/signature/issuer/audience/nonce/expiry
+and equal ID-token/UserInfo `sub`. Same-sector registrations retain stable
+identity through native reconstruction, derivation-key rotation and secretless
+refresh; different sectors remain isolated. Current user/client withdrawal,
+revocation and missing/foreign/retired custody deny under the original owners
+and nonrenewing deadlines. Required audit/outbox effects and metadata-only
+unknown reconciliation stay in the existing atomic coordinator; neither
+registration class gains a second grant engine or recovery journal.
 
 Public OIDC registration persists the existing public/none metadata and NULL
 secret digest. Fresh services resolve it from native current authority. The

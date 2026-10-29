@@ -21,7 +21,7 @@ only explicitly selected workload metadata, with independent snapshot copies.
 `NewClientListPage` retains its human-only default; a matching native adapter
 explicitly selects `NewWorkloadClientListPage` for mixed web/machine pages.
 Unselected compositions cannot disclose machine metadata. This addition does not select
-machine public/prelogin reads, metadata replacement, secret rotation, dynamic
+machine public/pre-login reads, metadata replacement, secret rotation, dynamic
 registration or token exchange variants.
 The separately selected [human code-access exchange](human-code-exchange.md)
 preserves that existing human grant rather than manufacturing a workload.

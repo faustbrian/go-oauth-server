@@ -91,6 +91,11 @@ func (s *Store) readClientMetadata(ctx context.Context, e oauth.ClientReadExecut
 	p := s.config.Protocol.ManagedClients
 	query := `SELECT registration,version::text,client_id FROM ` + s.schema + `.managed_clients WHERE issuer=$1 AND environment=$2 AND platform_owner=$3 AND tenant_id=$4 AND state='active'`
 	args := []any{s.config.Protocol.Issuer.String(), s.config.Protocol.Environment, p.Owner.PlatformID(), string(p.TenantID)}
+	if len(p.Workloads) == 0 {
+		// The original human-only projection must keep working beside machine
+		// rows owned by another explicitly selected serving composition.
+		query += ` AND NOT (registration ? 'Workload')`
+	}
 	if list {
 		query += ` AND client_id COLLATE "C">$5 ORDER BY client_id COLLATE "C" LIMIT $6`
 		args = append(args, after, int(e.Request.Limit)+1)
@@ -143,7 +148,7 @@ func (s *Store) clientRead(ctx context.Context, e oauth.ClientReadExecution, lis
 	if err != nil {
 		return nil, oauth.Cursor{}, err
 	}
-	if !sameJSON(items, current) {
+	if !sameJSON(clientPolicies(items), clientPolicies(current)) {
 		return nil, oauth.Cursor{}, oauth.ErrAccessDenied
 	}
 	if _, err := s.clientReadObservation(ctx, e, list); err != nil {
@@ -156,7 +161,7 @@ func (s *Store) clientRead(ctx context.Context, e oauth.ClientReadExecution, lis
 	if err != nil {
 		return nil, oauth.Cursor{}, err
 	}
-	if !sameJSON(items, current) {
+	if !sameJSON(clientPolicies(items), clientPolicies(current)) {
 		return nil, oauth.Cursor{}, oauth.ErrAccessDenied
 	}
 	now, err := s.introspectionTime(ctx)
@@ -218,6 +223,9 @@ func (s *Store) ClientList(ctx context.Context, e oauth.ClientReadExecution) (ou
 		return out, err
 	}
 	page, err := oauth.NewClientListPage(items)
+	if len(s.config.Protocol.ManagedClients.Workloads) != 0 {
+		page, err = oauth.NewWorkloadClientListPage(items)
+	}
 	if err != nil {
 		return out, oauth.ErrUnavailable
 	}

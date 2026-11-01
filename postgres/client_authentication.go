@@ -63,7 +63,9 @@ func (s *Store) authenticateClientSnapshot(ctx context.Context, c oauth.Client, 
 	if !matched {
 		return nil, oauth.ErrInvalidClient
 	}
-	if !s.config.ClientSecretRotation {
+	// Preserve the original nonrotation human preparation contract; the
+	// selected workload profile also retains its original Basic deadline.
+	if !s.config.ClientSecretRotation && c.Workload == nil {
 		return nil, nil
 	}
 	if !proof.validAt(s.now(), r.DatabaseNow) || ctx.Err() != nil {

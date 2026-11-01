@@ -402,7 +402,7 @@ func (p *phase) buildCommand() error {
 			return oauth.ErrInvalidRequest
 		}
 		if i.Transition == rotateManagedSecret {
-			if p.client.Public || !p.store.config.ClientSecretRotation || i.ClientChange.Overlap < 0 || i.ClientChange.Overlap > 24*time.Hour || i.ClientChange.Overlap%time.Microsecond != 0 {
+			if p.client.Public || p.client.Workload != nil || !p.store.config.ClientSecretRotation || i.ClientChange.Overlap < 0 || i.ClientChange.Overlap > 24*time.Hour || i.ClientChange.Overlap%time.Microsecond != 0 {
 				return oauth.ErrInvalidRequest
 			}
 		} else if i.ClientChange.Overlap != 0 {
@@ -412,7 +412,7 @@ func (p *phase) buildCommand() error {
 			return oauth.ErrInvalidRequest
 		}
 		if i.Transition == updateManagedClient {
-			if p.client.Public || !p.store.config.ClientMetadataUpdates || i.ClientChange.SecretVersion == 0 {
+			if p.client.Public || p.client.Workload != nil || !p.store.config.ClientMetadataUpdates || i.ClientChange.SecretVersion == 0 {
 				return oauth.ErrInvalidRequest
 			}
 			if _, err := p.store.updatedClient(p.client, i.ClientChange.Replacement); err != nil {
@@ -645,7 +645,7 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 				return err
 			}
 		}
-	} else if p.client.Workload != nil {
+	} else if p.client.Workload != nil && i.ClientChange == nil {
 		return identity.ForbiddenError{}
 	}
 	// Public-client revocation is authorized by exact client-bound token
@@ -752,7 +752,7 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 		return err
 	}
 	workloadColumn := "NULL::jsonb"
-	if workloadSelected(p.store.config.Protocol.Clients) {
+	if workloadProfileSelected(p.store.config.Protocol) {
 		workloadColumn = "workload_source"
 	}
 	rows, err := w.Query(ctx, `SELECT state,version::text,client_version::text,client_fingerprint,source_session,scopes,resource,expires_at,`+workloadColumn+` FROM `+p.store.schema+`.grants WHERE grant_id=$1 AND tenant_id=$2 AND COALESCE(user_id,'')=$3 AND client_id=$4 FOR UPDATE`, g.ID, string(g.Tenant), string(g.User), g.ClientID)
@@ -1206,7 +1206,7 @@ func (p *phase) restore(ctx context.Context, generation uint64, wire []byte, ini
 		if original.ID != retained.ID || original.Platform != retained.Platform || original.GlobalAuthorityID != retained.GlobalAuthorityID || original.PolicyNamespace != retained.PolicyNamespace {
 			return identity.ForbiddenError{}
 		}
-	} else if p.client.Workload != nil {
+	} else if p.client.Workload != nil && out.Input.ClientChange == nil {
 		return identity.ForbiddenError{}
 	}
 	want := 0

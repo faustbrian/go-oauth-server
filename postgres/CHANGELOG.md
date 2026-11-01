@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add opt-in platform-managed workload clients using the existing fresh human
+  manager, current authorization, CSRF, reveal-once Basic secret and terminal
+  registry deletion. Exact trusted tenant/service-account/lifetime selections
+  issue access only. Selected private inventory includes machine metadata;
+  unselected human-only inventory and original web histories remain intact.
+  Original matched-secret freshness fences protected issuance and delivery
+  without requiring optional client-secret rotation history.
+
 - Compose explicitly selected default-subject managed public account claims
   through the existing profile/identifier, consent, signing and grant owners.
   Select an exact root `PublicOIDCScopes` ceiling for `openid` plus desired

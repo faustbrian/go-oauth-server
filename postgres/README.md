@@ -3,6 +3,46 @@
 Experimental persistence and public service composition for the
 [selected authorization-code profile](../docs/selected-profile.md).
 
+## Optional managed workload clients
+
+The existing native `NewService` can register a confidential machine through
+`ClientCreate` and terminally withdraw it through `ClientDelete`. Set
+`Protocol.ManagedClients.Workloads` to an exact bounded allowlist built with
+`oauth.NewWorkload`. Each binding must use the management tenant, a trusted
+service-account ID and its access lifetime. Set `WorkloadAuthority` to the
+existing directory and public authorization namespaces and initialize actual
+service-account authority through those owners. OAuth creates no human,
+service account or substitute authority to make a token request succeed.
+
+Install the existing `WorkloadMigrationSource` exactly once in the forward
+OAuth history before selecting machines; an already installed static-workload
+history is reused. Preserve installed migration bytes and apply only a new
+successor after the current client/consent and optional rotation/update history.
+Retire all unaware serving binaries before enabling the allowlist. No registry
+rewrite is required: web registrations retain their omitted workload encoding,
+while machine registrations store an explicit scalar binding, not opaque JSON
+serialization of the public `Workload`. Human grant and prepared-command
+identities stay unchanged when this additional profile is enabled.
+
+Creation borrows a genuine fresh password-manager session, its same-browser
+CSRF token, exact platform/tenant and original request key. Set the request's
+`Workload` to an exact allowlist binding and omit redirects, public/device/OIDC
+metadata, client ID and version. A fresh known commitment reveals one Basic
+secret; retry, restart recovery and unknown outcomes return metadata only.
+The original secret can issue access-only `client_credentials` tokens after
+restart, and the owning client can introspect/revoke them. Client deletion
+withdraws subsequent issuance and token use without an unbounded grant sweep.
+The original matched-secret snapshot fences protected work and delivery within
+twenty seconds even without selecting secret rotation or its migration.
+
+Authorized private `ClientGet`/`ClientList` include selected machine metadata
+alongside retained human clients; compositions without workload selection keep
+their human-only view. Public reads, machine secret rotation and machine
+metadata replacement are not selected, even when human rotation/update is
+enabled. This profile does not select standard token exchange; the independent
+global exchange profile and its real authority remain separate requirements.
+Native managed exchange is not qualified by this registration consumer.
+
 ## Optional current profile-name UserInfo
 
 Select native `Config.ProfileUserInfo=&ProfileUserInfoConfig{...}` with the exact

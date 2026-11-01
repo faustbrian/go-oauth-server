@@ -15,7 +15,8 @@ import (
 // WorkloadAuthorityConfig selects exact existing directory and authorization
 // owner namespaces. Subject IDs must be unique across machine identities in this
 // trusted namespace. It creates no authority row, credential or policy. Required
-// only when Client.Workload is selected; zero retains the prior web profile.
+// when configured or managed workloads are selected; zero retains the prior web
+// profile.
 type WorkloadAuthorityConfig struct{ GlobalAuthorityID, PolicyNamespace string }
 
 type workloadSource struct {
@@ -32,6 +33,10 @@ func workloadSelected(clients []oauth.Client) bool {
 		}
 	}
 	return false
+}
+
+func workloadProfileSelected(c oauth.Config) bool {
+	return workloadSelected(c.Clients) || c.ManagedClients != nil && len(c.ManagedClients.Workloads) != 0
 }
 func webSelected(clients []oauth.Client) bool {
 	for _, c := range clients {
@@ -79,9 +84,9 @@ func (s *Store) workloadGrant(ctx context.Context, client oauth.Client, id ident
 	return g, nil
 }
 
-func (s *Store) issueWorkload(ctx context.Context, client oauth.Client, r oauth.TokenRequest) (oauth.TokenResult, error) {
+func (s *Store) issueWorkload(ctx context.Context, client oauth.Client, r oauth.TokenRequest, proof *clientAuthenticationSnapshot) (oauth.TokenResult, *phase, error) {
 	if client.Workload == nil || r.GrantType != oauth.ClientCredentialsGrant || r.Code != "" || r.RedirectURI != "" || r.CodeVerifier != "" || r.RefreshToken != "" {
-		return oauth.TokenResult{}, oauth.ErrInvalidRequest
+		return oauth.TokenResult{}, nil, oauth.ErrInvalidRequest
 	}
 	scopes := r.Scopes
 	if scopes == nil {
@@ -89,22 +94,22 @@ func (s *Store) issueWorkload(ctx context.Context, client oauth.Client, r oauth.
 	}
 	selected, err := selectedScopes(scopes)
 	if err != nil || !scopeSubset(selected, client.Scopes) {
-		return oauth.TokenResult{}, oauth.ErrInvalidScope
+		return oauth.TokenResult{}, nil, oauth.ErrInvalidScope
 	}
 	id, err := identity.NewCommandID()
 	if err != nil {
-		return oauth.TokenResult{}, oauth.ErrUnavailable
+		return oauth.TokenResult{}, nil, oauth.ErrUnavailable
 	}
 	g, err := s.workloadGrant(ctx, client, id, selected)
 	if err != nil {
-		return oauth.TokenResult{}, err
+		return oauth.TokenResult{}, nil, err
 	}
-	p := &phase{store: s, client: client, input: phaseInput{Schema: 1, Configuration: s.identity, Transition: createWorkload, Grant: g, Scopes: selected, CreatedAt: g.CreatedAt, Intent: s.intent("client_credentials", string(id)), Network: r.Network}}
+	p := &phase{store: s, client: client, input: phaseInput{Schema: 1, Configuration: s.identity, Transition: createWorkload, Grant: g, Scopes: selected, CreatedAt: g.CreatedAt, Intent: s.intent("client_credentials", string(id)), Network: r.Network, ClientAuthentication: proof}}
 	p.bind(id, "identity.oauth-server.token", g.ID)
 	result, err := p.execute(ctx)
 	out := oauth.TokenResult{Outcome: result.Outcome, CommandID: id, Replayed: !p.applied}
 	if err != nil {
-		return out, publicError(ctx, err, oauth.ErrAccessDenied)
+		return out, p, publicError(ctx, err, oauth.ErrAccessDenied)
 	}
 	if result.Outcome == identity.CommitOutcomeCommitted && p.applied {
 		out.AccessToken = p.generatedToken(oauth.TokenAccess)
@@ -112,7 +117,7 @@ func (s *Store) issueWorkload(ctx context.Context, client oauth.Client, r oauth.
 		out.Resource = client.Resource
 		out.Scopes = selected
 	}
-	return out, nil
+	return out, p, nil
 }
 
 func (p *phase) checkWorkload(ctx context.Context, w kernel.Work) error {

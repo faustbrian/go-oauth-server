@@ -97,7 +97,9 @@ func (s *Store) managementObservation(ctx context.Context, c oauth.ClientManagem
 	}
 	var r oauth.ClientManagementRequest
 	var err error
-	if !c.Delete && c.Request.SubjectRegistration != nil {
+	if !c.Delete && c.Request.Workload != nil {
+		r, err = oauth.ValidateWorkloadClientManagementRequest(c.Request, *p, s.config.Protocol.Issuer)
+	} else if !c.Delete && c.Request.SubjectRegistration != nil {
 		r, err = oauth.ValidatePairwiseClientManagementRequest(c.Request, *p, s.config.Protocol.Issuer)
 	} else {
 		r, err = oauth.ValidateClientManagementRequest(c.Request, c.Delete, *p, s.config.Protocol.Issuer)
@@ -210,7 +212,7 @@ func (s *Store) ManageClient(ctx context.Context, c oauth.ClientManagementExecut
 }
 func (s *Store) clientManagementPhase(ctx context.Context, c oauth.ClientManagementExecution, action string) (*phase, error) {
 	r := c.Request
-	client := oauth.Client{ID: oauth.ManagedClientPrefix + "pending", Owner: s.config.Protocol.ManagedClients.Owner, Version: 1, Public: r.Public, Resource: s.config.Protocol.Resource, AuthenticationMethod: "client_secret_basic", Redirects: r.Redirects, PostLogoutRedirects: r.PostLogoutRedirects, Scopes: r.Scopes, DeviceAuthorization: r.DeviceAuthorization, SubjectRegistration: r.SubjectRegistration}
+	client := oauth.Client{ID: oauth.ManagedClientPrefix + "pending", Owner: s.config.Protocol.ManagedClients.Owner, Version: 1, Public: r.Public, Resource: s.config.Protocol.Resource, AuthenticationMethod: "client_secret_basic", Redirects: r.Redirects, PostLogoutRedirects: r.PostLogoutRedirects, Scopes: r.Scopes, DeviceAuthorization: r.DeviceAuthorization, SubjectRegistration: r.SubjectRegistration, Workload: r.Workload}
 	if r.Public {
 		client.AuthenticationMethod = "none"
 	}
@@ -227,6 +229,9 @@ func (s *Store) clientManagementPhase(ctx context.Context, c oauth.ClientManagem
 			return nil, err
 		}
 		client = existing.Client
+		if client.Workload != nil && action != "identity.oauth-server.client-delete" {
+			return nil, oauth.ErrAccessDenied
+		}
 		if client.Public && action != "identity.oauth-server.client-delete" {
 			return nil, oauth.ErrAccessDenied
 		}
@@ -262,7 +267,8 @@ func (p *phase) clientIntent(r oauth.ClientManagementRequest) (identity.RequestI
 		DeviceAuthorization bool                           `json:",omitempty"`
 		Public              bool                           `json:",omitempty"`
 		SubjectRegistration *oauth.OIDCSubjectRegistration `json:",omitempty"`
-	}{p.store.managementPolicy(), p.input.Transition == deleteManagedClient, r.ClientID, r.Version, r.Redirects, r.Scopes, r.Origin, r.Network, p.input.Grant.Source, p.rotationOverlap(), p.input.ClientChange.Replacement, r.PostLogoutRedirects, r.DeviceAuthorization, r.Public, r.SubjectRegistration})
+		Workload            *workloadPolicy                `json:",omitempty"`
+	}{p.store.managementPolicy(), p.input.Transition == deleteManagedClient, r.ClientID, r.Version, r.Redirects, r.Scopes, r.Origin, r.Network, p.input.Grant.Source, p.rotationOverlap(), p.input.ClientChange.Replacement, r.PostLogoutRedirects, r.DeviceAuthorization, r.Public, r.SubjectRegistration, workloadRegistration(r.Workload)})
 	if err != nil {
 		return identity.RequestIntent{}, err
 	}

@@ -504,7 +504,8 @@ func (s *Store) Token(ctx context.Context, c oauth.TokenCommand) (out oauth.Toke
 		return out, err
 	}
 	if client.Workload != nil {
-		return s.issueWorkload(ctx, client, r)
+		out, executing, err = s.issueWorkload(ctx, client, r, proof)
+		return out, err
 	}
 	kind, operation, wire := oauth.TokenCode, exchangeCode, r.Code
 	switch r.GrantType {
@@ -737,7 +738,7 @@ func (s *Store) lookup(ctx context.Context, wire string, client oauth.Client, ki
 			var source, scopes, payload, fingerprint, workload []byte
 			var clientVersion, grantVersion string
 			workloadColumn := "NULL::jsonb"
-			if workloadSelected(s.config.Protocol.Clients) {
+			if workloadProfileSelected(s.config.Protocol) {
 				workloadColumn = "g.workload_source"
 			}
 			exchangeColumn := "false,0::bigint"

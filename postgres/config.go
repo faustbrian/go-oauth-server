@@ -147,9 +147,18 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	if web && (c.Session.Profile.Validate() != nil || c.Session.Profile.AuthenticationMethod != "password" || c.Session.Profile.CredentialKind != identity.CredentialPassword || c.Session.Profile.CredentialOwner != "identity/password" || c.Session.Repository.MaximumDuration <= 0 || c.Session.Repository.MaximumDuration > protocol.MaximumDuration || len(c.CSRFKeys) < 1) {
 		return nil, oauth.ErrInvalidRequest
 	}
-	if workloadSelected(protocol.Clients) {
+	if workloadProfileSelected(protocol) {
+		var workloads []*oauth.Workload
 		for _, client := range protocol.Clients {
-			if client.Workload != nil && ((kernel.DirectoryAuthorityQuery{GlobalAuthorityID: c.WorkloadAuthority.GlobalAuthorityID, TenantID: client.Workload.TenantID()}).Validate() != nil || (authority.AuthorityScope{TenantID: authorization.TenantID(client.Workload.TenantID()), PolicyNamespace: c.WorkloadAuthority.PolicyNamespace, SubjectID: authorization.SubjectID(client.Workload.ID())}).Validate() != nil) {
+			if client.Workload != nil {
+				workloads = append(workloads, client.Workload)
+			}
+		}
+		if protocol.ManagedClients != nil {
+			workloads = append(workloads, protocol.ManagedClients.Workloads...)
+		}
+		for _, workload := range workloads {
+			if (kernel.DirectoryAuthorityQuery{GlobalAuthorityID: c.WorkloadAuthority.GlobalAuthorityID, TenantID: workload.TenantID()}).Validate() != nil || (authority.AuthorityScope{TenantID: authorization.TenantID(workload.TenantID()), PolicyNamespace: c.WorkloadAuthority.PolicyNamespace, SubjectID: authorization.SubjectID(workload.ID())}).Validate() != nil {
 				return nil, oauth.ErrInvalidRequest
 			}
 		}
@@ -300,6 +309,9 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	// retaining original keys must not strand native recovery or live grants.
 	type profile sessionpg.IdentifierAdmissionConfig
 	var workloadAuthority *WorkloadAuthorityConfig
+	// Preserve original web grant/preparation identity when managed machines
+	// are enabled. Their actual authority namespaces/versions are already bound
+	// separately in workloadSource and rechecked by validWorkload/current Work.
 	if workloadSelected(protocol.Clients) {
 		value := c.WorkloadAuthority
 		workloadAuthority = &value

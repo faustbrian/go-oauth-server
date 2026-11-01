@@ -193,7 +193,7 @@ func (p *phase) mutateOAuth(ctx context.Context, w kernel.Work) error {
 	for _, artifact := range p.output.Artifacts {
 		columns, values := "", ""
 		args := []any{artifact.Digest.KeyVersion, artifact.Digest.Sum[:], int16(artifact.Kind), g.ClientID, g.ID, i.CreatedAt, artifact.ExpiresAt, string(artifact.Transition), string(artifact.Replay), string(payload), artifact.ID, parent, string(i.Binding.CommandID)}
-		if workloadSelected(p.store.config.Protocol.Clients) {
+		if workloadProfileSelected(p.store.config.Protocol) {
 			columns = ",workload_only"
 			values = ",$14"
 			args = append(args, g.Workload != nil)

@@ -38,17 +38,35 @@ type managedRegistration struct {
 	DeviceAuthorization                          bool                           `json:",omitempty"`
 	Public                                       bool                           `json:",omitempty"`
 	SubjectRegistration                          *oauth.OIDCSubjectRegistration `json:",omitempty"`
+	Workload                                     *workloadPolicy                `json:",omitempty"`
 }
 
 func registrationWire(c oauth.Client) managedRegistration {
-	return managedRegistration{c.ID, c.Owner.PlatformID(), c.Resource, c.AuthenticationMethod, c.Version, c.Redirects, c.Scopes, c.PostLogoutRedirects, c.DeviceAuthorization, c.Public, c.SubjectRegistration}
+	return managedRegistration{c.ID, c.Owner.PlatformID(), c.Resource, c.AuthenticationMethod, c.Version, c.Redirects, c.Scopes, c.PostLogoutRedirects, c.DeviceAuthorization, c.Public, c.SubjectRegistration, workloadRegistration(c.Workload)}
 }
+
+// Workload deliberately forbids implicit JSON. Reuse the existing nonsecret
+// scalar projection and leave its absent encoding unchanged for web histories.
+func workloadRegistration(w *oauth.Workload) *workloadPolicy {
+	if w == nil {
+		return nil
+	}
+	return &workloadPolicy{Tenant: string(w.TenantID()), ID: w.ID(), AccessTTL: w.AccessTTL()}
+}
+
 func registrationClient(r managedRegistration) (oauth.Client, error) {
 	owner, err := oauth.NewPlatformOwner(r.Platform)
 	if err != nil {
 		return oauth.Client{}, err
 	}
-	return oauth.ValidateClient(oauth.Client{ID: r.ID, Owner: owner, Version: r.Version, Public: r.Public, Resource: r.Resource, AuthenticationMethod: r.AuthenticationMethod, Redirects: r.Redirects, PostLogoutRedirects: r.PostLogoutRedirects, Scopes: r.Scopes, DeviceAuthorization: r.DeviceAuthorization, SubjectRegistration: r.SubjectRegistration})
+	var workload *oauth.Workload
+	if r.Workload != nil {
+		workload, err = oauth.NewWorkload(identity.TenantID(r.Workload.Tenant), r.Workload.ID, r.Workload.AccessTTL)
+		if err != nil {
+			return oauth.Client{}, err
+		}
+	}
+	return oauth.ValidateClient(oauth.Client{ID: r.ID, Owner: owner, Version: r.Version, Public: r.Public, Resource: r.Resource, AuthenticationMethod: r.AuthenticationMethod, Redirects: r.Redirects, PostLogoutRedirects: r.PostLogoutRedirects, Scopes: r.Scopes, DeviceAuthorization: r.DeviceAuthorization, SubjectRegistration: r.SubjectRegistration, Workload: workload})
 }
 func decodeRegistration(wire []byte) (oauth.Client, error) {
 	var r managedRegistration
@@ -101,9 +119,11 @@ func (s *Store) readManagedClient(ctx context.Context, id string) (managedClient
 	var secretVersion, previousVersion string
 	var previousExpiry *time.Time
 	if s.config.ClientSecretRotation {
-		query += `,secret_version::text,COALESCE(previous_secret_version::text,''),previous_secret_digest,previous_secret_expires_at,clock_timestamp()`
-		targets = append(targets, &secretVersion, &previousVersion, &r.PreviousDigest, &previousExpiry, &r.DatabaseNow)
+		query += `,secret_version::text,COALESCE(previous_secret_version::text,''),previous_secret_digest,previous_secret_expires_at`
+		targets = append(targets, &secretVersion, &previousVersion, &r.PreviousDigest, &previousExpiry)
 	}
+	query += `,clock_timestamp()`
+	targets = append(targets, &r.DatabaseNow)
 	err := s.pool.Raw().QueryRow(ctx, query+` FROM `+s.schema+`.managed_clients WHERE client_id=$1 AND issuer=$2 AND environment=$3 AND platform_owner=$4 AND tenant_id=$5`, id, s.config.Protocol.Issuer.String(), s.config.Protocol.Environment, s.config.Protocol.ManagedClients.Owner.PlatformID(), string(s.config.Protocol.ManagedClients.TenantID)).Scan(targets...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return r, oauth.ErrInvalidClient
@@ -141,10 +161,16 @@ func (s *Store) readManagedClient(ctx context.Context, id string) (managedClient
 }
 func (s *Store) managedMetadata(c oauth.Client) bool {
 	p := s.config.Protocol.ManagedClients
-	if p == nil || c.Owner != p.Owner || !strings.HasPrefix(c.ID, oauth.ManagedClientPrefix) || c.Public && (!s.config.PublicClients || !p.PublicClients) || c.Workload != nil || c.Resource != s.config.Protocol.Resource || !p.AllowsRegistration(c.Public, c.DeviceAuthorization, c.Scopes, c.SubjectRegistration) {
+	if p == nil || c.Owner != p.Owner || !strings.HasPrefix(c.ID, oauth.ManagedClientPrefix) || c.Public && (!s.config.PublicClients || !p.PublicClients) || c.Resource != s.config.Protocol.Resource {
 		return false
 	}
 	if _, err := oauth.ValidateClient(c); err != nil {
+		return false
+	}
+	if c.Workload != nil {
+		return p.AllowsWorkloadRegistration(c.Public, c.DeviceAuthorization, c.Scopes, c.Workload)
+	}
+	if !p.AllowsRegistration(c.Public, c.DeviceAuthorization, c.Scopes, c.SubjectRegistration) {
 		return false
 	}
 	for _, r := range c.Redirects {
@@ -204,7 +230,7 @@ func (p *phase) requireManagedClient(ctx context.Context, w kernel.Work) error {
 	var secretVersion, previousVersion string
 	var previousExpiry *time.Time
 	targets := []any{&version, &state, &wire}
-	if p.input.ClientAuthentication != nil {
+	if p.input.ClientAuthentication != nil && p.store.config.ClientSecretRotation {
 		query += `,secret_version::text,COALESCE(previous_secret_version::text,''),previous_secret_expires_at`
 		targets = append(targets, &secretVersion, &previousVersion, &previousExpiry)
 	}
@@ -224,7 +250,12 @@ func (p *phase) requireManagedClient(ctx context.Context, w kernel.Work) error {
 		return identity.ForbiddenError{}
 	}
 	if a := p.input.ClientAuthentication; a != nil {
-		if !p.store.config.ClientSecretRotation || !a.matches(secretVersion, previousVersion, previousExpiry) {
+		// The original registry couples its sole secret to the client version;
+		// checking that slot must not require the optional rotation history.
+		if !p.store.config.ClientSecretRotation {
+			secretVersion = version
+		}
+		if !a.matches(secretVersion, previousVersion, previousExpiry) {
 			return identity.ForbiddenError{}
 		}
 	}

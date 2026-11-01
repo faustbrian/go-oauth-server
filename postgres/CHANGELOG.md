@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Reject invalid configured-workload coordinator leases, retained fingerprint
+  keys and request-key configuration during native Store/Service construction,
+  before startup can advertise unusable token issuance. Validation uses the
+  existing kernel owner without database access or additional migrations.
+
 - Add opt-in platform-managed workload clients using the existing fresh human
   manager, current authorization, CSRF, reveal-once Basic secret and terminal
   registry deletion. Exact trusted tenant/service-account/lifetime selections

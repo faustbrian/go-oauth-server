@@ -344,7 +344,9 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	// Narrowing enables a new operation, not a new policy for existing grants.
 	// Preserve their prepared configuration identity; its separate input profile
 	// and operation gate bind selection without stranding older recovery.
-	if c.ConsentNarrowing || protocol.ManagedClients != nil {
+	// Configured workloads also need the kernel's complete coordinator
+	// validation before startup, rather than waiting for the first token call.
+	if c.ConsentNarrowing || protocol.ManagedClients != nil || workloadProfileSelected(protocol) {
 		if err := s.coordinator(&phase{store: s}); err != nil {
 			return nil, oauth.ErrInvalidRequest
 		}

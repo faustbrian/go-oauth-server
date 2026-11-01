@@ -38,6 +38,11 @@ replacement authentication engine.
   exclusive public-none or confidential-Basic credential channels. Configure
   each confidential client's startup-only `ClientSecretVerifier` from a borrowed
   `password.Secret`, then destroy that startup secret.
+- `Service.AuthenticateClient` performs bounded current-client admission through
+  those same configured or native registry authenticators before transport
+  policy such as an authenticated-client rate bucket. It performs no durable
+  token/revocation operation and returns no proof or lease. Success cannot
+  replace the later protocol and native current-authority checks.
 - `Service.Authorize` admits a genuine current browser and returns an opaque
   consent interaction, never a code before consent. Explicitly selected OIDC
   `prompt=none` can reuse an original unexpired approval for a fresh code without

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Expose bounded `Service.AuthenticateClient` for authenticated-client transport
+  policy before durable token/revocation effects. It uses the existing static
+  verifier or current managed registry and returns no reusable authority;
+  final protocol/native authentication remains mandatory.
+
 - Add an explicit exact managed-workload allowlist and create-only machine
   registration branch. Fresh authorized managers can select confidential
   access-only clients without caller-selected tenants or human actors. Native

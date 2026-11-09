@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Canonicalize initial-token PostgreSQL timestamps to UTC before deriving
+  registration command identity, and preserve classified storage outages and
+  cancellation through registration/bootstrap readback. Invalid or consumed
+  custody remains access-denied. First interrupted invocations no longer claim
+  replay without observing original coordinator history. Adopt matching public
+  root and kernel dependencies, including typed recovery of an interruption
+  before retained preparation attaches to the original registration command.
+
+- Add finite native RFC7591 public-client registration with an additive
+  `ClientRegistrationMigrationSource`, digest-only initial-token provisioning,
+  exact platform/tenant/issuer/environment/audience/version/scope binding and
+  single-use consumption in the existing client-creation Work. Real managed
+  clients use existing code/S256, refresh and terminal deletion. Original token
+  custody recovers only the coordinator's historical command outcome, including
+  lost COMMIT acknowledgement and proven rollback; no second outcome journal,
+  manager-session substitute, public secret or RFC7592 capability is introduced.
+
 - Reject invalid configured-workload coordinator leases, retained fingerprint
   keys and request-key configuration during native Store/Service construction,
   before startup can advertise unusable token issuance. Validation uses the

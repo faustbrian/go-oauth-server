@@ -134,6 +134,94 @@ This OAuth-only selection adds no RFC7591 registration, OIDC/device management,
 HTTP, organization delegation or token exchange. Minimal managed OIDC requires
 the separate selection below.
 
+## Optional native RFC7591 public registration
+
+Select the root [finite registration profile](../docs/selected-profile.md#optional-native-rfc7591-public-registration)
+in `Config.Protocol.ManagedClients.DynamicRegistration`, alongside both existing
+public-client flags. The same immutable platform owner and management tenant own
+every resulting client. Applications configure policy and startup custody, not
+domain stores or a replacement authority. Session/CSRF remain mandatory for
+human `ClientCreate`/`ClientDelete`; they do not authenticate registration.
+
+Append `ClientRegistrationMigrationSource` at a new version after the complete
+installed managed/public-client history and any selected rotation/update
+histories. Install the schema before enabling registration. The additive table
+does not rewrite client rows or installed migration bytes. Its foreign key can
+briefly lock the referenced managed-client table; acquisition is bounded by
+`lock_timeout=5s`, and operators must also bound the migration command duration.
+Existing configurations with registration disabled never query this table.
+Disable registration to roll back this profile; retain its custody/history and
+do not remove public-client schema or roll back to public-unaware binaries.
+
+Create the ordinary native `Store`/`Service` with the selected configuration.
+Before registration, explicitly provision a securely generated canonical
+32-byte token with `Store.BootstrapRegistrationToken(ctx, initialWire, expiresAt)`.
+The expiry is an exclusive finite UTC instant with microsecond precision.
+Only SHA-256 lookup digest, exact scope/policy bindings and expiry are stored;
+plaintext is never retained in a table, command preparation, audit or lifecycle
+record. The token must be generated with sufficient entropy, kept out of logs
+and delivered through the consumer's trusted startup credential seam. Repeating
+the same provisioning preserves its original expiry and consumed state.
+Rebinding that wire value to another owner, version or expiry fails closed.
+
+Call `Service.DynamicRegister` with complete public metadata and that original
+wire value. The native token row is the authority, not an application allow
+decision or a manager session. Current command admission/risk policy is also
+required and must support `identity.oauth-server.dynamic-register` at the
+configured revision. The configured platform principal uses the existing
+coordinator's anonymous-flow namespace for its server-owned command; this
+creates no directory user, session, service-account credential or workload.
+Under the same protected `Work`, the adapter locks exact token custody, checks
+database expiry, inserts the managed public/none client, consumes the token and
+persists the existing required effect/audit/lifecycle records. Wrong, expired,
+foreign or policy-mismatched custody, bad metadata and competing use cannot
+partially create a client or consume the token. Public secrets are never
+generated, encrypted, persisted or revealed.
+
+Fresh services discover the registration through the ordinary managed registry.
+Use the existing genuine subject/session, consent, code/S256 and token APIs.
+Normal owner-authorized `ClientDelete` terminally withdraws this client and its
+descendants; registration does not create a separate management endpoint.
+
+After an unknown result, call
+`Store.RecoverDynamicRegistration(ctx, originalRequest)` with the same original
+initial token and exact metadata. The token must still be unexpired and match
+the original owner/audience/version/ceilings. A live journal lease returns
+`InProgress` without error. After the existing coordinator proves rollback and
+closes the original command as `dependency-failure`, it returns **both**
+`NotCommitted` and `ErrUnavailable`. An unavailable error without that exact
+outcome is not proof of rollback. A committed original result remains committed
+after client deletion. Recovery returns historical `Completion` only, with no
+current client or secret, and never executes absent work. Repeated recovery
+retains original command identity and terminal classification. Repeating the
+original request after terminal noncommit returns that original failure rather
+than restarting the command; rollback leaves the initial token unconsumed.
+
+The initial-token reader canonicalizes scanned timestamps to UTC before deriving
+command identity, so different pgx scan locations preserve the same original
+request. Token-table failures remain `ErrUnavailable`, and cancellation remains
+the caller's context error, including after bootstrap's insert has committed.
+Actual absent, foreign, expired or consumed custody remains access-denied; an
+infrastructure error must not be interpreted as invalid token authority.
+
+The matching `identity/postgres` dependency also recovers an interruption after
+the coordinator's durable start but before preparation ciphertext/final-plan
+attachment. Its typed decoder admits only this exact native registration
+declaration, preserving the original lease/generation, noncommit and audit
+guards. `TestNativeDynamicRegistrationInterruptedBeforeRetainedPreparationRecoversOriginal`
+exercises this boundary through the real native consumer. No adapter-side
+outcome journal or replay substitute is provided; never retry unknown issuance
+as new work.
+
+The native regression consumer is
+`TestNativeDynamicRegistrationPublicCodeS256DeleteAndOriginalRecovery`, with
+separate denial, expiry, contention and commit-fault cases. Local development
+with a root/Postgres-only `go.work` is not clean public-consumer evidence.
+Matching published dependency pins, ordinary checks, targeted race/fault proof,
+independent review and parent integration remain separate obligations. This
+profile adds no HTTP/reference route, registration discovery advertisement,
+confidential DCR, OIDC/device extension or RFC7592 token/URI/management endpoint.
+
 ## Optional minimal managed public OIDC
 
 With public management enabled, separately set

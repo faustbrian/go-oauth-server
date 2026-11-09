@@ -703,6 +703,13 @@ func (p *phase) bind(id identity.CommandID, operation, record string) {
 		p.input.Binding.ActorKind = authorization.SubjectServiceAccount
 		p.input.Binding.SchemaID = operation + ".configured-workload-v1"
 	}
+	if p.registering() {
+		p.input.Binding.UserID = ""
+		p.input.Binding.AnonymousFlowID = string(id)
+		p.input.Binding.ActorID = identity.ActorID(p.store.config.Protocol.ManagedClients.Owner.PlatformID())
+		p.input.Binding.ActorKind = authorization.SubjectServiceAccount
+		p.input.Binding.SchemaID = registrationOperation().SchemaID
+	}
 	p.deviceBinding()
 }
 func (p *phase) query() identity.RecoveryQuery {

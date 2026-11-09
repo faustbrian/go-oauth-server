@@ -27,28 +27,31 @@ type clientMutation struct {
 	Overlap time.Duration
 	// Absent in published preparation v1: legacy digest generation equals the
 	// original registration version. Never infer it from today's registration.
-	SecretVersion uint64
-	Replacement   *clientReplacement
+	SecretVersion       uint64
+	Replacement         *clientReplacement
+	DynamicRegistration *registrationMutation
 }
 
 func (m clientMutation) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		Registration  managedRegistration
-		Version       uint64
-		Policy        [32]byte
-		Overlap       time.Duration      `json:",omitempty"`
-		SecretVersion uint64             `json:",omitempty"`
-		Replacement   *clientReplacement `json:",omitempty"`
-	}{registrationWire(m.Client), m.Version, m.Policy, m.Overlap, m.SecretVersion, m.Replacement})
+		Registration        managedRegistration
+		Version             uint64
+		Policy              [32]byte
+		Overlap             time.Duration         `json:",omitempty"`
+		SecretVersion       uint64                `json:",omitempty"`
+		Replacement         *clientReplacement    `json:",omitempty"`
+		DynamicRegistration *registrationMutation `json:",omitempty"`
+	}{registrationWire(m.Client), m.Version, m.Policy, m.Overlap, m.SecretVersion, m.Replacement, m.DynamicRegistration})
 }
 func (m *clientMutation) UnmarshalJSON(wire []byte) error {
 	var v struct {
-		Registration  managedRegistration
-		Version       uint64
-		Policy        [32]byte
-		Overlap       time.Duration      `json:",omitempty"`
-		SecretVersion uint64             `json:",omitempty"`
-		Replacement   *clientReplacement `json:",omitempty"`
+		Registration        managedRegistration
+		Version             uint64
+		Policy              [32]byte
+		Overlap             time.Duration         `json:",omitempty"`
+		SecretVersion       uint64                `json:",omitempty"`
+		Replacement         *clientReplacement    `json:",omitempty"`
+		DynamicRegistration *registrationMutation `json:",omitempty"`
 	}
 	if err := decodeJSON(wire, &v); err != nil {
 		return err
@@ -57,7 +60,7 @@ func (m *clientMutation) UnmarshalJSON(wire []byte) error {
 	if err != nil {
 		return err
 	}
-	*m = clientMutation{Client: c, Version: v.Version, Policy: v.Policy, Overlap: v.Overlap, SecretVersion: v.SecretVersion, Replacement: v.Replacement}
+	*m = clientMutation{Client: c, Version: v.Version, Policy: v.Policy, Overlap: v.Overlap, SecretVersion: v.SecretVersion, Replacement: v.Replacement, DynamicRegistration: v.DynamicRegistration}
 	return nil
 }
 
@@ -497,6 +500,11 @@ func (p *phase) mutateClientChange(ctx context.Context, w kernel.Work) error {
 	}
 	if n != 1 {
 		return identity.ConflictError{}
+	}
+	if i.ClientChange.DynamicRegistration != nil {
+		if err := p.consumeRegistrationToken(ctx, w); err != nil {
+			return err
+		}
 	}
 	life := p.lifecycle()
 	digest := effectDigest(i.Binding, p.registration(), life)

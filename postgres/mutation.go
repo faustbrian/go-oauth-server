@@ -284,7 +284,7 @@ func (p *phase) recoverOAuthParticipant(ctx context.Context, w kernel.RecoveryWo
 		}
 	}
 	ownerColumn := "grant_id"
-	if b.OperationID == "identity.oauth-server.client-create" || b.OperationID == "identity.oauth-server.client-delete" || b.OperationID == "identity.oauth-server.client-rotate-secret" || b.OperationID == "identity.oauth-server.client-update" {
+	if b.OperationID == dynamicRegistrationOperation || b.OperationID == "identity.oauth-server.client-create" || b.OperationID == "identity.oauth-server.client-delete" || b.OperationID == "identity.oauth-server.client-rotate-secret" || b.OperationID == "identity.oauth-server.client-update" {
 		ownerColumn = "client_id"
 	}
 	if b.OperationID == "identity.oauth-server.consent-delete" || b.OperationID == "identity.oauth-server.consent-update" {
@@ -313,7 +313,7 @@ func (p *phase) recoverOAuthParticipant(ctx context.Context, w kernel.RecoveryWo
 	if (b.OperationID == "identity.oauth-server.consent-delete" || b.OperationID == "identity.oauth-server.consent-update") && grant != b.RecordID {
 		return kernel.RecoveryUnknown, identity.UnavailableError{}
 	}
-	if (b.OperationID == "identity.oauth-server.client-create" || b.OperationID == "identity.oauth-server.client-delete" || b.OperationID == "identity.oauth-server.client-rotate-secret" || b.OperationID == "identity.oauth-server.client-update") && grant != oauth.ManagedClientPrefix+b.RecordID {
+	if (b.OperationID == dynamicRegistrationOperation || b.OperationID == "identity.oauth-server.client-create" || b.OperationID == "identity.oauth-server.client-delete" || b.OperationID == "identity.oauth-server.client-rotate-secret" || b.OperationID == "identity.oauth-server.client-update") && grant != oauth.ManagedClientPrefix+b.RecordID {
 		return kernel.RecoveryUnknown, identity.UnavailableError{}
 	}
 	return kernel.RecoveryCommitted, nil

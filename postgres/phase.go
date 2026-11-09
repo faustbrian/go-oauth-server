@@ -74,6 +74,7 @@ type phase struct {
 	coordinator       *kernel.Coordinator
 	output            preparedOutput
 	applied           bool
+	observedHistory   bool
 	metadataRecovery  bool
 	oidc              func(context.Context, oauth.OIDCClaimsInput) (oauth.OIDCClaimsProjection, error)
 	device            *DeviceStore
@@ -94,6 +95,9 @@ func workloadOperation(name string) identity.FeatureOperation {
 	return identity.FeatureOperation{Owner: "oauth-server", OperationID: name, SchemaID: name + ".configured-workload-v1", SchemaVersion: 1, RecordRequirement: identity.FeatureRecordRequired, SubjectRequirement: identity.FeatureSubjectAnonymousFlow}
 }
 func (p *phase) operation(name string) identity.FeatureOperation {
+	if name == dynamicRegistrationOperation {
+		return registrationOperation()
+	}
 	if deviceOperationName(name) {
 		return deviceOperation(name)
 	}
@@ -115,6 +119,9 @@ func (p *phase) FeatureOperations() []identity.FeatureOperation {
 	}
 	if p.store != nil && p.store.config.Protocol.ManagedClients != nil {
 		operations = append(operations, operation("identity.oauth-server.client-create"), operation("identity.oauth-server.client-delete"))
+		if p.store.registrationSelected() {
+			operations = append(operations, registrationOperation())
+		}
 	}
 	if p.store != nil && p.store.config.ClientSecretRotation {
 		operations = append(operations, operation("identity.oauth-server.client-rotate-secret"))
@@ -274,6 +281,7 @@ func (p *phase) execute(ctx context.Context) (result identity.CommandResult, exe
 		return identity.CommandResult{}, identity.ForbiddenError{}
 	}
 	admission, err := p.coordinator.ObserveCommandAdmission(ctx, p.query(), p.caller())
+	p.observedHistory = admission.Validate() == nil && !admission.Absent
 	handoff := false
 	if err != nil {
 		var reauthentication kernel.OAuthReauthenticationRequiredError
@@ -511,7 +519,7 @@ func (p *phase) buildCommand() error {
 		return err
 	}
 	actorKind := audit.ActorHuman
-	if i.Grant.Workload != nil || i.Device != nil && b.AnonymousFlowID != "" {
+	if i.Grant.Workload != nil || i.Device != nil && b.AnonymousFlowID != "" || p.registering() {
 		actorKind = audit.ActorService
 	}
 	seed, err := builder.Build(audit.RecordInput{OccurredAt: i.CreatedAt, Action: p.auditActions()[0], Outcome: audit.OutcomeSucceeded, Actor: audit.ActorInput{Kind: actorKind, ID: string(b.ActorID)}, Subject: audit.SubjectInput{Type: p.subjectType(), ID: b.RecordID}, Context: audit.ContextInput{TenantID: string(b.TenantID), CorrelationID: b.CorrelationID}, Policy: audit.PolicyMetadata{PolicyID: b.PolicyID, Version: strconv.FormatUint(b.PolicyVersion, 10)}, Changes: audit.ChangeSetInput{Redacted: true}, Attributes: map[string]string{"command.id": string(b.CommandID), "aggregate.type": p.subjectType(), "aggregate.id": b.RecordID, "aggregate.before_version": strconv.FormatUint(life.BeforeVersion, 10), "aggregate.after_version": strconv.FormatUint(life.AfterVersion, 10), "retention.class": "protected"}})
@@ -605,7 +613,7 @@ func (p *phase) AdmitFeaturePreparation(ctx context.Context, w kernel.Work, c id
 	return p.checkArtifactExpiry(ctx, w)
 }
 func (p *phase) browserRequired() bool {
-	return p.input.ClientChange != nil || p.input.Transition == endSession || p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == denyInteraction || p.input.Transition == deleteConsent || p.input.Transition == narrowConsent || p.input.Transition == approveDevice || p.input.Transition == denyDevice
+	return p.input.ClientChange != nil && !p.registering() || p.input.Transition == endSession || p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == denyInteraction || p.input.Transition == deleteConsent || p.input.Transition == narrowConsent || p.input.Transition == approveDevice || p.input.Transition == denyDevice
 }
 func (p *phase) issuing() bool {
 	return p.input.Transition == createInteraction || p.input.Transition == approveInteraction || p.input.Transition == exchangeCode || p.input.Transition == rotateRefresh || p.input.Transition == createWorkload || p.exchanging() || p.input.Transition == createDevice || p.input.Transition == approveDevice || p.input.Device != nil && p.input.Device.Condition == oauth.DeviceSucceeded
@@ -622,6 +630,12 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 	}
 	if p.input.Device != nil {
 		return p.checkDevice(ctx, w, final)
+	}
+	if p.registering() {
+		if err := p.checkRegistrationToken(ctx, w, final); err != nil {
+			return err
+		}
+		return p.checkClientChange(ctx, w, final)
 	}
 	i := p.input
 	g := i.Grant
@@ -973,7 +987,7 @@ func (p *phase) GenerateFeaturePreparation(ctx context.Context, c identity.Comma
 	if p.browserRequired() && !p.store.now().Before(i.ObservationUntil) {
 		return nil, identity.ForbiddenError{}
 	}
-	if i.ClientChange != nil {
+	if i.ClientChange != nil && !p.registering() {
 		// Generation is outside the coordinator's protected SQL transaction.
 		// Keep application policy callbacks here; Work only fences the original
 		// real actor epoch and immutable configured revision, without renewing time.
@@ -1385,7 +1399,11 @@ func (p *phase) checkArtifactExpiry(ctx context.Context, w kernel.Work) error {
 	if p.input.Transition == narrowConsent && ((oauth.ConsentExecution{Command: p.consentCommand, Session: p.observation}).ValidateAt(now) != nil || !now.Before(p.input.ObservationUntil)) {
 		return identity.ForbiddenError{}
 	}
-	if p.input.ClientChange != nil && (p.clientManagement == nil || p.clientManagement.ValidateAt(now) != nil || !now.Before(p.input.ObservationUntil)) {
+	if p.registering() {
+		if err := p.checkRegistrationExpiry(ctx, w); err != nil {
+			return err
+		}
+	} else if p.input.ClientChange != nil && (p.clientManagement == nil || p.clientManagement.ValidateAt(now) != nil || !now.Before(p.input.ObservationUntil)) {
 		return identity.ForbiddenError{}
 	}
 	if p.input.Device != nil && (p.input.Device.Action == oauth.DeviceApprove || p.input.Device.Action == oauth.DeviceDeny) {

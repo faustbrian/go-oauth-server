@@ -220,6 +220,9 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	}
 	if protocol.ManagedClients != nil {
 		operations = append(operations, operation("identity.oauth-server.client-create"), operation("identity.oauth-server.client-delete"))
+		if protocol.ManagedClients.DynamicRegistration != nil {
+			operations = append(operations, registrationOperation())
+		}
 	}
 	if c.ClientSecretRotation {
 		operations = append(operations, operation("identity.oauth-server.client-rotate-secret"))

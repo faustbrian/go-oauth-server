@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add explicit `DeviceCompositionMigrationSource` for the selected populated
+  consent/workload/signing/consent-expiry/workload-exchange history. Two bounded
+  forward steps install and validate optional device state without changing
+  published SQL, existing tokens or typed authority. Pause writers for the
+  stored-column rewrite and complete validation before selecting device flow;
+  other histories are rejected rather than adopted automatically.
+
 - Canonicalize initial-token PostgreSQL timestamps to UTC before deriving
   registration command identity, and preserve classified storage outages and
   cancellation through registration/bootstrap readback. Invalid or consumed

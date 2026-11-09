@@ -132,20 +132,29 @@ func (p deviceConsumerPolicy) Decide(ctx context.Context, c authorization.Decisi
 
 func nativeDeviceFixture(t *testing.T, f *authenticatedPasswordFixture, configure ...func(*oauthpostgres.DeviceConfig)) (*device.Service, *oauth.Service) {
 	t.Helper()
+	return nativeDeviceFixtureWithHistory(t, f, nil, configure...)
+}
+
+func nativeDeviceFixtureWithHistory(t *testing.T, f *authenticatedPasswordFixture, selected migrations.Source, configure ...func(*oauthpostgres.DeviceConfig)) (*device.Service, *oauth.Service) {
+	t.Helper()
 	if !f.oauth.ConsentManagement {
 		enableConsentManagement(t, f)
 	}
-	f.oauth.Protocol.Clients[0].DeviceAuthorization = true
+	if selected == nil {
+		f.oauth.Protocol.Clients[0].DeviceAuthorization = true
+	}
 	clients := make(map[authorization.SubjectID]bool)
 	for _, client := range f.oauth.Protocol.Clients {
 		if client.DeviceAuthorization {
 			clients[authorization.SubjectID(client.ID)] = true
 		}
 	}
-	query, admission := *f.oauth.Coordinator.QueryPolicy, *f.oauth.Coordinator.AdmissionPolicy
-	query.Authorization = deviceConsumerPolicy{Service: query.Authorization, clients: clients}
-	admission.Authorization = deviceConsumerPolicy{Service: admission.Authorization, clients: clients}
-	f.oauth.Coordinator.QueryPolicy, f.oauth.Coordinator.AdmissionPolicy = &query, &admission
+	if selected == nil {
+		query, admission := *f.oauth.Coordinator.QueryPolicy, *f.oauth.Coordinator.AdmissionPolicy
+		query.Authorization = deviceConsumerPolicy{Service: query.Authorization, clients: clients}
+		admission.Authorization = deviceConsumerPolicy{Service: admission.Authorization, clients: clients}
+		f.oauth.Coordinator.QueryPolicy, f.oauth.Coordinator.AdmissionPolicy = &query, &admission
+	}
 	var base migrations.Source = oauthpostgres.ConsentMigrationSource{Base: oauthpostgres.MigrationSource{Schema: "oauth_store", Version: 7000}, Schema: "oauth_store", Version: 7002}
 	if f.oauth.Protocol.ManagedClients != nil {
 		base = oauthpostgres.ClientMigrationSource{Base: base, Schema: "oauth_store", Version: 7003}
@@ -160,7 +169,10 @@ func nativeDeviceFixture(t *testing.T, f *authenticatedPasswordFixture, configur
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner, err := migrations.NewRunner(oauthpostgres.DeviceMigrationSource{Base: base, Schema: "oauth_store", Version: 7020}, backend)
+	if selected == nil {
+		selected = oauthpostgres.DeviceMigrationSource{Base: base, Schema: "oauth_store", Version: 7020}
+	}
+	runner, err := migrations.NewRunner(selected, backend)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -487,7 +499,12 @@ func TestNativeDeviceApprovalRequiresExplicitComparisonOriginAndRealCSRF(t *test
 
 func issueNativeDevice(t *testing.T, f authenticatedPasswordFixture, d *device.Service) (device.Authorization, string) {
 	t.Helper()
-	issued, err := d.Authorize(f.ctx, device.DeviceRequest{ClientID: "public-web", Scopes: []string{"identity:read"}, Network: "192.0.2.1"})
+	return issueNativeDeviceForClient(t, f, d, "public-web")
+}
+
+func issueNativeDeviceForClient(t *testing.T, f authenticatedPasswordFixture, d *device.Service, client string) (device.Authorization, string) {
+	t.Helper()
+	issued, err := d.Authorize(f.ctx, device.DeviceRequest{ClientID: client, Scopes: []string{"identity:read"}, Network: "192.0.2.1"})
 	if err != nil || issued.Completion.Outcome != identity.CommitOutcomeCommitted || issued.Completion.CommandID == "" || issued.UserCode == "" {
 		t.Fatalf("actual registered device issuance failed: error=%v outcome=%v replay=%t command_present=%t user_code_present=%t", err, issued.Completion.Outcome, issued.Completion.Replayed, issued.Completion.CommandID != "", issued.UserCode != "")
 	}

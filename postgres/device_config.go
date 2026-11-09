@@ -17,8 +17,9 @@ import (
 // DeviceConfig explicitly selects optional storage and independent versioned
 // device lookup keys. Retain old versions while any live/terminal recovery row
 // uses them. Keys are borrowed immutable opaque values; input slices are copied.
-// Install DeviceMigrationSource and the existing rate-limit owner's migration
-// before enabling. No constructor performs IO, migration or background work.
+// Install the selected DeviceMigrationSource or DeviceCompositionMigrationSource
+// and the existing rate-limit owner's migration before enabling. No constructor
+// performs IO, migration or background work.
 type DeviceConfig struct {
 	Policy                 oauth.DevicePolicy
 	LookupKeys             []oauth.TokenDigestKey
@@ -67,10 +68,11 @@ func validDevicePolicy(p oauth.DevicePolicy, issuer string) bool {
 
 // DeviceStore selects the unbound, OAuth-only recent-password-human device
 // profile. Ordinary NewStore/NewService remain device-free. Core consent
-// management is required; workload/OIDC device variants are explicitly denied,
-// never implemented by fake redirect/code exchanges or downgraded MFA sessions.
+// management is required. Other workload/OIDC consumers may share the store;
+// each device request still excludes workload subjects, pairwise registration
+// and OIDC scopes. No fake redirect/code exchange or MFA downgrade is provided.
 func (s *Store) DeviceStore(c DeviceConfig) (*DeviceStore, error) {
-	if s == nil || !s.config.ConsentManagement || len(s.config.Protocol.OIDCScopes.Scopes()) != 0 || workloadSelected(s.config.Protocol.Clients) || !validDevicePolicy(c.Policy, s.config.Protocol.Issuer.String()) || len(c.LookupKeys) < 1 || len(c.LookupKeys) > 4 {
+	if s == nil || !s.config.ConsentManagement || !validDevicePolicy(c.Policy, s.config.Protocol.Issuer.String()) || len(c.LookupKeys) < 1 || len(c.LookupKeys) > 4 {
 		return nil, oauth.ErrInvalidRequest
 	}
 	if p := s.config.Protocol.ManagedClients; p != nil && p.TenantID != c.Policy.TenantID {

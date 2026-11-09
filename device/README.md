@@ -57,8 +57,12 @@ requests rather than silently renewing or reinterpreting them.
 
 Install the existing shared rate-limit migration and append native
 `DeviceMigrationSource` after the ordinary OAuth/consent history before enabling
-writers. This first forward history does not support existing workload or
-silent-OIDC artifact histories. Stop writers, install the forward history,
+writers. That original forward history does not support existing workload or
+silent-OIDC artifact histories. For the separately supported populated
+workload/OIDC/exchange history, use the explicit
+[`DeviceCompositionMigrationSource` profile](../postgres/README.md#populated-workloadoidcexchange-coexistence)
+instead; never edit or replay the old device SQL against that history.
+Stop writers, install the complete selected forward history,
 replace unaware writers, then activate the selected capability. Do not roll
 back to unaware writers after activation. No constructor migrates or starts a
 background worker. See the [native adapter](../postgres/README.md).

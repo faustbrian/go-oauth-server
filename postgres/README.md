@@ -966,7 +966,9 @@ native integration consumer, not a mandatory production module.
 Before selecting this profile, install the existing rate-limit owner migration
 and append `DeviceMigrationSource` after ordinary OAuth/consent history. This
 first forward history excludes installed workload and silent-OIDC artifact
-variants. Stop writers for the schema change, replace unaware writers before
+variants; the separate explicit coexistence profile below supports one complete
+populated history without changing that original migration. Stop writers for
+the schema change, replace unaware writers before
 activation, and retain the original shared coordinator/recovery and lookup-key
 versions. There is no down migration or automatic background cleanup. Device
 expiry and terminal recovery records must not be deleted while original
@@ -978,3 +980,82 @@ authentication remain independent of actual reviewing-session/CSRF admission.
 The native owner retains the original approved human source separately from
 the polling client actor and fences current authority before the sole atomic
 root-owned token winner. A complete verification URI is not approval.
+
+### Populated workload/OIDC/exchange coexistence
+
+`DeviceCompositionMigrationSource` selects a distinct immutable forward profile
+for a database whose exact installed OAuth history is, in order:
+
+1. `MigrationSource`;
+2. `ConsentMigrationSource`;
+3. `WorkloadMigrationSource`;
+4. `SigningMigrationSource`;
+5. `ConsentExpiryMigrationSource`;
+6. `WorkloadExchangeMigrationSource`.
+
+Preserve every original version, schema and SQL checksum in `Base`. Reserve two
+unused successor versions for `Version` and `Version+1`, then pass the source to
+the existing migration runner in the **same OAuth history namespace**:
+
+```go
+selected := oauthpostgres.DeviceCompositionMigrationSource{
+    Base: installedOAuthHistory, Schema: "oauth_store", Version: nextVersion,
+}
+```
+
+The source verifies that exact canonical prefix before returning history; it
+does not recognize databases by inspecting or adopting existing tables. Missing,
+modified, reordered, unknown-extra and already-device histories are rejected.
+Other orders and managed/pairwise/logout/human-delegation combinations are not
+selected by this finite profile. Ordinary OAuth bootstrap is unchanged and
+does not require any device history or child module. Do not wrap an already
+installed original `DeviceMigrationSource` or rewrite published SQL to convert
+between profiles.
+
+Use a distinct OAuth-only registered device client alongside the OIDC and
+workload clients. The device client's entire registered scope catalog must be
+OAuth-only: polling authenticates it without accepting a scope override. This
+composition does not add OIDC-device issuance or workload device grants.
+
+**Rollout:** pause OAuth writers, take a backup, and install both successor
+steps before constructing/activating the device owner. The first creates empty
+device tables and their indexes, adds device columns, and replaces only the
+typed artifact parent constraint with the strict union of ordinary interaction,
+workload root, silent-code and device access/refresh roots. Delegated workload
+children still require parents; device markers cannot relabel workload or
+silent-code rows. Existing grant, tenant, subject, consent, typed-root and
+exchange-shape constraints stay installed. No existing row is backfilled with
+device authority, no token is rotated, and no new identity/session owner is
+introduced.
+
+Adding the stored generated origin column rewrites the populated artifacts
+table and rebuilds its indexes under `ACCESS EXCLUSIVE`; reserve table/index/WAL
+headroom and a read/write-blocking maintenance window. This is not an online or
+large-table zero-downtime claim. Each transactional step sets `lock_timeout=1s`
+and `statement_timeout=5s`; failure rolls back that step rather than waiting
+indefinitely. A table too large for that bounded window requires a separately
+planned rollout, not removing the timeouts. New checks and the device-origin FK
+are installed `NOT VALID` while enforcing new writes. The second transaction
+validates them under PostgreSQL's validation locks and scans the original table;
+it must finish before capability selection. The new-table indexes cannot block
+existing writers. No data backfill or query-performance change is included.
+
+A failed installation leaves no partial tables/columns; after resolving the
+reported obstruction, rerun the same source. If installation committed but
+validation failed, keep device operations disabled and rerun to resume the
+original validation step. Replaying a completed source does no work and retains
+all predecessor checksums. Replace unaware binaries before enabling device
+operations. To withdraw device capability, stop selecting the device owner;
+retain its schema, terminal state and original recovery custody. No down
+migration or rollback to pre-coexistence writers is supported after activation.
+
+The native consumer
+`TestNativeDeviceCompositionPopulatedWorkloadSilentExchangeHistory` populates
+real password/session, explicit OIDC/S256, silent-code, Basic workload and
+restricted-exchange authority before upgrading. It then uses genuine session
+inspection, explicit user-code/origin/CSRF approval, device polling, resource
+access and refresh, while retaining old token authority. Companion cases cover
+strict root/tenant/subject rejection, bounded installation-lock rollback and
+replay, consent withdrawal, and lost-COMMIT metadata-only recovery. These are
+native public-API checks, not HTTP/reference integration or full device/unit
+release qualification.

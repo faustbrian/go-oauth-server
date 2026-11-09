@@ -72,6 +72,7 @@ There is no HTTP registration in this root module.
 
 | Operation | Public method | Typed input and outcome |
 | --- | --- | --- |
+| `identity.oauth-server.dynamic-register` | `Service.DynamicRegister(context.Context, DynamicRegisterRequest) (DynamicRegisterResult, error)` with optional `DynamicRegistrar` | Explicit finite public/none code+refresh metadata, exact configured owner/tenant and expiring native initial bearer custody. No browser or caller-selected command identity. Atomic one-use registration yields a managed no-secret client; recovery is native historical metadata only. |
 | `identity.oauth-server.authorize` | `Service.Authorize(context.Context, AuthorizeRequest) (AuthorizeResult, error)` | Exact code/S256 request, tenant, borrowed original browser-session bearer and trusted network attribution. Genuine native session admission yields login-required or opaque consent-required interaction; no caller-supplied user/actor/owner override. |
 | `identity.oauth-server.continue` | `Service.Continue(context.Context, ContinueRequest) (AuthorizeResult, error)` | Original continuation, same current browser/session, explicit issuer origin, synchronizer, consent decision and non-expanding scopes. Committed success yields one bound code response; denial redirects only to the originally validated exact target/state. |
 | `identity.oauth-server.token` | `Service.Token(context.Context, TokenRequest) (TokenResult, error)` | Closed code/refresh web variant or explicitly configured Basic-only workload `client_credentials`; trusted transport network attribution is supplied after parsing. Code binds issuer/environment/client/exact redirect/S256/resource/user/scopes. Refresh narrows authority and rotates; reused parents revoke the family. Workload access binds only its trusted startup tenant/service account/resource/scope ceiling and never yields refresh. Unknown/replay results disclose no fresh token. |
@@ -82,6 +83,42 @@ There is no HTTP registration in this root module.
 | `identity.oauth-server.consent-delete` | `Service.ConsentDelete(context.Context, ConsentDeleteRequest) (ConsentDeleteResult, error)` | Exact own consent/version, fresh current password session, issuer Origin and same-browser CSRF. Atomic consent-root withdrawal returns Deleted plus original Completion metadata, not unbounded grant IDs or bearer material. |
 | `identity.oauth-server.consent-update` | `Service.ConsentUpdate(context.Context, ConsentUpdateRequest) (ConsentUpdateResult, error)` with optional `ConsentUpdater` | Exact own consent/version/client/version/resource, original fresh password session, issuer Origin, same-browser CSRF and native request key. Only a nonempty strict approved-scope subset may advance the same root's version/generation. Updated plus Completion contains no credential. |
 | `identity.oauth-server.discovery-oauth` | `Service.DiscoveryOauth(context.Context, DiscoveryOauthRequest) (DiscoveryOauthResult, error)` | Public read-only OAuth metadata when explicitly selected; no request-supplied issuer, host, client, tenant or capability override. |
+
+### Optional native RFC7591 public registration
+
+Set `ManagedClientPolicy.PublicClients=true` and separately select
+`ManagedClientPolicy.DynamicRegistration` with an exact
+`Audience=Issuer.String()+"/oauth2/register"`, positive immutable `Version` and
+unique `AllowedScopes` contained in the managed OAuth scope ceiling. Nil keeps
+registration disabled. Validated configuration owns copies of the profile and
+scope slices. Matching native storage and its forward history are required;
+configuration alone does not authorize or provision a token.
+
+`DynamicRegisterRequest` selects `Public=true`, method `none`, precisely
+`authorization_code` plus `refresh_token`, response `code`, exact allowed HTTPS
+redirects, a nonempty unique scope subset, a 1..256-byte printable ASCII display
+name and bounded trusted network attribution. The initial token is canonical
+opaque 32-byte bearer custody. Every field is validated before consuming any
+token. Redirects and scopes retain the existing core's collection/byte ceilings.
+The configured owner/tenant is never supplied or overridden by the registrant.
+`Public=false` retains its confidential meaning, but confidential **dynamic**
+registration is unselected and denied; ordinary confidential `ClientCreate`
+continues unchanged.
+
+The caller supplies no command ID, manager session, CSRF token or
+`Idempotency-Key`. The native owner derives a stable command from authenticated
+initial custody, immutable policy and canonical metadata. Network attribution
+does not change that identity. Single use means a consumed token cannot create
+another client or resurrect a deleted one, even with identical input.
+Original recovery returns only `Completion`; it does not project a current
+client, issue credentials or replay effects. See the
+[native provisioning and recovery contract](../postgres/README.md#optional-native-rfc7591-public-registration).
+
+This is a finite native API consumer, not complete RFC7591 transport/conformance
+or whole-platform qualification. No HTTP route or registration discovery value is
+registered by these libraries. Full HTTP/reference and confidential registration
+remain later profiles. RFC7592 registration access tokens, management URIs and
+read/update/delete endpoints remain entirely unselected.
 
 ### Optional authorization-server discovery
 

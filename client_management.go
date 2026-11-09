@@ -37,6 +37,9 @@ type ManagedClientPolicy struct {
 	// Zero retains confidential-only management; native storage needs its
 	// separately installed forward history before selecting this capability.
 	PublicClients bool `json:",omitempty"`
+	// DynamicRegistration selects the finite native RFC7591 public-client
+	// profile. Nil retains manager-only creation and advertises no registration.
+	DynamicRegistration *DynamicRegistrationPolicy `json:",omitempty"`
 	// PublicOIDC separately permits openid-only managed public browser clients
 	// with the existing default public subject. It requires PublicClients and
 	// configured OIDCScopes containing openid. Creation, private reads,
@@ -115,6 +118,13 @@ func (p ManagedClientPolicy) validated(c Config) (ManagedClientPolicy, error) {
 	p.PairwiseRegistrations = slices.Clone(p.PairwiseRegistrations)
 	p.PublicPairwiseRegistrations = slices.Clone(p.PublicPairwiseRegistrations)
 	p.Redirects = slices.Clone(redirects.targets)
+	if p.DynamicRegistration != nil {
+		profile, err := p.DynamicRegistration.validated(p, c.Issuer)
+		if err != nil {
+			return ManagedClientPolicy{}, err
+		}
+		p.DynamicRegistration = &profile
+	}
 	if len(p.PostLogoutRedirects) != 0 {
 		logout, err := NewRedirectPolicy(p.PostLogoutRedirects)
 		if err != nil {

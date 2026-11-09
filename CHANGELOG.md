@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add opt-in native RFC7591 public-client registration through
+  `Service.DynamicRegister`, separate from human manager creation. Matching
+  native storage must authenticate expiring owner/audience/version-bound initial
+  custody and consume it atomically with one no-secret managed client. Protocol
+  commands are server-owned and require no Idempotency-Key. Confidential DCR,
+  HTTP/reference composition and every RFC7592 management surface remain later
+  profiles; existing `Public=false` confidential management is unchanged.
+
 - Expose bounded `Service.AuthenticateClient` for authenticated-client transport
   policy before durable token/revocation effects. It uses the existing static
   verifier or current managed registry and returns no reusable authority;

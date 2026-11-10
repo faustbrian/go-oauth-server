@@ -96,7 +96,7 @@ func workloadOperation(name string) identity.FeatureOperation {
 }
 func (p *phase) operation(name string) identity.FeatureOperation {
 	if name == dynamicRegistrationOperation {
-		return registrationOperation()
+		return p.registrationOperation()
 	}
 	if deviceOperationName(name) {
 		return deviceOperation(name)
@@ -120,7 +120,7 @@ func (p *phase) FeatureOperations() []identity.FeatureOperation {
 	if p.store != nil && p.store.config.Protocol.ManagedClients != nil {
 		operations = append(operations, operation("identity.oauth-server.client-create"), operation("identity.oauth-server.client-delete"))
 		if p.store.registrationSelected() {
-			operations = append(operations, registrationOperation())
+			operations = append(operations, registrationOperations(p.store.config.Protocol.ManagedClients)...)
 		}
 	}
 	if p.store != nil && p.store.config.ClientSecretRotation {

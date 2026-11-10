@@ -340,7 +340,53 @@ func TestNativeDynamicRegistrationExpiryAcrossActualCustodyLockWait(t *testing.T
 }
 
 func TestNativeDynamicRegistrationInterruptedBeforeRetainedPreparationRecoversOriginal(t *testing.T) {
-	f, original, request := nativeRegistrationFixture(t)
+	testNativeDynamicRegistrationInterruptedBeforeRetainedPreparationRecoversOriginal(t, false)
+}
+
+func TestNativeConfidentialDynamicRegistrationInterruptedBeforeRetainedPreparationRecoversOriginal(t *testing.T) {
+	testNativeDynamicRegistrationInterruptedBeforeRetainedPreparationRecoversOriginal(t, true)
+}
+
+func TestNativeConfidentialDynamicRegistrationCanceledCommittedDeliveryWithholdsSecret(t *testing.T) {
+	f, original, request := nativeRegistrationClassFixture(t, true)
+	ctx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	var committed atomic.Bool
+	trace := &registrationQueryTrace{
+		end: func(_ context.Context, sql string, err error) {
+			if err != nil || !strings.EqualFold(sql, "commit") {
+				return
+			}
+			// Protected Work uses raw extended protocol, outside QueryTracer.
+			// Observe its actual committed row from the independent fixture pool
+			// only after COMMIT, when no protected lock remains held.
+			var count int
+			if err := f.pool.Raw().QueryRow(f.ctx, `SELECT count(*) FROM oauth_store.managed_clients`).Scan(&count); err == nil && count == 1 && committed.CompareAndSwap(false, true) {
+				cancel()
+			}
+		},
+	}
+	pool := registrationTestPool(t, f, nil, trace)
+	store, err := oauthpostgres.NewStore(pool, f.oauth, f.keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lost, err := store.DynamicRegister(ctx, request)
+	if !committed.Load() {
+		t.Fatal("actual final COMMIT cancellation seam missed")
+	}
+	if !errors.Is(err, context.Canceled) || lost.Client.ID != "" || lost.ClientSecret != (oauth.Token{}) {
+		t.Fatal("canceled direct-store delivery disclosed client or secret", err)
+	}
+	recovered, err := original.RecoverDynamicRegistration(f.ctx, request)
+	if err != nil || recovered.Completion.CommandID != lost.Completion.CommandID || recovered.Completion.Outcome != identity.CommitOutcomeCommitted || recovered.ClientSecret != (oauth.Token{}) {
+		t.Fatal("canceled committed delivery lost original metadata-only recovery", err)
+	}
+	requireRegistrationCounts(t, f, 1, 1)
+}
+
+func testNativeDynamicRegistrationInterruptedBeforeRetainedPreparationRecoversOriginal(t *testing.T, confidential bool) {
+	f, original, request := nativeRegistrationClassFixture(t, confidential)
 	ctx, cancel := context.WithCancel(f.ctx)
 	defer cancel()
 	var hit atomic.Bool

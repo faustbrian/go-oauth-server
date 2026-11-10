@@ -30,6 +30,27 @@ func registrationOperation() identity.FeatureOperation {
 	return identity.FeatureOperation{Owner: "oauth-server", OperationID: dynamicRegistrationOperation, SchemaID: dynamicRegistrationOperation + ".native-public-v1", SchemaVersion: 1, RecordRequirement: identity.FeatureRecordRequired, SubjectRequirement: identity.FeatureSubjectAnonymousFlow}
 }
 
+func confidentialRegistrationOperation() identity.FeatureOperation {
+	op := registrationOperation()
+	op.SchemaID = dynamicRegistrationOperation + ".native-confidential-v1"
+	return op
+}
+
+func (p *phase) registrationOperation() identity.FeatureOperation {
+	if !p.client.Public {
+		return confidentialRegistrationOperation()
+	}
+	return registrationOperation()
+}
+
+func registrationOperations(p *oauth.ManagedClientPolicy) []identity.FeatureOperation {
+	ops := []identity.FeatureOperation{registrationOperation()}
+	if p.DynamicRegistration.ConfidentialClients {
+		ops = append(ops, confidentialRegistrationOperation())
+	}
+	return ops
+}
+
 func (s *Store) registrationSelected() bool {
 	return s.config.Protocol.ManagedClients != nil && s.config.Protocol.ManagedClients.DynamicRegistration != nil && s.config.PublicClients
 }
@@ -123,21 +144,28 @@ func (s *Store) registrationToken(ctx context.Context, wire string) (registratio
 // select the identity. The existing keyed intent domain keeps raw tokens out of
 // command IDs, journal fields, audit records and encrypted command preparation.
 func (s *Store) registrationPhase(r oauth.DynamicRegisterRequest, token registrationMutation) (*phase, error) {
+	// Preserve the original public metadata bytes and intent domain so an
+	// additive confidential profile cannot reinterpret retained public custody.
 	metadata, err := json.Marshal(struct {
 		Redirects, Scopes []string
 		Name              string
-	}{r.RedirectURIs, r.Scopes, r.ClientName})
+		Confidential      bool `json:",omitempty"`
+	}{r.RedirectURIs, r.Scopes, r.ClientName, !r.Public})
 	if err != nil {
 		return nil, oauth.ErrInvalidRequest
 	}
 	defer clear(metadata)
-	intent := s.intent("oauth-public-rfc7591-v1", string(token.Digest[:]), string(token.Policy[:]), string(metadata), token.CreatedAt.Format(time.RFC3339Nano), token.ExpiresAt.Format(time.RFC3339Nano))
+	domain := "oauth-public-rfc7591-v1"
+	if !r.Public {
+		domain = "oauth-confidential-rfc7591-v1"
+	}
+	intent := s.intent(domain, string(token.Digest[:]), string(token.Policy[:]), string(metadata), token.CreatedAt.Format(time.RFC3339Nano), token.ExpiresAt.Format(time.RFC3339Nano))
 	id, err := identity.ParseCommandID(base64.RawURLEncoding.EncodeToString(intent[:16]))
 	if err != nil {
 		return nil, oauth.ErrInvalidRequest
 	}
 	p := s.config.Protocol.ManagedClients
-	client := oauth.Client{ID: oauth.ManagedClientPrefix + string(id), Owner: p.Owner, Version: 1, Public: true, Resource: s.config.Protocol.Resource, AuthenticationMethod: "none", Redirects: slices.Clone(r.RedirectURIs), Scopes: slices.Clone(r.Scopes)}
+	client := oauth.Client{ID: oauth.ManagedClientPrefix + string(id), Owner: p.Owner, Version: 1, Public: r.Public, Resource: s.config.Protocol.Resource, AuthenticationMethod: r.AuthenticationMethod, Redirects: slices.Clone(r.RedirectURIs), Scopes: slices.Clone(r.Scopes)}
 	token.ClientName = r.ClientName
 	change := &clientMutation{Client: client, Policy: s.managementPolicy(), DynamicRegistration: &token}
 	if s.config.ClientMetadataUpdates {
@@ -184,11 +212,20 @@ func (s *Store) DynamicRegister(ctx context.Context, r oauth.DynamicRegisterRequ
 	out.Completion = oauth.Completion{CommandID: p.input.Binding.CommandID, Outcome: identity.CommitOutcomeUnknown}
 	result, err := p.execute(ctx)
 	out.Completion.Outcome, out.Completion.Replayed = result.Outcome, p.observedHistory && !p.applied
+	if ctx.Err() != nil {
+		return out, ctx.Err()
+	}
 	if err != nil {
 		return out, publicError(ctx, err, oauth.ErrAccessDenied)
 	}
 	if result.Outcome == identity.CommitOutcomeCommitted && p.applied {
 		out.Client, out.ClientName = p.client, r.ClientName
+		if !r.Public {
+			out.ClientSecret, err = oauth.ParseToken(p.output.ClientSecret)
+			if err != nil {
+				return oauth.DynamicRegisterResult{Completion: out.Completion}, oauth.ErrUnavailable
+			}
+		}
 	}
 	return out, nil
 }
@@ -251,7 +288,7 @@ func (s *Store) RecoverDynamicRegistration(ctx context.Context, r oauth.DynamicR
 }
 
 func (p *phase) checkRegistrationToken(ctx context.Context, w kernel.Work, final bool) error {
-	if !p.registering() || !p.store.registrationSelected() || p.input.Transition != createManagedClient || !p.client.Public || p.input.Binding.OperationID != dynamicRegistrationOperation {
+	if !p.registering() || !p.store.registrationSelected() || p.input.Transition != createManagedClient || p.input.Binding.OperationID != dynamicRegistrationOperation {
 		return identity.ForbiddenError{}
 	}
 	r := p.input.ClientChange.DynamicRegistration
@@ -260,6 +297,9 @@ func (p *phase) checkRegistrationToken(ctx context.Context, w kernel.Work, final
 	}
 	policy := p.store.config.Protocol.ManagedClients
 	profile := policy.DynamicRegistration
+	if !p.client.Public && !profile.ConfidentialClients {
+		return identity.ForbiddenError{}
+	}
 	rows, err := w.Query(ctx, `SELECT created_at,expires_at,COALESCE(consumed_command,''),COALESCE(client_id,'') FROM `+p.store.schema+`.initial_registration_tokens WHERE digest=$1 AND policy_digest=$2 AND issuer=$3 AND environment=$4 AND platform_owner=$5 AND tenant_id=$6 AND audience=$7 AND policy_version=$8::numeric FOR UPDATE`, r.Digest[:], r.Policy[:], p.store.config.Protocol.Issuer.String(), p.store.config.Protocol.Environment, policy.Owner.PlatformID(), string(policy.TenantID), profile.Audience, strconv.FormatUint(profile.Version, 10))
 	if err != nil {
 		return err

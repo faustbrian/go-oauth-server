@@ -708,7 +708,7 @@ func (p *phase) bind(id identity.CommandID, operation, record string) {
 		p.input.Binding.AnonymousFlowID = string(id)
 		p.input.Binding.ActorID = identity.ActorID(p.store.config.Protocol.ManagedClients.Owner.PlatformID())
 		p.input.Binding.ActorKind = authorization.SubjectServiceAccount
-		p.input.Binding.SchemaID = registrationOperation().SchemaID
+		p.input.Binding.SchemaID = p.registrationOperation().SchemaID
 	}
 	p.deviceBinding()
 }

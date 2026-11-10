@@ -220,7 +220,37 @@ with a root/Postgres-only `go.work` is not clean public-consumer evidence.
 Matching published dependency pins, ordinary checks, targeted race/fault proof,
 independent review and parent integration remain separate obligations. This
 profile adds no HTTP/reference route, registration discovery advertisement,
-confidential DCR, OIDC/device extension or RFC7592 token/URI/management endpoint.
+OIDC/device extension or RFC7592 token/URI/management endpoint.
+
+### Optional confidential Basic registration
+
+Additionally set `Protocol.ManagedClients.DynamicRegistration.ConfidentialClients`
+to true and provision fresh initial-token custody under that immutable policy.
+Both existing public-client flags and the installed registration/public-aware
+history remain required. Submit `Public=false` and method `client_secret_basic`
+with the same browser metadata. The ordinary managed writer generates a random
+secret and stores its client/generation-bound digest in `managed_clients`.
+The existing protected coordinator preparation retains encrypted output only
+for its original atomic work; registration adds no plaintext secret column,
+reveal endpoint, secret journal or replacement coordinator.
+
+The fresh known committed result delivers `ClientSecret` once. Consumed-token
+retries, unknown outcomes and `RecoverDynamicRegistration` never disclose it.
+Existing Basic authentication and genuine consent/code/S256 protect issuance
+after restart; normal owner management deletes the client. Public registration
+remains secretless when confidential registration is selected or disabled.
+
+Confidential commands use the distinct exact
+`identity.oauth-server.dynamic-register.native-confidential-v1` declaration.
+Deploy matching identity-kernel support for interrupted-before-output recovery
+before enabling this profile; do not reinterpret the public declaration.
+Original custody and immutable metadata bind the class, so changing public to
+confidential or vice versa cannot recover or restart the original command.
+Use `TestNativeConfidentialDynamicRegistrationBasicCodeS256AndRevealOnce`,
+the confidential contention/COMMIT-fault subtests and
+`TestNativeConfidentialDynamicRegistrationInterruptedBeforeRetainedPreparationRecoversOriginal`
+as focused native regression coverage; these are not whole-program or transport
+conformance qualification.
 
 ## Optional minimal managed public OIDC
 

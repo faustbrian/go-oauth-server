@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Support explicitly selected confidential Basic RFC7591 registration through
+  the existing managed-client digest and reveal-once custody. Initial-token
+  consumption and client creation remain one protected Work. The distinct
+  confidential declaration requires matching kernel recovery support; roll out
+  aware binaries and provision policy-bound custody before enabling. Public
+  registration and unknown/replayed/recovered secret suppression are unchanged.
+  Canceled direct-store delivery withholds client/secret output after commit
+  while retaining the original completion for metadata-only recovery. No new
+  migration, management endpoint or outcome journal is added.
+
 - Add explicit `DeviceCompositionMigrationSource` for the selected populated
   consent/workload/signing/consent-expiry/workload-exchange history. Two bounded
   forward steps install and validate optional device state without changing

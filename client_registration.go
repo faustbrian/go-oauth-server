@@ -5,18 +5,24 @@ import (
 	"fmt"
 	"slices"
 	"unicode/utf8"
+
+	identity "github.com/faustbrian/go-identity"
 )
 
-// DynamicRegistrationPolicy selects RFC7591 public browser registration under
+// DynamicRegistrationPolicy selects RFC7591 browser registration under
 // the containing ManagedClientPolicy's exact immutable platform owner/tenant.
 // Audience is the exact issuer + /oauth2/register; Version identifies this
 // immutable admission policy. Changing either requires new native initial-token
 // provisioning. AllowedScopes is a nonempty unique subset of the managed OAuth
-// scope ceiling. No OIDC, device, confidential DCR or RFC7592 profile is selected.
+// scope ceiling. Confidential Basic registration requires ConfidentialClients.
+// No OIDC, device or RFC7592 profile is selected.
 type DynamicRegistrationPolicy struct {
 	Audience      string
 	Version       uint64
 	AllowedScopes []string
+	// ConfidentialClients additionally selects Basic-authenticated browser
+	// registration. Zero preserves the original no-secret public-only profile.
+	ConfidentialClients bool `json:",omitempty"`
 }
 
 func (p DynamicRegistrationPolicy) validated(managed ManagedClientPolicy, issuer Issuer) (DynamicRegistrationPolicy, error) {
@@ -35,8 +41,9 @@ func (p DynamicRegistrationPolicy) validated(managed ManagedClientPolicy, issuer
 // bearer custody. It needs no browser session, CSRF, client-selected command ID
 // or Idempotency-Key. The native owner derives protocol-command identity from
 // authenticated custody and immutable input. Public=false means confidential,
-// a valid but unselected class, not an absent Boolean. This finite profile
-// selects authorization_code + refresh_token, response code, and method none.
+// a valid separately selected class, not an absent Boolean. This finite profile
+// selects authorization_code + refresh_token, response code, and either public
+// method none or explicitly enabled confidential client_secret_basic.
 // InitialAccessToken must be canonical opaque 32-byte custody. Network is trusted
 // bounded transport attribution. Secret-bearing input cannot be serialized.
 type DynamicRegisterRequest struct {
@@ -55,8 +62,10 @@ func (DynamicRegisterRequest) Format(f fmt.State, _ rune) {
 func (DynamicRegisterRequest) MarshalJSON() ([]byte, error) { return nil, ErrInvalidRequest }
 func (DynamicRegisterRequest) MarshalText() ([]byte, error) { return nil, ErrInvalidRequest }
 
-// DynamicRegisterResult exposes a managed public client and original command
-// completion, never a public client secret or RFC7592 management URI/token.
+// DynamicRegisterResult exposes a managed client and original command completion.
+// Only a newly committed confidential registration delivers ClientSecret once;
+// public, replayed, unknown and recovered outcomes never deliver a secret.
+// No RFC7592 management URI/token is selected.
 // ClientName is the accepted bounded display metadata. Recovery is historical
 // metadata only and cannot establish that the client is still active.
 type DynamicRegisterResult struct {
@@ -94,10 +103,14 @@ func ValidateDynamicRegisterRequest(r DynamicRegisterRequest, p ManagedClientPol
 	if _, err := ParseToken(r.InitialAccessToken); err != nil {
 		return DynamicRegisterRequest{}, ErrAccessDenied
 	}
-	if !r.Public {
+	if !r.Public && !profile.ConfidentialClients {
 		return DynamicRegisterRequest{}, ErrAccessDenied
 	}
-	if r.AuthenticationMethod != "none" || len(r.GrantTypes) != 2 || !slices.Contains(r.GrantTypes, "authorization_code") || !slices.Contains(r.GrantTypes, "refresh_token") || len(r.ResponseTypes) != 1 || r.ResponseTypes[0] != "code" || !visible(r.Network, 128) || !visible(r.ClientName, 256) || !utf8.ValidString(r.ClientName) {
+	wantMethod := "client_secret_basic"
+	if r.Public {
+		wantMethod = "none"
+	}
+	if r.AuthenticationMethod != wantMethod || len(r.GrantTypes) != 2 || !slices.Contains(r.GrantTypes, "authorization_code") || !slices.Contains(r.GrantTypes, "refresh_token") || len(r.ResponseTypes) != 1 || r.ResponseTypes[0] != "code" || !visible(r.Network, 128) || !visible(r.ClientName, 256) || !utf8.ValidString(r.ClientName) {
 		return DynamicRegisterRequest{}, ErrInvalidRequest
 	}
 	redirects, err := NewRedirectPolicy(r.RedirectURIs)
@@ -143,7 +156,9 @@ func (s *Service) DynamicRegister(ctx context.Context, r DynamicRegisterRequest)
 		return out, ErrAccessDenied
 	}
 	out, err = registrar.DynamicRegister(ctx, r)
-	out.ClientSecret = Token{}
+	if r.Public || out.Completion.Replayed || out.Completion.Outcome != identity.CommitOutcomeCommitted {
+		out.ClientSecret = Token{}
+	}
 	if ctx.Err() != nil {
 		return DynamicRegisterResult{Completion: out.Completion}, ctx.Err()
 	}

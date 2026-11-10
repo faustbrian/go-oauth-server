@@ -37,8 +37,9 @@ type ManagedClientPolicy struct {
 	// Zero retains confidential-only management; native storage needs its
 	// separately installed forward history before selecting this capability.
 	PublicClients bool `json:",omitempty"`
-	// DynamicRegistration selects the finite native RFC7591 public-client
-	// profile. Nil retains manager-only creation and advertises no registration.
+	// DynamicRegistration selects finite native RFC7591 browser registration;
+	// confidential Basic requires its separate explicit selection. Nil retains
+	// manager-only creation and advertises no registration.
 	DynamicRegistration *DynamicRegistrationPolicy `json:",omitempty"`
 	// PublicOIDC separately permits openid-only managed public browser clients
 	// with the existing default public subject. It requires PublicClients and

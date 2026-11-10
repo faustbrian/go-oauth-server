@@ -75,3 +75,32 @@ func TestDynamicRegistrationMetadataIsAtomicAndPublicOnly(t *testing.T) {
 		t.Fatal("disabled registration admitted")
 	}
 }
+
+func TestDynamicRegistrationConfidentialBasicRequiresExplicitSelection(t *testing.T) {
+	_, _, now, _ := coreSessionFixture(t)
+	c := coreConfig(t, now)
+	owner, _ := oauth.NewPlatformOwner("platform")
+	p := oauth.ManagedClientPolicy{Owner: owner, TenantID: "tenant", Redirects: []string{"https://client.example/cb"}, Scopes: c.Scopes, PublicClients: true,
+		DynamicRegistration: &oauth.DynamicRegistrationPolicy{Audience: c.Issuer.String() + "/oauth2/register", Version: 1, AllowedScopes: []string{"identity:read"}},
+	}
+	r := registrationRequest()
+	r.Public, r.AuthenticationMethod = false, "client_secret_basic"
+	if _, err := oauth.ValidateDynamicRegisterRequest(r, p, c.Issuer); !errors.Is(err, oauth.ErrAccessDenied) {
+		t.Fatal("unselected confidential registration admitted", err)
+	}
+	p.DynamicRegistration.ConfidentialClients = true
+	accepted, err := oauth.ValidateDynamicRegisterRequest(r, p, c.Issuer)
+	if err != nil || accepted.Public || accepted.AuthenticationMethod != "client_secret_basic" {
+		t.Fatal("explicit confidential Basic registration denied", err)
+	}
+	for _, public := range []bool{false, true} {
+		for _, method := range []string{"none", "client_secret_basic", "client_secret_post", "private_key_jwt"} {
+			r.Public, r.AuthenticationMethod = public, method
+			_, err := oauth.ValidateDynamicRegisterRequest(r, p, c.Issuer)
+			allowed := public && method == "none" || !public && method == "client_secret_basic"
+			if (err == nil) != allowed {
+				t.Fatalf("class public=%v method=%q admitted=%v", public, method, err == nil)
+			}
+		}
+	}
+}

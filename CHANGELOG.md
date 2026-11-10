@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add explicit `DynamicRegistrationPolicy.ConfidentialClients` selection for
+  native RFC7591 Basic browser clients. `Public=false` now admits that selected
+  class and delivers one secret only on fresh known commitment; public behavior,
+  default confidential denial and metadata-only original recovery remain intact.
+  Matching native/kernel support and newly provisioned policy-bound initial
+  custody are required. HTTP/reference and RFC7592 remain unselected.
+
 - Add opt-in native RFC7591 public-client registration through
   `Service.DynamicRegister`, separate from human manager creation. Matching
   native storage must authenticate expiring owner/audience/version-bound initial

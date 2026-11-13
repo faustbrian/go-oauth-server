@@ -71,7 +71,7 @@ func (s updatingClientStore) UpdateClient(ctx context.Context, e oauth.ClientUpd
 }
 
 func TestClientUpdateCompleteReplacementOriginalCustodyAndImmutableCeilings(t *testing.T) {
-	for _, mode := range []string{"replace", "empty-redirects", "empty-scopes", "expanded-redirect", "expanded-scope", "duplicate-scope", "public", "static", "zero-version", "overflow", "missing-csrf", "embedded-edit", "foreign-owner", "expired", "backward", "cancel", "unavailable", "conflict", "wrong-result-version", "wrong-result-scope", "unknown"} {
+	for _, mode := range []string{"replace", "public-selected", "wrong-result-class", "empty-redirects", "empty-scopes", "expanded-redirect", "expanded-scope", "duplicate-scope", "public", "static", "zero-version", "overflow", "missing-csrf", "embedded-edit", "foreign-owner", "expired", "backward", "cancel", "unavailable", "conflict", "wrong-result-version", "wrong-result-scope", "unknown"} {
 		t.Run(mode, func(t *testing.T) {
 			sessions, bearer, now, _ := coreSessionFixture(t)
 			c := coreConfig(t, now)
@@ -94,6 +94,9 @@ func TestClientUpdateCompleteReplacementOriginalCustodyAndImmutableCeilings(t *t
 			case "duplicate-scope":
 				r.Scopes = []string{"identity:read", "identity:read"}
 			case "public":
+				r.Management.Public = true
+			case "public-selected", "wrong-result-class":
+				c.ManagedClients.PublicClients = true
 				r.Management.Public = true
 			case "static":
 				r.Management.ClientID = "static"
@@ -123,6 +126,10 @@ func TestClientUpdateCompleteReplacementOriginalCustodyAndImmutableCeilings(t *t
 					t.Fatal("update aliases caller collections")
 				}
 				out := oauth.ClientUpdateResult{Client: oauth.Client{ID: e.Request.Management.ClientID, Owner: owner, Version: 8, Resource: c.Resource, AuthenticationMethod: "client_secret_basic", Redirects: slices.Clone(e.Request.Redirects), Scopes: slices.Clone(e.Request.Scopes)}, Completion: oauth.Completion{Outcome: identity.CommitOutcomeCommitted}}
+				if e.Request.Management.Public && mode != "wrong-result-class" {
+					out.Client.Public = true
+					out.Client.AuthenticationMethod = "none"
+				}
 				switch mode {
 				case "expired":
 					clock = now.Add(20 * time.Second)
@@ -156,7 +163,7 @@ func TestClientUpdateCompleteReplacementOriginalCustodyAndImmutableCeilings(t *t
 				}
 				return
 			}
-			if mode == "replace" {
+			if mode == "replace" || mode == "public-selected" {
 				if err != nil || !called || out.Client.Version != 8 {
 					t.Fatal("valid metadata replacement denied", err)
 				}

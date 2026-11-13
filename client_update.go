@@ -12,8 +12,10 @@ import (
 )
 
 // ClientUpdateRequest borrows existing sensitive management custody for an exact
-// current managed confidential-human client/version. Redirects and Scopes are
-// complete replacements within immutable configured ceilings, not merge patches.
+// current managed OAuth browser client/version. Management.Public is the expected
+// immutable class: false selects confidential Basic, true requires PublicClients
+// and selects public none. It never requests a class conversion. Redirects and
+// Scopes are complete replacements within immutable ceilings, not merge patches.
 // ID, owner, resource, authentication method and secret generations cannot change.
 // Every committed replacement advances authority and invalidates old consent and
 // grants; unchanged Basic custody requires new explicit authorization afterward.
@@ -66,11 +68,20 @@ type ClientUpdater interface {
 // Management registration edits are forbidden; neither validation nor configured
 // owner selection authenticates a manager.
 func ValidateClientUpdateRequest(r ClientUpdateRequest, p ManagedClientPolicy, issuer Issuer) (ClientUpdateRequest, error) {
+	if r.Management.Public && !p.PublicClients {
+		return ClientUpdateRequest{}, ErrAccessDenied
+	}
+	// Delete-shaped custody validates ID/version and forbids embedded edits.
+	// Public is an update-only class precondition, not a deletion registration edit.
+	public := r.Management.Public
+	management := r.Management
+	management.Public = false
 	var err error
-	r.Management, err = ValidateClientManagementRequest(r.Management, true, p, issuer)
+	r.Management, err = ValidateClientManagementRequest(management, true, p, issuer)
 	if err != nil {
 		return ClientUpdateRequest{}, err
 	}
+	r.Management.Public = public
 	// Managed OIDC metadata replacement is a separate, unselected profile.
 	// A creation selector must not expand this operation's OAuth-only ceiling.
 	if hasExtensionScope(r.Scopes) {
@@ -94,7 +105,8 @@ func ValidateClientUpdateRequest(r ClientUpdateRequest, p ManagedClientPolicy, i
 
 // ClientUpdate atomically replaces only redirects/scopes of one exact managed
 // registration. Existing fresh-session, origin/CSRF and keyed native management
-// authority remain mandatory. Static/public/workload/OIDC variants are unselected.
+// authority remain mandatory. Public clients retain none authentication and no
+// secret custody. Static/workload/OIDC variants are unselected.
 func (s *Service) ClientUpdate(ctx context.Context, r ClientUpdateRequest) (out ClientUpdateResult, err error) {
 	defer func() {
 		if recover() != nil {
@@ -159,7 +171,7 @@ func (s *Service) ClientUpdate(ctx context.Context, r ClientUpdateRequest) (out 
 		return ClientUpdateResult{Completion: out.Completion}, nil
 	}
 	client, err := s.selectedClientReadProjection(out.Client)
-	if err != nil || client.ID != r.Management.ClientID || client.Version != r.Management.Version+1 || !slices.Equal(client.Redirects, r.Redirects) || !slices.Equal(client.PostLogoutRedirects, r.PostLogoutRedirects) || !slices.Equal(client.Scopes, r.Scopes) {
+	if err != nil || client.ID != r.Management.ClientID || client.Version != r.Management.Version+1 || client.Public != r.Management.Public || !slices.Equal(client.Redirects, r.Redirects) || !slices.Equal(client.PostLogoutRedirects, r.PostLogoutRedirects) || !slices.Equal(client.Scopes, r.Scopes) {
 		return ClientUpdateResult{Completion: out.Completion}, ErrAccessDenied
 	}
 	out.Client = client

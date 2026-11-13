@@ -217,6 +217,8 @@ type CurrentClientRegistry interface {
 // without a secret; Public=false selects Basic confidential custody. Delete accepts only ID/version
 // and no registration edits. Owner/tenant are exact preconditions, not overrides.
 // RequestKey is correlation only and never authenticates a manager.
+// When embedded in ClientUpdateRequest, Public instead names the expected
+// immutable registration class; the update never changes that class.
 type ClientManagementRequest struct {
 	Owner               Owner
 	TenantID            identity.TenantID

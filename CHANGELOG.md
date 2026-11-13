@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Support owner-authorized exact-version metadata replacement for managed
+  public OAuth browser clients through the existing `ClientUpdate` API.
+  `Management.Public` names the expected immutable class and requires selected
+  public-client support; it never converts client authentication or issues a
+  secret. Existing confidential semantics and RFC7592 exclusion remain unchanged.
+
 - Add explicit `DynamicRegistrationPolicy.ConfidentialClients` selection for
   native RFC7591 Basic browser clients. `Public=false` now admits that selected
   class and delivers one secret only on fresh known commitment; public behavior,

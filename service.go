@@ -437,6 +437,8 @@ type IntrospectionCommand struct {
 // IntrospectResult is normal successful inactive metadata or current active
 // disclosure. Every metadata member must be absent for Active=false. This is
 // not resource-server authorization or renewable source validity evidence.
+// Active Subject may be absent (for example, an organization integration must
+// not manufacture a USER identity); a present subject must be a valid ID.
 type IntrospectResult struct {
 	Active                      bool
 	ClientID, Subject, Resource string
@@ -879,7 +881,8 @@ func (s *Service) Introspect(ctx context.Context, request IntrospectRequest) (ou
 	}
 	scopes, err := validatedScopes(out.Scopes)
 	now := s.config.Clock.Now()
-	if err != nil || !scopeSubset(scopes, client.Scopes) || out.ClientID != client.ID || !identifier(out.Subject) || out.Resource != client.Resource || out.Issuer != s.config.Issuer || !now.Before(out.ExpiresAt) || out.ExpiresAt.After(now.Add(s.config.RefreshTTL)) || out.ExpiresAt.Year() > 9999 {
+	subjectValid := out.Subject == "" || identifier(out.Subject)
+	if err != nil || !scopeSubset(scopes, client.Scopes) || out.ClientID != client.ID || !subjectValid || out.Resource != client.Resource || out.Issuer != s.config.Issuer || !now.Before(out.ExpiresAt) || out.ExpiresAt.After(now.Add(s.config.RefreshTTL)) || out.ExpiresAt.Year() > 9999 {
 		return IntrospectResult{}, ErrUnavailable
 	}
 	out.Scopes = scopes

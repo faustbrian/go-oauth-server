@@ -133,7 +133,7 @@ func TestIntrospectionRejectsPublicMissingReadersAndInvalidAdapterDisclosure(t *
 				case "client":
 					out.ClientID = "foreign"
 				case "subject":
-					out.Subject = ""
+					out.Subject = "\x00"
 				case "resource":
 					out.Resource = "https://foreign.example"
 				case "issuer":

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add an explicitly selected modern organization-key resource verification
+  contract with typed owner/API-key actor/caller/root-parent metadata and an
+  opaque principal retaining original scope and freshness. Existing USER public
+  shapes remain unchanged. Introspection may omit `sub` for an organization
+  token without inventing a USER; malformed nonempty subjects remain invalid.
+
 - Add an explicit legacy SHA-256 USER-key source selection and additive
   `ParseAPIKeyExchangeForm` parser for unchanged 1..4096-byte historical bare
   credentials. Other fields, Basic-only channels and default modern parsing/

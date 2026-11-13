@@ -13,6 +13,13 @@ Modern remains the default. The key actor, USER subject and Basic caller stay di
 matching native source composition, forward history and explicit bootstrap are
 required. No HTTP, organization or JWT profile is selected.
 
+The separate [organization API-key profile](docs/organization-api-key-exchange.md)
+selects one fixed organization and modern native source through additive native
+constructors. Its typed `OrganizationResourceVerifier` admits actual opaque
+access while keeping organization owner, API-key actor and Basic caller distinct.
+Creator removal does not revoke integration authority; current root/parent/owner
+withdrawal does. Existing USER configuration/principal shapes stay unchanged.
+
 The optional [restricted workload exchange profile](docs/workload-exchange.md)
 uses the standard RFC 8693 grant at `Service.Token`. It is distinct from private
 session exchange and does not enable customer, API-key or organization delegation.
@@ -83,6 +90,11 @@ replacement authentication engine.
   Its opaque result's `RequireScope` checks the demanded OAuth scope and original
   deadline before a selected resource read; it is not business authorization or
   an RFC7662 `Active` wrapper. Use the matching native `NewResourceVerifier`.
+- `OrganizationResourceVerifier.Verify` separately admits opaque modern-key
+  organization access under exact trusted tenant/organization/client/resource
+  bindings. Its typed read-only principal retains the original scope/freshness;
+  `RequireScope` is not application business policy. Organization introspection
+  metadata omits `sub` rather than inventing a USER.
 - `Service.ConsentGet/List/Delete` use genuine current own-session custody.
   Deletion additionally requires recent original authentication, issuer origin
   and same-browser CSRF; native consent-root withdrawal denies associated
@@ -284,8 +296,8 @@ profile is unbound OAuth-only issuance reviewed by a recent authenticated
 password human. It provides no device UI or HTTP/reference routes and does not
 by itself establish complete device milestone qualification.
 
-Client administration, OIDC, organization delegation, API-key exchange and
-general resource-server policy and positive-cache composition remain
+Beyond the explicitly documented opt-in profiles, general organization
+delegation, resource-server policy and positive-cache composition remain
 unsupported. The separately selected [direct access-only resource profile](docs/selected-resource-profile.md)
 adds no transport, JWT or remote introspection endpoint. No vendor authorization
 engine is embedded.

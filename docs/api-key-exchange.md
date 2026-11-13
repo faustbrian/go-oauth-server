@@ -107,4 +107,5 @@ discard original correlation or authorize a new verification attempt.
 Committed access custody can also recover its original first-command metadata.
 Derived-command recovery uses the actual original parent access token. Recovery
 does not reserve, generate, debit, issue, reveal credentials or renew timestamps;
-only the existing coordinator determines commitment or proven noncommitment.
+only the existing coordinator determines whether the command committed or
+is proven not to have committed.

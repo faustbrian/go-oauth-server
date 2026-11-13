@@ -3,6 +3,23 @@
 Experimental persistence and public service composition for the
 [selected authorization-code profile](../docs/selected-profile.md).
 
+## Optional modern USER API-key exchange
+
+Select the [finite API-key profile](../docs/api-key-exchange.md) with the real
+native API-key Service on the same primary database and one trusted modern,
+uncached unlimited-quota configuration. Issuer, environment and source audience
+must exactly match OAuth; the USER owner, key actor and Basic caller remain
+distinct. Install all seven `APIKeyExchangeMigrationSource` successor steps
+before source/client bootstrap and runtime opt-in. Plain OAuth history suffices;
+workload/device capabilities are not mandatory or implicitly enabled.
+
+First access retains its real key root without fake OAuth/session ancestry;
+later access points to real OAuth parents. Current source Work fences and native
+introspection enforce root withdrawal, non-expanding scopes and bounded original
+freshness. Initial unknown recovery uses the original nonsecret verification
+handle with real Basic custody and the existing source/coordinator owners,
+never a raw retained key, renewed principal, credential redelivery or new journal.
+
 ## Optional managed workload clients
 
 The existing native `NewService` can register a confidential machine through

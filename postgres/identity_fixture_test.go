@@ -538,7 +538,7 @@ func passwordFixtureWithSignupRecovery(t *testing.T, change bool, profileSchema 
 	phoneSessionKey := material("session-token")
 	t.Cleanup(func() { clear(phoneCandidate); clear(phoneSessionKey) })
 	return authenticatedPasswordFixture{ctx: ctx, pool: pool, tenant: baselineTenant, browser: browser, csrf: csrf, sessions: sessions, keys: keys, oauth: config, signOut: signOut, changePassword: changePassword, signInAgain: signInAgain, anotherUser: anotherUser,
-		phoneInput: &nativePhoneInput{signin: graph.signin, signup: graph.signup, hibp: graph.hibp, keys: phoneKeys, password: phoneCandidate, sessionKey: phoneSessionKey}}
+		phoneInput: &nativePhoneInput{signin: graph.signin, signup: graph.signup, hibp: graph.hibp, keys: phoneKeys, identifier: address, password: phoneCandidate, sessionKey: phoneSessionKey}}
 }
 
 func logPasswordFixtureObservation(t *testing.T, o signupFixtureObservationValue) {

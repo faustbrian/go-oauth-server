@@ -65,6 +65,19 @@ func (p *phase) mutateOAuth(ctx context.Context, w kernel.Work) error {
 		if err := p.bindSubject(ctx, w); err != nil {
 			return err
 		}
+	} else if i.Transition == createAPIKeyGrant {
+		keySource, err := json.Marshal(g.APIKeySource)
+		if err != nil {
+			return identity.UnavailableError{}
+		}
+		defer clear(keySource)
+		n, err := w.Exec(ctx, `INSERT INTO `+s+`.grants(grant_id,tenant_id,user_id,client_id,client_version,client_fingerprint,source_session,scopes,resource,state,created_at,expires_at,version,api_key_source,api_key_only) VALUES($1,$2,$3,$4,$5::numeric,$6,'[]'::jsonb,$7::jsonb,$8,'active',$9,$10,1,$11::jsonb,true)`, g.ID, string(g.Tenant), string(g.User), g.ClientID, strconv.FormatUint(g.ClientVersion, 10), g.ClientFingerprint[:], string(scopes), g.Resource, g.CreatedAt, g.ExpiresAt, string(keySource))
+		if err != nil {
+			return err
+		}
+		if n != 1 {
+			return identity.ConflictError{}
+		}
 	} else if i.Transition == createWorkload {
 		workload, err := json.Marshal(g.Workload)
 		if err != nil {
@@ -181,7 +194,7 @@ func (p *phase) mutateOAuth(ctx context.Context, w kernel.Work) error {
 			return err
 		}
 	}
-	payload, err := json.Marshal(artifactPayload{Schema: 1, Request: i.Request, Scopes: i.Scopes, Subject: p.output.Subject, SigningKeyID: p.output.SigningKeyID, Exchange: i.Exchange, HumanExchange: i.HumanExchange, HumanRefresh: i.HumanRefresh})
+	payload, err := json.Marshal(artifactPayload{Schema: 1, Request: i.Request, Scopes: i.Scopes, Subject: p.output.Subject, SigningKeyID: p.output.SigningKeyID, Exchange: i.Exchange, HumanExchange: i.HumanExchange, HumanRefresh: i.HumanRefresh, APIKeyExchange: i.APIKeyExchange})
 	if err != nil {
 		return identity.UnavailableError{}
 	}
@@ -207,6 +220,11 @@ func (p *phase) mutateOAuth(ctx context.Context, w kernel.Work) error {
 			columns += ",human_code_exchange"
 			values += ",$" + strconv.Itoa(len(args)+1)
 			args = append(args, true)
+		}
+		if g.APIKeySource != nil {
+			columns += ",api_key_only,api_key_root"
+			values += ",$" + strconv.Itoa(len(args)+1) + ",$" + strconv.Itoa(len(args)+2)
+			args = append(args, true, i.Transition == createAPIKeyGrant)
 		}
 		if i.SilentConsent != nil {
 			// A silent code is a genuine grant root, not a fabricated consumed

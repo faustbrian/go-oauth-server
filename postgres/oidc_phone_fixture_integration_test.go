@@ -37,6 +37,7 @@ type nativePhoneInput struct {
 	signup               passwordpg.SignupConfig
 	hibp                 *hibp.Client
 	keys                 *keyring.Provider
+	identifier           string
 	password, sessionKey []byte
 }
 

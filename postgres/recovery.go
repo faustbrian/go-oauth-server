@@ -8,6 +8,7 @@ import (
 
 	auth "github.com/faustbrian/go-authentication/v2"
 	identity "github.com/faustbrian/go-identity"
+	"github.com/faustbrian/go-identity/apikey"
 	"github.com/faustbrian/go-identity/session"
 	sessionpg "github.com/faustbrian/go-identity/session/postgres"
 	oauth "github.com/faustbrian/go-oauth-server"
@@ -39,6 +40,10 @@ type RecoveryRequest struct {
 	// empty for other variants and conveys no authority without exact original
 	// current browser, tenant/client and authenticated retained preparation.
 	ConsentID string
+	// APIKeyVerification is only the nonsecret exact handle disclosed by
+	// APIKeyExchangeUnknownError. It selects initial key exchange with Token
+	// empty; no caller-supplied owner is trusted before native reconciliation.
+	APIKeyVerification *apikey.VerificationReconcileQuery
 }
 
 // Format redacts original bearer custody and correlated command scope.
@@ -119,6 +124,9 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 	}()
 	authenticationContinuation := false
 	if request.OperationID != "identity.oauth-server.consent-delete" && request.OperationID != "identity.oauth-server.consent-update" && request.ConsentID != "" {
+		return out, oauth.ErrInvalidRequest
+	}
+	if request.APIKeyVerification != nil && (request.OperationID != "identity.oauth-server.token" || !s.apiKeyExchangeSelected(client) || request.Token != "") {
 		return out, oauth.ErrInvalidRequest
 	}
 	switch request.OperationID {
@@ -208,6 +216,13 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 		if request.TenantID != "" || request.Session.Token() != "" {
 			return out, oauth.ErrInvalidRequest
 		}
+		if request.OperationID == "identity.oauth-server.token" && s.apiKeyExchangeSelected(client) && request.Token == "" {
+			p, err = s.initialAPIKeyRecoveryPhase(ctx, client, request)
+			if err != nil {
+				return out, err
+			}
+			break
+		}
 		if request.OperationID == "identity.oauth-server.token" && client.Workload != nil && request.Token == "" {
 			p = &phase{store: s, client: client, input: phaseInput{Schema: 1, Configuration: s.identity, Transition: createWorkload, Grant: grantRecord{ID: string(request.CommandID), Tenant: client.Workload.TenantID(), Source: []identity.FeatureField{}, Workload: &workloadSource{ID: client.Workload.ID(), Platform: client.Owner.PlatformID(), GlobalAuthorityID: s.config.WorkloadAuthority.GlobalAuthorityID, PolicyNamespace: s.config.WorkloadAuthority.PolicyNamespace}}, Intent: s.intent("client_credentials", string(request.CommandID))}}
 			p.bind(request.CommandID, request.OperationID, string(request.CommandID))
@@ -222,6 +237,9 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 		}
 		if request.OperationID == "identity.oauth-server.token" && s.humanExchangeSelected(client) {
 			kinds = append(kinds, oauth.TokenAccess)
+		}
+		if request.OperationID == "identity.oauth-server.token" && s.apiKeyExchangeSelected(client) {
+			kinds = []oauth.TokenKind{oauth.TokenAccess}
 		}
 		if request.OperationID == "identity.oauth-server.revoke" {
 			kinds = []oauth.TokenKind{oauth.TokenAccess, oauth.TokenRefresh}
@@ -247,7 +265,7 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 				return out, publicError(ctx, err, oauth.ErrAccessDenied)
 			}
 		}
-		if request.OperationID == "identity.oauth-server.token" && target.Kind == oauth.TokenAccess && target.Grant.Workload == nil {
+		if request.OperationID == "identity.oauth-server.token" && target.Kind == oauth.TokenAccess && target.Grant.Workload == nil && target.Grant.APIKeySource == nil {
 			if !s.humanExchangeSelected(client) {
 				return out, oauth.ErrAccessDenied
 			}
@@ -269,6 +287,17 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 				return out, publicError(ctx, err, oauth.ErrAccessDenied)
 			}
 		}
+		if request.OperationID == "identity.oauth-server.token" && target.Grant.APIKeySource != nil {
+			if !s.validAPIKeyGrant(target.Grant, client) {
+				return out, oauth.ErrAccessDenied
+			}
+			transition = exchangeAPIKeyAccess
+			if target.Grant.ID == string(request.CommandID) {
+				p = &phase{store: s, client: client, input: phaseInput{Schema: 1, Configuration: s.identity, Transition: createAPIKeyGrant, Grant: target.Grant, Intent: s.intent("recover")}, metadataRecovery: true}
+				p.bind(request.CommandID, request.OperationID, target.Grant.ID)
+				break
+			}
+		}
 		if request.OperationID == "identity.oauth-server.revoke" {
 			if request.CommandID != target.Replay {
 				return out, oauth.ErrAccessDenied
@@ -277,7 +306,7 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 			if target.Kind == oauth.TokenAccess {
 				transition = revokeAccess
 			}
-		} else if transition == exchangeWorkload || transition == exchangeHumanCode {
+		} else if transition == exchangeWorkload || transition == exchangeHumanCode || transition == exchangeAPIKeyAccess {
 			// The exact source/client binding and original intent are owned by
 			// encrypted coordinator preparation, not a source-lifetime command.
 		} else if request.CommandID == target.Replay {
@@ -292,6 +321,22 @@ func (s *Store) Recover(ctx context.Context, request RecoveryRequest) (out Recov
 	}
 	if err := s.coordinator(p); err != nil {
 		return out, err
+	}
+	if p.metadataRecovery && p.input.Transition == createAPIKeyGrant && p.input.Grant.APIKeySource != nil && p.input.Grant.APIKeySource.ConfigurationID == "" {
+		admission, err := p.coordinator.ObserveCommandAdmission(ctx, p.query(), p.caller())
+		if err != nil {
+			return out, publicError(ctx, err, oauth.ErrAccessDenied)
+		}
+		if admission.Validate() != nil {
+			return out, oauth.ErrUnavailable
+		}
+		if admission.Absent {
+			// Verification may have committed without OAuth ever being submitted.
+			// Only the sole coordinator can prove that original absence; no local
+			// result is manufactured from a source outcome or an elapsed deadline.
+			result, err := p.coordinator.RecoverFeatureCommand(ctx, p.query(), p.caller())
+			return RecoveryResult{Outcome: result.Outcome, CommandID: request.CommandID, RetryAfter: result.RetryAfter}, publicError(ctx, err, oauth.ErrAccessDenied)
+		}
 	}
 	if p.input.Transition == narrowConsent {
 		binding, wire, err := p.coordinator.QueryRequestPreparation(ctx, p.query(), p.caller(), p.registration(), p)

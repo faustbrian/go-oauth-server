@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add opt-in modern USER-key delegation through the actual native API-key
+  verifier, fresh primary observations and registered Work source fences.
+  Preserve key actor/USER subject/Basic caller separation, real key-root and
+  OAuth-parent lineage, narrower access-only authority, root revocation and
+  original metadata-only recovery. Install the seven forward API-key lineage
+  steps before bootstrap/activation; old history/rows remain intact and no
+  workload/device schema, fake session ancestry or new journal is required.
+
 - Support explicitly selected metadata replacement for existing confidential
   single-host pairwise and public profile/email/phone OIDC clients through the
   existing Work/CAS/recovery owner. Preserve pairwise registration/binding and

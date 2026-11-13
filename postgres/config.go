@@ -65,6 +65,10 @@ type Config struct {
 	// It must differ from session, workload principal and workload client policy
 	// namespaces: the public authority owner has no separate subject-kind key.
 	HumanCodeExchangeClientNamespace string
+	// APIKeyExchange borrows the actual primary key owner for the explicitly
+	// selected configured-Basic modern USER-key delegation profile. Nil leaves
+	// existing profiles and their schema requirements unchanged.
+	APIKeyExchange *APIKeyExchangeConfig
 	// ConsentManagement enables own-consent reads/withdrawal and mandatory
 	// consent-generation fences for every human token. Install the forward
 	// ConsentMigrationSource and retire all old/unselected serving instances
@@ -187,6 +191,18 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	} else if c.HumanCodeExchangeClientNamespace != "" {
 		return nil, oauth.ErrInvalidRequest
 	}
+	if protocol.APIKeyExchange != nil {
+		if c.APIKeyExchange == nil {
+			return nil, oauth.ErrInvalidRequest
+		}
+		owned, err := c.APIKeyExchange.validated(c, protocol)
+		if err != nil {
+			return nil, err
+		}
+		c.APIKeyExchange = &owned
+	} else if c.APIKeyExchange != nil {
+		return nil, oauth.ErrInvalidRequest
+	}
 	if c.ConsentNarrowing && !c.ConsentManagement {
 		return nil, oauth.ErrInvalidRequest
 	}
@@ -294,7 +310,7 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	if s.domain, err = kernel.NewRepository(pool, kernel.Config{MaximumDuration: protocol.MaximumDuration}); err != nil {
 		return nil, oauth.ErrInvalidRequest
 	}
-	if protocol.OwningClientIntrospection || protocol.HumanCodeExchange != nil || workloadSelected(protocol.Clients) || len(protocol.OIDCScopes.Scopes()) > 0 || protocol.ManagedClients != nil {
+	if protocol.OwningClientIntrospection || protocol.HumanCodeExchange != nil || protocol.APIKeyExchange != nil || workloadSelected(protocol.Clients) || len(protocol.OIDCScopes.Scopes()) > 0 || protocol.ManagedClients != nil {
 		if s.policy, err = authority.NewAuthorityStore(pool.Raw(), protocol.MaximumDuration); err != nil {
 			return nil, oauth.ErrInvalidRequest
 		}

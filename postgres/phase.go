@@ -18,6 +18,7 @@ import (
 	auth "github.com/faustbrian/go-authentication/v2"
 	"github.com/faustbrian/go-authorization/v3"
 	identity "github.com/faustbrian/go-identity"
+	"github.com/faustbrian/go-identity/apikey"
 	kernel "github.com/faustbrian/go-identity/postgres"
 	"github.com/faustbrian/go-identity/risk"
 	"github.com/faustbrian/go-identity/session"
@@ -79,6 +80,7 @@ type phase struct {
 	oidc              func(context.Context, oauth.OIDCClaimsInput) (oauth.OIDCClaimsProjection, error)
 	device            *DeviceStore
 	deviceCodes       *devicePreparation
+	apiKeyObservation *apikey.SourceAuthorityObservation
 }
 
 var _ kernel.FeaturePreparationContributor = (*phase)(nil)
@@ -94,6 +96,9 @@ func operation(name string) identity.FeatureOperation {
 func workloadOperation(name string) identity.FeatureOperation {
 	return identity.FeatureOperation{Owner: "oauth-server", OperationID: name, SchemaID: name + ".configured-workload-v1", SchemaVersion: 1, RecordRequirement: identity.FeatureRecordRequired, SubjectRequirement: identity.FeatureSubjectAnonymousFlow}
 }
+func apiKeyOperation(name string) identity.FeatureOperation {
+	return identity.FeatureOperation{Owner: "oauth-server", OperationID: name, SchemaID: name + ".user-api-key-v1", SchemaVersion: 1, RecordRequirement: identity.FeatureRecordRequired}
+}
 func (p *phase) operation(name string) identity.FeatureOperation {
 	if name == dynamicRegistrationOperation {
 		return p.registrationOperation()
@@ -107,10 +112,16 @@ func (p *phase) operation(name string) identity.FeatureOperation {
 	if p.input.Grant.Workload != nil {
 		return workloadOperation(name)
 	}
+	if p.input.Grant.APIKeySource != nil {
+		return apiKeyOperation(name)
+	}
 	return operation(name)
 }
 func (p *phase) FeatureOperations() []identity.FeatureOperation {
 	operations := []identity.FeatureOperation{operation("identity.oauth-server.authorize"), operation("identity.oauth-server.continue"), operation("identity.oauth-server.token"), operation("identity.oauth-server.revoke"), workloadOperation("identity.oauth-server.token"), workloadOperation("identity.oauth-server.revoke")}
+	if p.store != nil && p.store.config.Protocol.APIKeyExchange != nil {
+		operations = append(operations, apiKeyOperation("identity.oauth-server.token"), apiKeyOperation("identity.oauth-server.revoke"))
+	}
 	if p.store != nil && p.store.config.ConsentManagement {
 		operations = append(operations, operation("identity.oauth-server.consent-delete"))
 	}
@@ -161,7 +172,7 @@ func (p *phase) auditActions() []string {
 		return []string{"identity.oauth_server.update_client"}
 	case deleteConsent, narrowConsent:
 		return []string{"identity.oauth_server.revoke_consent"}
-	case createInteraction, createWorkload, exchangeWorkload, exchangeHumanCode:
+	case createInteraction, createWorkload, exchangeWorkload, exchangeHumanCode, createAPIKeyGrant, exchangeAPIKeyAccess:
 		return []string{"identity.oauth_server.authorize"}
 	case approveInteraction:
 		return []string{"identity.oauth_server.grant_consent", "identity.oauth_server.authorize"}
@@ -217,7 +228,7 @@ func (p *phase) lifecycle() kernel.LifecyclePlan {
 	case narrowConsent:
 		before = p.input.Narrowing.Version
 		event = "consent.scope_changed.v1"
-	case createInteraction, createWorkload:
+	case createInteraction, createWorkload, createAPIKeyGrant:
 		event = "grant.created.v1"
 	case approveInteraction:
 		event = "grant.authorized.v1"
@@ -231,7 +242,7 @@ func (p *phase) lifecycle() kernel.LifecyclePlan {
 	case revokeAccess:
 		before = 0
 		event = "oauth_access.revoked.v1"
-	case exchangeWorkload, exchangeHumanCode:
+	case exchangeWorkload, exchangeHumanCode, exchangeAPIKeyAccess:
 		before = 0
 		event = "oauth_access.exchanged.v1"
 	}
@@ -251,7 +262,7 @@ func (p *phase) subjectType() string {
 	if p.input.Transition == deleteConsent || p.input.Transition == narrowConsent {
 		return "oauth_consent"
 	}
-	if p.input.Transition == revokeAccess || p.exchanging() {
+	if p.input.Transition == revokeAccess || p.exchanging() && p.input.Transition != createAPIKeyGrant {
 		return "oauth_token"
 	}
 	return "oauth_grant"
@@ -360,7 +371,18 @@ func (p *phase) buildCommand() error {
 		if !p.store.validHumanExchangeLineage(i.HumanExchange, i.Grant, p.client) || i.ExchangeObservation == nil || i.TargetKind != oauth.TokenAccess || i.HumanExchange.ParentID != i.TargetID || i.Exchange != nil {
 			return oauth.ErrInvalidRequest
 		}
-	} else if i.Exchange != nil || i.HumanExchange != nil || i.ExchangeObservation != nil {
+	} else if i.Transition == createAPIKeyGrant || i.Transition == exchangeAPIKeyAccess {
+		if !p.store.validAPIKeyLineage(i.APIKeyExchange, i.Grant, p.client) || i.ExchangeObservation == nil || i.Exchange != nil || i.HumanExchange != nil || i.HumanRefresh != nil {
+			return oauth.ErrInvalidRequest
+		}
+		if i.Transition == createAPIKeyGrant {
+			if i.APIKeyExchange.Depth != 1 || i.TargetID != "" || i.Grant.Version != 0 {
+				return oauth.ErrInvalidRequest
+			}
+		} else if i.TargetKind != oauth.TokenAccess || i.APIKeyExchange.ParentID != i.TargetID || i.TargetPayload.APIKeyExchange == nil || i.APIKeyExchange.Depth != i.TargetPayload.APIKeyExchange.Depth+1 || !scopeSubset(i.Scopes, i.TargetPayload.Scopes) {
+			return oauth.ErrInvalidRequest
+		}
+	} else if i.Exchange != nil || i.HumanExchange != nil || i.ExchangeObservation != nil || i.APIKeyExchange != nil {
 		return oauth.ErrInvalidRequest
 	}
 	if i.Schema != 1 || i.Configuration != p.store.identity || b.ValidateFor(p.operation(b.OperationID)) != nil || i.Grant.Version == math.MaxUint64 || i.Grant.ClientFingerprint != clientFingerprint(p.client) || i.Grant.ClientID != p.client.ID || i.Intent == ([32]byte{}) || i.CreatedAt.IsZero() || i.CreatedAt.Nanosecond()%1000 != 0 || !scopeSubset(i.Scopes, i.Grant.Scopes) {
@@ -519,7 +541,7 @@ func (p *phase) buildCommand() error {
 		return err
 	}
 	actorKind := audit.ActorHuman
-	if i.Grant.Workload != nil || i.Device != nil && b.AnonymousFlowID != "" || p.registering() {
+	if i.Grant.Workload != nil || i.Grant.APIKeySource != nil || i.Device != nil && b.AnonymousFlowID != "" || p.registering() {
 		actorKind = audit.ActorService
 	}
 	seed, err := builder.Build(audit.RecordInput{OccurredAt: i.CreatedAt, Action: p.auditActions()[0], Outcome: audit.OutcomeSucceeded, Actor: audit.ActorInput{Kind: actorKind, ID: string(b.ActorID)}, Subject: audit.SubjectInput{Type: p.subjectType(), ID: b.RecordID}, Context: audit.ContextInput{TenantID: string(b.TenantID), CorrelationID: b.CorrelationID}, Policy: audit.PolicyMetadata{PolicyID: b.PolicyID, Version: strconv.FormatUint(b.PolicyVersion, 10)}, Changes: audit.ChangeSetInput{Redacted: true}, Attributes: map[string]string{"command.id": string(b.CommandID), "aggregate.type": p.subjectType(), "aggregate.id": b.RecordID, "aggregate.before_version": strconv.FormatUint(life.BeforeVersion, 10), "aggregate.after_version": strconv.FormatUint(life.AfterVersion, 10), "retention.class": "protected"}})
@@ -620,7 +642,7 @@ func (p *phase) issuing() bool {
 }
 
 func (p *phase) exchanging() bool {
-	return p.input.Transition == exchangeWorkload || p.input.Transition == exchangeHumanCode
+	return p.input.Transition == exchangeWorkload || p.input.Transition == exchangeHumanCode || p.input.Transition == createAPIKeyGrant || p.input.Transition == exchangeAPIKeyAccess
 }
 
 func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
@@ -649,6 +671,13 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 		if err := p.requireManagedClient(ctx, w); err != nil {
 			return err
 		}
+	}
+	if g.APIKeySource != nil {
+		if err := p.checkAPIKeySource(ctx, w); err != nil {
+			return err
+		}
+	} else if i.Transition == createAPIKeyGrant || i.Transition == exchangeAPIKeyAccess {
+		return identity.ForbiddenError{}
 	}
 	if g.Workload != nil {
 		if !p.store.validWorkload(g, p.client) || b.UserID != "" || b.AnonymousFlowID != g.ID || b.ActorKind != authorization.SubjectServiceAccount || string(b.ActorID) != g.Workload.ID {
@@ -756,31 +785,37 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 			}
 		}
 	}
-	if i.Transition == createInteraction || i.Transition == createWorkload {
+	if i.Transition == createInteraction || i.Transition == createWorkload || i.Transition == createAPIKeyGrant && !(final && p.applied) {
 		if i.SilentConsent != nil {
 			return p.checkSilentConsent(ctx, w)
 		}
 		return nil
 	}
-	if err := p.checkGrantConsent(ctx, w, final); err != nil {
-		return err
+	if g.APIKeySource == nil {
+		if err := p.checkGrantConsent(ctx, w, final); err != nil {
+			return err
+		}
 	}
 	workloadColumn := "NULL::jsonb"
 	if workloadProfileSelected(p.store.config.Protocol) {
 		workloadColumn = "workload_source"
 	}
-	rows, err := w.Query(ctx, `SELECT state,version::text,client_version::text,client_fingerprint,source_session,scopes,resource,expires_at,`+workloadColumn+` FROM `+p.store.schema+`.grants WHERE grant_id=$1 AND tenant_id=$2 AND COALESCE(user_id,'')=$3 AND client_id=$4 FOR UPDATE`, g.ID, string(g.Tenant), string(g.User), g.ClientID)
+	keyColumn := "NULL::jsonb"
+	if p.store.config.Protocol.APIKeyExchange != nil {
+		keyColumn = "api_key_source"
+	}
+	rows, err := w.Query(ctx, `SELECT state,version::text,client_version::text,client_fingerprint,source_session,scopes,resource,expires_at,`+workloadColumn+`,`+keyColumn+` FROM `+p.store.schema+`.grants WHERE grant_id=$1 AND tenant_id=$2 AND COALESCE(user_id,'')=$3 AND client_id=$4 FOR UPDATE`, g.ID, string(g.Tenant), string(g.User), g.ClientID)
 	if err != nil {
 		return err
 	}
 	var state, version, clientVersion, resource string
-	var fingerprint, source, scopes, workload []byte
+	var fingerprint, source, scopes, workload, keySource []byte
 	var expires time.Time
 	if !rows.Next() {
 		rows.Close()
 		return identity.ForbiddenError{}
 	}
-	err = rows.Scan(&state, &version, &clientVersion, &fingerprint, &source, &scopes, &resource, &expires, &workload)
+	err = rows.Scan(&state, &version, &clientVersion, &fingerprint, &source, &scopes, &resource, &expires, &workload, &keySource)
 	extra := rows.Next()
 	rowErr := rows.Err()
 	rows.Close()
@@ -788,6 +823,9 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 		return identity.UnavailableError{}
 	}
 	expectedVersion := g.Version
+	if i.Transition == createAPIKeyGrant && final && p.applied {
+		expectedVersion = 1
+	}
 	if final && p.applied && i.Transition != revokeAccess && !p.exchanging() {
 		expectedVersion++
 	}
@@ -810,6 +848,14 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 	} else if len(workload) > 0 {
 		return identity.ForbiddenError{}
 	}
+	if g.APIKeySource != nil {
+		var actual apiKeyGrantSource
+		if decodeJSON(keySource, &actual) != nil || !sameJSON(actual, *g.APIKeySource) {
+			return identity.ForbiddenError{}
+		}
+	} else if len(keySource) > 0 {
+		return identity.ForbiddenError{}
+	}
 	expectedScopes := g.Scopes
 	if final && p.applied && i.Transition == approveInteraction {
 		expectedScopes = i.Scopes
@@ -824,6 +870,9 @@ func (p *phase) check(ctx context.Context, w kernel.Work, final bool) error {
 	}
 	if state != expectedState {
 		return identity.ForbiddenError{}
+	}
+	if i.Transition == createAPIKeyGrant {
+		return nil
 	}
 	if err := p.checkTarget(ctx, w, now, final); err != nil {
 		return err
@@ -1039,7 +1088,7 @@ func (p *phase) GenerateFeaturePreparation(ctx context.Context, c identity.Comma
 		kinds = []oauth.TokenKind{oauth.TokenCode}
 	case exchangeCode, rotateRefresh:
 		kinds = []oauth.TokenKind{oauth.TokenAccess, oauth.TokenRefresh}
-	case createWorkload, exchangeWorkload, exchangeHumanCode:
+	case createWorkload, exchangeWorkload, exchangeHumanCode, createAPIKeyGrant, exchangeAPIKeyAccess:
 		kinds = []oauth.TokenKind{oauth.TokenAccess}
 	case pollDevice:
 		if i.Device != nil && i.Device.Condition == oauth.DeviceSucceeded {
@@ -1083,7 +1132,11 @@ func (p *phase) GenerateFeaturePreparation(ctx context.Context, c identity.Comma
 		case oauth.TokenAccess:
 			expires = minTime(expires, i.CreatedAt.Add(p.store.config.Protocol.AccessTTL))
 			if p.exchanging() {
-				expires = minTime(expires, i.TargetExpires)
+				// The first key-derived token has a real key root, not an OAuth
+				// artifact parent. Its source expiry is already the grant ceiling.
+				if i.Transition != createAPIKeyGrant {
+					expires = minTime(expires, i.TargetExpires)
+				}
 				expires = minTime(expires, i.CreatedAt.Add(5*time.Minute))
 			}
 		}
@@ -1202,7 +1255,7 @@ func (p *phase) restore(ctx context.Context, generation uint64, wire []byte, ini
 		if p.exchanging() {
 			targetKind = oauth.TokenAccess
 		}
-		if p.input.Transition != endSession && (out.Input.Target != p.input.Target || out.Input.TargetID != p.input.TargetID || out.Input.TargetKind != targetKind || !out.Input.TargetExpires.Equal(p.input.TargetExpires) || !sameJSON(out.Input.TargetPayload, p.input.TargetPayload)) {
+		if p.input.Transition != endSession && p.input.Transition != createAPIKeyGrant && (out.Input.Target != p.input.Target || out.Input.TargetID != p.input.TargetID || out.Input.TargetKind != targetKind || !out.Input.TargetExpires.Equal(p.input.TargetExpires) || !sameJSON(out.Input.TargetPayload, p.input.TargetPayload)) {
 			return identity.ForbiddenError{}
 		}
 	}
@@ -1210,6 +1263,24 @@ func (p *phase) restore(ctx context.Context, generation uint64, wire []byte, ini
 		return identity.ForbiddenError{}
 	}
 	if !initial && !sameJSON(out.Input, p.input) {
+		return identity.ForbiddenError{}
+	}
+	if out.Input.Grant.APIKeySource != nil {
+		matchingSource := sameJSON(out.Input.Grant.APIKeySource, p.input.Grant.APIKeySource)
+		if p.metadataRecovery && p.input.Transition == createAPIKeyGrant && p.input.Grant.APIKeySource != nil && p.input.Grant.APIKeySource.ConfigurationID == "" {
+			matchingSource = out.Input.Grant.APIKeySource.KeyID == p.input.Grant.APIKeySource.KeyID && out.Input.Grant.Tenant == p.input.Grant.Tenant && out.Input.Grant.User == p.input.Grant.User
+		}
+		if !p.store.validAPIKeyGrant(out.Input.Grant, p.client) || !matchingSource {
+			return identity.ForbiddenError{}
+		}
+		if out.Input.Transition == createAPIKeyGrant || out.Input.Transition == exchangeAPIKeyAccess {
+			if !p.store.validAPIKeyLineage(out.Input.APIKeyExchange, out.Input.Grant, p.client) {
+				return identity.ForbiddenError{}
+			}
+		} else if out.Input.APIKeyExchange != nil {
+			return identity.ForbiddenError{}
+		}
+	} else if p.input.Grant.APIKeySource != nil {
 		return identity.ForbiddenError{}
 	}
 	if out.Input.Grant.Workload != nil {
@@ -1225,7 +1296,7 @@ func (p *phase) restore(ctx context.Context, generation uint64, wire []byte, ini
 	}
 	want := 0
 	switch out.Input.Transition {
-	case createInteraction, approveInteraction, createWorkload, exchangeWorkload, exchangeHumanCode:
+	case createInteraction, approveInteraction, createWorkload, exchangeWorkload, exchangeHumanCode, createAPIKeyGrant, exchangeAPIKeyAccess:
 		want = 1
 	case exchangeCode, rotateRefresh:
 		want = 2
@@ -1293,7 +1364,7 @@ func (p *phase) restore(ctx context.Context, generation uint64, wire []byte, ini
 		switch out.Input.Transition {
 		case approveInteraction:
 			expected = oauth.TokenCode
-		case createWorkload, exchangeWorkload, exchangeHumanCode:
+		case createWorkload, exchangeWorkload, exchangeHumanCode, createAPIKeyGrant, exchangeAPIKeyAccess:
 			expected = oauth.TokenAccess
 		case exchangeCode, rotateRefresh, pollDevice:
 			expected = oauth.TokenAccess

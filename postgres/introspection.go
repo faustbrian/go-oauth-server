@@ -81,6 +81,16 @@ func (s *Store) Introspect(ctx context.Context, c oauth.IntrospectionCommand) (o
 		if err == nil && s.config.Protocol.WorkloadExchange != nil {
 			err = s.readExchangeLineage(ctx, target, now)
 		}
+	} else if target.Grant.APIKeySource != nil {
+		observation, sourceErr := s.observeAPIKey(ctx, target.Grant, client)
+		err = sourceErr
+		credentialExpiry = target.Grant.APIKeySource.ExpiresAt
+		if err == nil && (!scopeSubset(scopes, observation.Grant) || !now.Before(observation.ValidUntil)) {
+			err = oauth.ErrInvalidGrant
+		}
+		if err == nil {
+			err = s.readAPIKeyLineage(ctx, target, client, now)
+		}
 	} else {
 		credentialExpiry, err = s.introspectionAuthority(ctx, target.Grant, now)
 		if err == nil {
@@ -101,8 +111,10 @@ func (s *Store) Introspect(ctx context.Context, c oauth.IntrospectionCommand) (o
 	if err != nil {
 		return out, err
 	}
-	if err := s.grantEndSessionFence(ctx, target.Grant); err != nil {
-		return out, introspectionError(ctx, err)
+	if target.Grant.APIKeySource == nil {
+		if err := s.grantEndSessionFence(ctx, target.Grant); err != nil {
+			return out, introspectionError(ctx, err)
+		}
 	}
 	finished := s.now()
 	if ctx.Err() != nil {
@@ -148,6 +160,28 @@ func (s *Store) Introspect(ctx context.Context, c oauth.IntrospectionCommand) (o
 			return out, err
 		}
 		if !activeIntrospectionArtifact(target, now) || !credentialExpiry.IsZero() && !now.Before(credentialExpiry) {
+			return out, nil
+		}
+		if finished := s.now(); finished.Before(start) || !finished.Before(start.Add(20*time.Second)) {
+			return out, oauth.ErrUnavailable
+		}
+	}
+	if target.Grant.APIKeySource != nil {
+		observation, err := s.observeAPIKey(ctx, target.Grant, client)
+		if err != nil {
+			return out, introspectionError(ctx, err)
+		}
+		if !scopeSubset(scopes, observation.Grant) {
+			return out, nil
+		}
+		if err := s.readAPIKeyLineage(ctx, target, client, now); err != nil {
+			return out, introspectionError(ctx, err)
+		}
+		now, err = s.introspectionTime(ctx)
+		if err != nil {
+			return out, err
+		}
+		if !activeIntrospectionArtifact(target, now) || !now.Before(observation.ValidUntil) {
 			return out, nil
 		}
 		if finished := s.now(); finished.Before(start) || !finished.Before(start.Add(20*time.Second)) {

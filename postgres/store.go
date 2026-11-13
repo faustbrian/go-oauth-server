@@ -52,6 +52,8 @@ const (
 	pollDevice
 	exchangeWorkload
 	exchangeHumanCode
+	createAPIKeyGrant
+	exchangeAPIKeyAccess
 )
 
 type grantRecord struct {
@@ -66,20 +68,22 @@ type grantRecord struct {
 	Scopes               []string
 	Resource             string
 	CreatedAt, ExpiresAt time.Time
-	Workload             *workloadSource `json:",omitempty"`
-	ConsentID            string          `json:",omitempty"`
-	ConsentGeneration    uint64          `json:",omitempty"`
-	Subject              *subjectBinding `json:",omitempty"`
+	Workload             *workloadSource    `json:",omitempty"`
+	ConsentID            string             `json:",omitempty"`
+	ConsentGeneration    uint64             `json:",omitempty"`
+	Subject              *subjectBinding    `json:",omitempty"`
+	APIKeySource         *apiKeyGrantSource `json:",omitempty"`
 }
 type artifactPayload struct {
-	Schema        uint32
-	Request       oauth.AuthorizationRequest
-	Scopes        []string
-	Subject       string                `json:",omitempty"`
-	SigningKeyID  string                `json:",omitempty"`
-	Exchange      *exchangeLineage      `json:",omitempty"`
-	HumanExchange *humanExchangeLineage `json:",omitempty"`
-	HumanRefresh  *humanRefreshIssuance `json:",omitempty"`
+	Schema         uint32
+	Request        oauth.AuthorizationRequest
+	Scopes         []string
+	Subject        string                 `json:",omitempty"`
+	SigningKeyID   string                 `json:",omitempty"`
+	Exchange       *exchangeLineage       `json:",omitempty"`
+	HumanExchange  *humanExchangeLineage  `json:",omitempty"`
+	HumanRefresh   *humanRefreshIssuance  `json:",omitempty"`
+	APIKeyExchange *apiKeyExchangeLineage `json:",omitempty"`
 }
 type artifactRecord struct {
 	ID                   string
@@ -94,6 +98,8 @@ type artifactRecord struct {
 	ParentID             string
 	ExchangeOnly         bool
 	HumanExchangeOnly    bool `json:",omitempty"`
+	APIKeyOnly           bool `json:",omitempty"`
+	APIKeyRoot           bool `json:",omitempty"`
 	MetadataVersion      uint64
 }
 type phaseInput struct {
@@ -129,6 +135,7 @@ type phaseInput struct {
 	HumanExchange               *humanExchangeLineage         `json:",omitempty"`
 	HumanRefresh                *humanRefreshIssuance         `json:",omitempty"`
 	ExchangeObservation         *exchangeObservation          `json:",omitempty"`
+	APIKeyExchange              *apiKeyExchangeLineage        `json:",omitempty"`
 }
 
 type consentMutation struct {
@@ -496,6 +503,10 @@ func (s *Store) Token(ctx context.Context, c oauth.TokenCommand) (out oauth.Toke
 		return oauth.TokenResult{}, oauth.ErrInvalidRequest
 	}
 	if r.GrantType == oauth.TokenExchangeGrant {
+		if client.APIKeyExchange {
+			out, executing, err = s.exchangeAPIKey(ctx, client, r, proof)
+			return out, err
+		}
 		if client.Workload == nil {
 			out, executing, err = s.exchangeHumanCode(ctx, client, r, proof)
 			return out, err
@@ -703,6 +714,11 @@ func (p *phase) bind(id identity.CommandID, operation, record string) {
 		p.input.Binding.ActorKind = authorization.SubjectServiceAccount
 		p.input.Binding.SchemaID = operation + ".configured-workload-v1"
 	}
+	if g.APIKeySource != nil {
+		p.input.Binding.ActorID = identity.ActorID(g.APIKeySource.KeyID)
+		p.input.Binding.ActorKind = authorization.SubjectAPIKey
+		p.input.Binding.SchemaID = apiKeyOperation(operation).SchemaID
+	}
 	if p.registering() {
 		p.input.Binding.UserID = ""
 		p.input.Binding.AnonymousFlowID = string(id)
@@ -723,7 +739,7 @@ func (p *phase) caller() authorization.DecisionContext {
 		// not a second workload resource alias (kernel CommandQueryPolicy).
 		return authorization.DecisionContext{PolicyRevision: authorization.Revision(b.PolicyVersion), CorrelationID: b.CorrelationID, Request: authorization.Request{Tenant: authorization.TenantID(b.TenantID), Subject: authorization.Subject{Kind: b.ActorKind, ID: authorization.SubjectID(b.ActorID)}, Action: authorization.Action(b.OperationID), Resource: authorization.Resource{Type: "identity.anonymous-flow", ID: authorization.ResourceID(b.AnonymousFlowID)}}}
 	}
-	return authorization.DecisionContext{PolicyRevision: authorization.Revision(b.PolicyVersion), CorrelationID: b.CorrelationID, Request: authorization.Request{Tenant: authorization.TenantID(b.TenantID), Subject: authorization.Subject{Kind: authorization.SubjectUser, ID: authorization.SubjectID(b.UserID)}, Action: authorization.Action(b.OperationID), Resource: authorization.Resource{Type: "identity.user", ID: authorization.ResourceID(b.UserID)}}}
+	return authorization.DecisionContext{PolicyRevision: authorization.Revision(b.PolicyVersion), CorrelationID: b.CorrelationID, Request: authorization.Request{Tenant: authorization.TenantID(b.TenantID), Subject: authorization.Subject{Kind: b.ActorKind, ID: authorization.SubjectID(b.ActorID)}, Action: authorization.Action(b.OperationID), Resource: authorization.Resource{Type: "identity.user", ID: authorization.ResourceID(b.UserID)}}}
 }
 
 func (s *Store) lookup(ctx context.Context, wire string, client oauth.Client, kinds []oauth.TokenKind) (artifactRecord, error) {
@@ -742,7 +758,7 @@ func (s *Store) lookup(ctx context.Context, wire string, client oauth.Client, ki
 				return artifactRecord{}, oauth.ErrInvalidGrant
 			}
 			var artifact artifactRecord
-			var source, scopes, payload, fingerprint, workload []byte
+			var source, scopes, payload, fingerprint, workload, apiKeySource []byte
 			var clientVersion, grantVersion string
 			workloadColumn := "NULL::jsonb"
 			if workloadProfileSelected(s.config.Protocol) {
@@ -759,7 +775,14 @@ func (s *Store) lookup(ctx context.Context, wire string, client oauth.Client, ki
 					exchangeColumn = "false,a.metadata_version"
 				}
 			}
-			err = s.pool.Raw().QueryRow(ctx, `SELECT a.artifact_id,a.kind,a.created_at,a.expires_at,a.state,a.transition_command,a.replay_command,a.payload,g.grant_id,g.tenant_id,COALESCE(g.user_id,''),g.client_id,g.client_version::text,g.client_fingerprint,g.source_session,g.scopes,g.resource,g.created_at,g.expires_at,g.version::text,g.state,`+workloadColumn+`,COALESCE(a.parent_artifact_id,''),`+exchangeColumn+`,`+humanColumn+` FROM `+s.schema+`.artifacts a JOIN `+s.schema+`.grants g USING(grant_id) WHERE a.digest_version=$1 AND a.digest=$2 AND a.kind=$3 AND a.client_id=$4`, digest.KeyVersion, digest.Sum[:], kind, client.ID).Scan(&artifact.ID, &artifact.Kind, &artifact.CreatedAt, &artifact.ExpiresAt, &artifact.State, &artifact.Transition, &artifact.Replay, &payload, &artifact.Grant.ID, &artifact.Grant.Tenant, &artifact.Grant.User, &artifact.Grant.ClientID, &clientVersion, &fingerprint, &source, &scopes, &artifact.Grant.Resource, &artifact.Grant.CreatedAt, &artifact.Grant.ExpiresAt, &grantVersion, &artifact.GrantState, &workload, &artifact.ParentID, &artifact.ExchangeOnly, &artifact.MetadataVersion, &artifact.HumanExchangeOnly)
+			keyColumn := "NULL::jsonb,false,false"
+			if s.config.Protocol.APIKeyExchange != nil {
+				keyColumn = "g.api_key_source,a.api_key_only,a.api_key_root"
+				if s.config.Protocol.WorkloadExchange == nil && s.config.Protocol.HumanCodeExchange == nil {
+					exchangeColumn = "false,a.metadata_version"
+				}
+			}
+			err = s.pool.Raw().QueryRow(ctx, `SELECT a.artifact_id,a.kind,a.created_at,a.expires_at,a.state,a.transition_command,a.replay_command,a.payload,g.grant_id,g.tenant_id,COALESCE(g.user_id,''),g.client_id,g.client_version::text,g.client_fingerprint,g.source_session,g.scopes,g.resource,g.created_at,g.expires_at,g.version::text,g.state,`+workloadColumn+`,COALESCE(a.parent_artifact_id,''),`+exchangeColumn+`,`+humanColumn+`,`+keyColumn+` FROM `+s.schema+`.artifacts a JOIN `+s.schema+`.grants g USING(grant_id) WHERE a.digest_version=$1 AND a.digest=$2 AND a.kind=$3 AND a.client_id=$4`, digest.KeyVersion, digest.Sum[:], kind, client.ID).Scan(&artifact.ID, &artifact.Kind, &artifact.CreatedAt, &artifact.ExpiresAt, &artifact.State, &artifact.Transition, &artifact.Replay, &payload, &artifact.Grant.ID, &artifact.Grant.Tenant, &artifact.Grant.User, &artifact.Grant.ClientID, &clientVersion, &fingerprint, &source, &scopes, &artifact.Grant.Resource, &artifact.Grant.CreatedAt, &artifact.Grant.ExpiresAt, &grantVersion, &artifact.GrantState, &workload, &artifact.ParentID, &artifact.ExchangeOnly, &artifact.MetadataVersion, &artifact.HumanExchangeOnly, &apiKeySource, &artifact.APIKeyOnly, &artifact.APIKeyRoot)
 			if errors.Is(err, pgx.ErrNoRows) {
 				continue
 			}
@@ -787,6 +810,13 @@ func (s *Store) lookup(ctx context.Context, wire string, client oauth.Client, ki
 				}
 				artifact.Grant.Workload = &original
 			}
+			if len(apiKeySource) > 0 {
+				var original apiKeyGrantSource
+				if decodeJSON(apiKeySource, &original) != nil {
+					return artifactRecord{}, oauth.ErrUnavailable
+				}
+				artifact.Grant.APIKeySource = &original
+			}
 			if client.Workload != nil && (!s.validWorkload(artifact.Grant, client) || artifact.Kind != oauth.TokenAccess) || client.Workload == nil && artifact.Grant.Workload != nil {
 				return artifactRecord{}, oauth.ErrInvalidGrant
 			}
@@ -806,6 +836,9 @@ func (s *Store) lookup(ctx context.Context, wire string, client oauth.Client, ki
 			if _, err := fmt.Sscan(clientVersion, &artifact.Grant.ClientVersion); err != nil || artifact.Grant.ClientID != client.ID || artifact.Grant.ClientVersion != client.Version || artifact.Grant.ClientFingerprint != clientFingerprint(client) || artifact.Grant.Resource != client.Resource || artifact.Payload.Schema != 1 || !scopeSubset(artifact.Payload.Scopes, ceiling) {
 				return artifactRecord{}, oauth.ErrInvalidGrant
 			}
+			if (artifact.Grant.APIKeySource != nil) != artifact.APIKeyOnly || (artifact.Payload.APIKeyExchange != nil) != artifact.APIKeyOnly || artifact.APIKeyRoot && !artifact.APIKeyOnly || artifact.APIKeyOnly && (!s.validAPIKeyLineage(artifact.Payload.APIKeyExchange, artifact.Grant, client) || artifact.Kind != oauth.TokenAccess || artifact.MetadataVersion != 1 || artifact.ExchangeOnly || artifact.HumanExchangeOnly || artifact.Payload.HumanRefresh != nil || artifact.APIKeyRoot != (artifact.Payload.APIKeyExchange.Depth == 1)) {
+				return artifactRecord{}, oauth.ErrInvalidGrant
+			}
 			if pairwiseClient(client) && slices.Contains(artifact.Payload.Request.Scopes, "openid") {
 				if err := s.loadSubjectBinding(ctx, &artifact.Grant); err != nil {
 					return artifactRecord{}, err
@@ -823,7 +856,7 @@ func (s *Store) lookup(ctx context.Context, wire string, client oauth.Client, ki
 	if found == nil {
 		return artifactRecord{}, oauth.ErrInvalidGrant
 	}
-	if s.config.ConsentManagement && found.Grant.Workload == nil {
+	if s.config.ConsentManagement && found.Grant.Workload == nil && found.Grant.APIKeySource == nil {
 		active, err := s.consentLookupState(ctx, &found.Grant)
 		if err != nil {
 			return artifactRecord{}, err

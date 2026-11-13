@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add explicit `ConfidentialPairwiseUpdates` and `PublicOIDCClaimsUpdates`
+  operation selections for the existing confidential pairwise and public
+  account-claims client classes. Keep original subject policy/class, trusted
+  sector/scope ceilings and old omitted-zero defaults. Metadata replacement
+  invalidates old grants and requires fresh consent/S256; no creation class,
+  subject conversion, secret custody or RFC7592 capability is added.
+
 - Add explicit `ManagedClientPolicy.ConfidentialOIDCUpdates` for exact-version
   redirect/post-logout replacement of existing Basic/default-subject/openid-only
   browser clients. Existing management authority, digest generations and original

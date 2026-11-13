@@ -82,13 +82,17 @@ func ValidateClientUpdateRequest(r ClientUpdateRequest, p ManagedClientPolicy, i
 		return ClientUpdateRequest{}, err
 	}
 	r.Management.Public = public
-	// Creation does not select OIDC replacement. This explicit finite profile
-	// preserves openid-only semantics; current source metadata is fenced later.
+	// Creation does not select OIDC replacement. Extra public claims require
+	// their separate operation selection, not just a creation scope ceiling.
 	oidcUpdateSelected := p.ConfidentialOIDC && p.ConfidentialOIDCUpdates
+	allowedOIDCScopes := minimalManagedBrowserOIDC(false, r.Scopes)
 	if r.Management.Public {
 		oidcUpdateSelected = p.PublicOIDC && p.PublicOIDCUpdates
+		if p.PublicOIDCClaimsUpdates {
+			allowedOIDCScopes = managedPublicClaimScopes(false, r.Scopes)
+		}
 	}
-	if hasExtensionScope(r.Scopes) && (!oidcUpdateSelected || !minimalManagedBrowserOIDC(false, r.Scopes)) {
+	if hasExtensionScope(r.Scopes) && (!oidcUpdateSelected || !allowedOIDCScopes) {
 		return ClientUpdateRequest{}, ErrInvalidScope
 	}
 	if _, err := identity.ParseSubjectID(r.Management.ClientID[len(ManagedClientPrefix):]); err != nil {
@@ -110,8 +114,9 @@ func ValidateClientUpdateRequest(r ClientUpdateRequest, p ManagedClientPolicy, i
 // AllowsMetadataReplacement checks only immutable source/target profile shape,
 // never manager authority or registration existence. OAuth replacements retain
 // their original ceiling, including stored device capability. Explicit OIDC
-// replacement preserves the existing minimal browser class: default subject,
-// openid only and the original public none or confidential Basic authentication.
+// replacement preserves the registered subject policy and original none/Basic
+// authentication. Pairwise and public account claims require separate operation
+// selections within their existing trusted registration/scope ceilings.
 // Native owners must repeat this against protected original metadata.
 func (p ManagedClientPolicy) AllowsMetadataReplacement(current Client, scopes []string) bool {
 	if current.Workload != nil {
@@ -120,14 +125,32 @@ func (p ManagedClientPolicy) AllowsMetadataReplacement(current Client, scopes []
 	if !hasExtensionScope(current.Scopes) && !hasExtensionScope(scopes) {
 		return scopeSubset(current.Scopes, p.Scopes.values) && scopeSubset(scopes, p.Scopes.values)
 	}
-	if current.SubjectRegistration != nil || !minimalManagedBrowserOIDC(current.DeviceAuthorization, current.Scopes) || !minimalManagedBrowserOIDC(current.DeviceAuthorization, scopes) {
+	if !hasExtensionScope(current.Scopes) || !hasExtensionScope(scopes) {
 		return false
 	}
-	selectedClass := p.ConfidentialOIDCUpdates && !current.Public && current.AuthenticationMethod == "client_secret_basic"
 	if current.Public {
-		selectedClass = p.PublicOIDCUpdates && current.AuthenticationMethod == "none"
+		if !p.PublicOIDCUpdates || current.AuthenticationMethod != "none" || current.SubjectRegistration != nil {
+			return false
+		}
+		if p.PublicOIDCClaimsUpdates {
+			return p.AllowsRegistration(true, current.DeviceAuthorization, current.Scopes, nil) && p.AllowsRegistration(true, current.DeviceAuthorization, scopes, nil)
+		}
+		return minimalManagedBrowserOIDC(current.DeviceAuthorization, current.Scopes) && minimalManagedBrowserOIDC(current.DeviceAuthorization, scopes) && p.AllowsRegistration(true, current.DeviceAuthorization, current.Scopes, nil)
 	}
-	return selectedClass && p.AllowsRegistration(current.Public, current.DeviceAuthorization, current.Scopes, nil)
+	if !p.ConfidentialOIDCUpdates || current.AuthenticationMethod != "client_secret_basic" || !minimalManagedBrowserOIDC(current.DeviceAuthorization, current.Scopes) || !minimalManagedBrowserOIDC(current.DeviceAuthorization, scopes) {
+		return false
+	}
+	if current.SubjectRegistration != nil && !p.ConfidentialPairwiseUpdates {
+		return false
+	}
+	return p.AllowsRegistration(false, current.DeviceAuthorization, current.Scopes, current.SubjectRegistration)
+}
+
+func sameSubjectRegistration(a, b *OIDCSubjectRegistration) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 // ClientUpdate atomically replaces only redirects/scopes of one exact managed
@@ -135,7 +158,8 @@ func (p ManagedClientPolicy) AllowsMetadataReplacement(current Client, scopes []
 // authority remain mandatory. Public clients retain none authentication and no
 // secret custody. Default-subject/openid-only browser registrations need their
 // explicit PublicOIDCUpdates or ConfidentialOIDCUpdates selection and composed
-// OIDC owner. Other OIDC, static and workload variants remain unselected.
+// OIDC owner. Confidential pairwise and public account-claim replacements require
+// their additional operation selectors; other OIDC/static/workload variants deny.
 func (s *Service) ClientUpdate(ctx context.Context, r ClientUpdateRequest) (out ClientUpdateResult, err error) {
 	defer func() {
 		if recover() != nil {
@@ -169,6 +193,7 @@ func (s *Service) ClientUpdate(ctx context.Context, r ClientUpdateRequest) (out 
 	if e.ValidateAt(s.config.Clock.Now()) != nil {
 		return out, ErrAccessDenied
 	}
+	var original *Client
 	if s.config.ManagedClients.ConfidentialOIDC || s.config.ManagedClients.PublicOIDCUpdates {
 		// Fence the original class before invoking even an older updater. The
 		// native owner must repeat this against protected current state for races.
@@ -179,7 +204,15 @@ func (s *Service) ClientUpdate(ctx context.Context, r ClientUpdateRequest) (out 
 		// Missing/tombstoned current metadata cannot invalidate original keyed
 		// history. Only its existing updater may recover that result or deny a
 		// fresh request; this classified absence grants no mutation permission.
-		if err == nil && !s.config.ManagedClients.AllowsMetadataReplacement(current, r.Scopes) || e.ValidateAt(s.config.Clock.Now()) != nil {
+		if err == nil {
+			// A request cannot change the immutable class or attach another
+			// registered sector, even if both are trusted creation selections.
+			if current.Public != r.Management.Public || !s.config.ManagedClients.AllowsMetadataReplacement(current, r.Scopes) || !validSubjectRegistration(Client{SubjectRegistration: current.SubjectRegistration, Redirects: r.Redirects}) {
+				return out, ErrAccessDenied
+			}
+			original = &current
+		}
+		if e.ValidateAt(s.config.Clock.Now()) != nil {
 			return out, ErrAccessDenied
 		}
 		if ctx.Err() != nil {
@@ -207,6 +240,9 @@ func (s *Service) ClientUpdate(ctx context.Context, r ClientUpdateRequest) (out 
 		return ClientUpdateResult{Completion: out.Completion}, ErrAccessDenied
 	}
 	if hasExtensionScope(r.Scopes) && !s.config.ManagedClients.AllowsMetadataReplacement(client, r.Scopes) {
+		return ClientUpdateResult{Completion: out.Completion}, ErrAccessDenied
+	}
+	if original != nil && !sameSubjectRegistration(original.SubjectRegistration, client.SubjectRegistration) {
 		return ClientUpdateResult{Completion: out.Completion}, ErrAccessDenied
 	}
 	out.Client = client

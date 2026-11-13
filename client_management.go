@@ -53,6 +53,10 @@ type ManagedClientPolicy struct {
 	// requires PublicOIDC/PublicClients and grants no management authority.
 	// Zero preserves the original OAuth-only update contract and policy bytes.
 	PublicOIDCUpdates bool `json:",omitempty"`
+	// PublicOIDCClaimsUpdates additionally selects metadata replacement within
+	// the existing exact PublicOIDCScopes ceiling. It requires PublicOIDCUpdates
+	// and preserves the public/default-subject class and no-secret custody.
+	PublicOIDCClaimsUpdates bool `json:",omitempty"`
 	// PublicOIDCScopes optionally selects an exact additional scope ceiling for
 	// default-subject public browser clients. It requires PublicOIDC, includes
 	// openid, and may additionally contain profile, email and phone. Nil retains
@@ -68,6 +72,10 @@ type ManagedClientPolicy struct {
 	// requires ConfidentialOIDC, never changes secret custody or grants manager
 	// authority, and zero preserves existing policy bytes and update denial.
 	ConfidentialOIDCUpdates bool `json:",omitempty"`
+	// ConfidentialPairwiseUpdates additionally selects existing single-host
+	// pairwise registrations from PairwiseRegistrations. It requires
+	// ConfidentialOIDCUpdates and never changes the original subject policy.
+	ConfidentialPairwiseUpdates bool `json:",omitempty"`
 	// PairwiseRegistrations is an explicit trusted ceiling for confidential,
 	// openid-only single-host registrations. It requires ConfidentialOIDC and
 	// selects no key material or subject derivation. Nil retains default subjects.
@@ -101,10 +109,16 @@ func (p ManagedClientPolicy) validated(c Config) (ManagedClientPolicy, error) {
 	if p.PublicOIDCUpdates && !p.PublicOIDC {
 		return ManagedClientPolicy{}, ErrInvalidRequest
 	}
+	if p.PublicOIDCClaimsUpdates && (!p.PublicOIDCUpdates || len(p.PublicOIDCScopes) == 0) {
+		return ManagedClientPolicy{}, ErrInvalidRequest
+	}
 	if p.ConfidentialOIDC && !c.OIDCScopes.Contains("openid") {
 		return ManagedClientPolicy{}, ErrInvalidRequest
 	}
 	if p.ConfidentialOIDCUpdates && !p.ConfidentialOIDC {
+		return ManagedClientPolicy{}, ErrInvalidRequest
+	}
+	if p.ConfidentialPairwiseUpdates && (!p.ConfidentialOIDCUpdates || len(p.PairwiseRegistrations) == 0) {
 		return ManagedClientPolicy{}, ErrInvalidRequest
 	}
 	if len(p.PublicOIDCScopes) != 0 {

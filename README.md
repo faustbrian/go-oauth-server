@@ -147,7 +147,8 @@ replacement authentication engine.
   Matching [native public-pairwise support](postgres/README.md#optional-public-single-host-managed-pairwise-subjects)
   composes encrypted subject custody and stable bindings without a confidential
   or static client; root selection alone does not deliver that journey. Sector-identifier
-  URI, additional pairwise claims and metadata replacement remain unselected. Safe
+  URI and additional pairwise claims remain unselected. Pairwise creation alone
+  does not enable metadata replacement. Safe
   metadata returns independent copies of this nonsecret registration, never
   derivation or wrapping keys.
   Existing warm services resolve actual registry status on every
@@ -198,6 +199,19 @@ replacement authentication engine.
   digest generations, overlap custody and default subject are unchanged; only
   registration authority advances. Original client credentials authenticate
   fresh S256/explicit consent, never the old consent/grants/UserInfo access.
+  `ManagedClientPolicy.ConfidentialPairwiseUpdates` separately extends that
+  operation to already-supported confidential single-host pairwise clients.
+  It requires `ConfidentialOIDCUpdates` and the existing exact
+  `PairwiseRegistrations` ceiling. No request subject edit is accepted; original
+  subject registration/key/sector is retained and every replacement redirect
+  must still use that registered sector. Existing public pairwise stays excluded.
+  `ManagedClientPolicy.PublicOIDCClaimsUpdates` separately permits existing
+  public/default-subject claims clients within `PublicOIDCScopes`, including
+  narrowing the complete scope set while retaining `openid`. It requires
+  `PublicOIDCUpdates` and that explicit existing claims ceiling; it never selects
+  confidential claims. Both omitted-zero selectors preserve old permissions and
+  policy bytes. Current manager/CSRF/key/version, original recovery and fresh
+  consent/S256 remain required; class/authentication/subject policy never convert.
 - `Service.DiscoveryOauth` returns OAuth-only RFC8414 metadata when explicitly
   selected by `Config.Discovery`. Trusted issuer-origin endpoint configuration
   and actual configured clients determine grants, authentication methods, S256,

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Support explicitly selected confidential Basic/default-subject/openid-only OIDC
+  metadata replacement through the existing management Work/CAS and recovery.
+  Preserve secret digest generations and default subject while invalidating old
+  consent/grants/UserInfo. Reuse installed update/rotation/signing history with
+  no SQL/schema change, extra secret reveal or RFC7592 management authority.
+
 - Add explicit native public/default-subject/openid-only OIDC redirect and
   post-logout replacement through the existing management Work/CAS and original
   recovery. Reuse installed public/rotation/update histories without new SQL or

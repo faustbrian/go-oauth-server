@@ -598,6 +598,21 @@ session/client issuance and independent RP discovery/S256/ID-token/UserInfo, the
 exercises replacement, original recovery, current denial and contention. It does
 not provide HTTP/Reference routes or broaden OIDC/whole-unit qualification.
 
+Independently select `Protocol.ManagedClients.ConfidentialOIDCUpdates=true`
+alongside `ConfidentialOIDC` for the existing Basic/default-subject/`openid`-only
+browser class. Use the same `ClientUpdateRequest` with `Management.Public=false`;
+creation enablement alone still denies replacement. Actual OIDC composition and
+the installed client/consent/rotation/update/signing histories remain required;
+no public-client history, new migration or custody owner is introduced. The same
+shared original-profile predicate runs at the protected Work fences. Basic digest
+bytes/generations and original overlap expiry remain unchanged; no new secret is
+issued or revealed on update/retry/recovery. All old client-version consent,
+codes/access/refresh/UserInfo deny; fresh consent/S256 uses the same Basic secret
+and default subject. Pairwise/claims/device/workload OIDC updates, authentication
+changes and RFC7592 stay excluded. `TestNativeConfidentialOIDCClientUpdate*`
+consumes actual creation, independent RP validation and the original native
+replay/rollback/lost-COMMIT owner, without adding an HTTP route or new engine.
+
 The existing sole Work serializes update/rotation/deletion and ordinary grant
 admission on the same client root, preserving original <=20s authority through
 callbacks, SQL waits, commit, delivery and retries. Exact platform policy runs

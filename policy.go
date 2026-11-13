@@ -102,6 +102,10 @@ type Client struct {
 	// authentication or alter existing registration/grant identity. False retains
 	// the existing profile; the global/native selection is also required.
 	HumanCodeExchange bool `json:",omitempty"`
+	// APIKeyExchange selects the distinct modern USER-key integration profile.
+	// It requires configured Basic authentication and matching global/native
+	// selections; it does not turn the caller or key owner into a human actor.
+	APIKeyExchange    bool `json:",omitempty"`
 	Redirects, Scopes []string
 	// PostLogoutRedirects independently registers exact RP logout targets.
 	// Empty selects local-only logout, never an authorization-redirect fallback.
@@ -120,6 +124,9 @@ type Client struct {
 // actual authentication implementation before advertising or issuing for it.
 func ValidateClient(input Client) (Client, error) {
 	if input.HumanCodeExchange && (input.Public || input.Workload != nil) {
+		return Client{}, ErrInvalidRequest
+	}
+	if input.APIKeyExchange && (input.Public || input.Workload != nil || input.HumanCodeExchange) {
 		return Client{}, ErrInvalidRequest
 	}
 	if !identifier(input.ID) || !identifier(input.Owner.platform) || input.Version == 0 || !validOrigin(input.Resource) || input.Public && input.AuthenticationMethod != "none" || !input.Public && input.AuthenticationMethod != "client_secret_basic" {

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add a separately selected configured-Basic modern USER API-key exchange
+  profile, private source-token type and access-only narrowing/depth limits.
+  Matching native source composition is required. Preserve exact nonsecret
+  source/OAuth unknown-outcome correlation for metadata-only native recovery;
+  keys never become human/session or workload authority.
+
 - Add explicit `ConfidentialPairwiseUpdates` and `PublicOIDCClaimsUpdates`
   operation selections for the existing confidential pairwise and public
   account-claims client classes. Keep original subject policy/class, trusted

@@ -6,6 +6,12 @@ single-factor user sessions, plus explicitly configured workload client-credenti
 This is not a complete OAuth/OIDC provider or a
 stable released API.
 
+The separate [modern USER API-key exchange profile](docs/api-key-exchange.md)
+lets a configured owning Basic client obtain narrower opaque access from an
+actual modern key. The key actor, USER subject and Basic caller stay distinct;
+matching native source composition, forward history and explicit bootstrap are
+required. No HTTP, organization or JWT profile is selected.
+
 The optional [restricted workload exchange profile](docs/workload-exchange.md)
 uses the standard RFC 8693 grant at `Service.Token`. It is distinct from private
 session exchange and does not enable customer, API-key or organization delegation.

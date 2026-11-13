@@ -39,6 +39,11 @@ const (
 // AccessTokenType is the RFC8693 access-token input/output purpose identifier.
 const AccessTokenType = "urn:ietf:params:oauth:token-type:access_token"
 
+// APIKeyTokenType is the explicitly private RFC8693 input type for a modern
+// API-key secret. Raw API keys are never standard OAuth access-token inputs or
+// outputs; admission still requires the selected real native verifier.
+const APIKeyTokenType = "urn:golib:params:oauth:token-type:api-key"
+
 // AuthorizationRequest contains a bounded code/S256 OAuth-only request. It
 // conveys no validated redirect, client, subject or consent authority. Scopes
 // are sorted unique; state is retained byte-for-byte. The selected profile does
@@ -80,8 +85,8 @@ type TokenRequest struct {
 	GrantType                                 GrantType
 	ClientID, Code, RedirectURI, CodeVerifier string
 	RefreshToken, Resource                    string
-	// Exchange fields are accepted only for the explicitly selected workload
-	// profile. Audience and Resource are mutually exclusive exact target selectors.
+	// Exchange fields require an explicitly selected source profile. Audience
+	// and Resource are mutually exclusive exact target selectors.
 	SubjectToken, SubjectTokenType, RequestedTokenType, Audience string
 	Scopes                                                       []string
 	ClientAuthentication                                         ClientAuthentication
@@ -296,7 +301,7 @@ func parseTokenValues(values url.Values, requireClient bool) (TokenRequest, erro
 			return TokenRequest{}, ErrInvalidRequest
 		}
 		r.SubjectToken, r.SubjectTokenType, r.RequestedTokenType, r.Audience = values.Get("subject_token"), values.Get("subject_token_type"), values.Get("requested_token_type"), values.Get("audience")
-		if !opaque32(r.SubjectToken) || r.SubjectTokenType != AccessTokenType || hasField(values, "requested_token_type") && r.RequestedTokenType != AccessTokenType || r.Audience != "" && !validOrigin(r.Audience) || r.Resource == "" && r.Audience == "" {
+		if !validExchangeSubjectSyntax(r.SubjectToken, r.SubjectTokenType) || hasField(values, "requested_token_type") && r.RequestedTokenType != AccessTokenType || r.Audience != "" && !validOrigin(r.Audience) || r.Resource == "" && r.Audience == "" {
 			return TokenRequest{}, ErrInvalidRequest
 		}
 		if hasField(values, "scope") {

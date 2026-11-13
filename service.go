@@ -69,6 +69,9 @@ type Config struct {
 	// HumanCodeExchange is a separate opt-in for explicitly selected confidential
 	// web clients. Nil preserves the existing workload-only exchange boundary.
 	HumanCodeExchange *HumanCodeExchangePolicy `json:",omitempty"`
+	// APIKeyExchange separately opts in configured Basic clients to modern
+	// USER-key integration delegation; the real native source owner is required.
+	APIKeyExchange *APIKeyExchangePolicy `json:",omitempty"`
 	// Discovery explicitly selects OAuth authorization-server metadata using
 	// trusted endpoint locations. Zero preserves the unadvertised legacy profile.
 	Discovery                                                        DiscoveryConfig
@@ -146,6 +149,13 @@ func (c Config) Validated() (Config, error) {
 			return Config{}, err
 		}
 		c.HumanCodeExchange = &owned
+	}
+	if c.APIKeyExchange != nil {
+		owned, err := c.APIKeyExchange.validated(c)
+		if err != nil {
+			return Config{}, err
+		}
+		c.APIKeyExchange = &owned
 	}
 	c.Scopes.values = slices.Clone(c.Scopes.values)
 	c.OIDCScopes.values = slices.Clone(c.OIDCScopes.values)
@@ -700,12 +710,13 @@ func (s *Service) Token(ctx context.Context, request TokenRequest) (out TokenRes
 	if request.GrantType != TokenExchangeGrant && exchangeFieldsPresent(request) {
 		return out, ErrInvalidRequest
 	}
-	if client.Workload != nil && request.GrantType != ClientCredentialsGrant && request.GrantType != TokenExchangeGrant || client.Workload == nil && (request.GrantType == ClientCredentialsGrant || request.GrantType == TokenExchangeGrant && !client.HumanCodeExchange) {
+	if client.Workload != nil && request.GrantType != ClientCredentialsGrant && request.GrantType != TokenExchangeGrant || client.Workload == nil && (request.GrantType == ClientCredentialsGrant || request.GrantType == TokenExchangeGrant && !client.HumanCodeExchange && !client.APIKeyExchange) {
 		return out, ErrUnsupportedGrant
 	}
 	switch request.GrantType {
 	case TokenExchangeGrant:
-		if client.Workload != nil && s.config.WorkloadExchange == nil || client.Workload == nil && s.config.HumanCodeExchange == nil {
+		selected := client.APIKeyExchange && s.config.APIKeyExchange != nil || client.Workload != nil && s.config.WorkloadExchange != nil || client.HumanCodeExchange && s.config.HumanCodeExchange != nil
+		if !selected {
 			return out, ErrUnsupportedGrant
 		}
 		if !validExchangeRequest(request, client) {
@@ -885,6 +896,13 @@ func (s *Service) bounded(ctx context.Context) (context.Context, context.CancelF
 	return bounded, stop, nil
 }
 func operationError(ctx context.Context, err error) error {
+	var sourceUnknown APIKeyExchangeUnknownError
+	if errors.As(err, &sourceUnknown) {
+		if cancellation := ctx.Err(); cancellation != nil {
+			return errors.Join(sourceUnknown, cancellation)
+		}
+		return sourceUnknown
+	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}

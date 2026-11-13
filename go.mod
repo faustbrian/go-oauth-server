@@ -4,7 +4,8 @@ go 1.27.0
 
 require (
 	github.com/faustbrian/go-authentication/v2 v2.0.2-0.20261015052822-d9f5132c7f68
-	github.com/faustbrian/go-identity v0.0.0-20261021074754-2eafc2592af0
+	github.com/faustbrian/go-identity v0.0.0-20261025171642-473945c93248
+	github.com/faustbrian/go-identity/apikey v0.0.0-20261113140858-14b809c958f7
 	github.com/faustbrian/go-identity/session v0.0.0-20261016125355-af740fb7fb76
 	github.com/faustbrian/go-password/v2 v2.0.2-0.20261015050515-4eb0fefa60ff
 )

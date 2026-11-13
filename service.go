@@ -69,8 +69,9 @@ type Config struct {
 	// HumanCodeExchange is a separate opt-in for explicitly selected confidential
 	// web clients. Nil preserves the existing workload-only exchange boundary.
 	HumanCodeExchange *HumanCodeExchangePolicy `json:",omitempty"`
-	// APIKeyExchange separately opts in configured Basic clients to modern
-	// USER-key integration delegation; the real native source owner is required.
+	// APIKeyExchange separately opts in configured Basic clients to USER-key
+	// delegation. Modern is the default; legacy needs explicit selection and
+	// the real matching native source owner.
 	APIKeyExchange *APIKeyExchangePolicy `json:",omitempty"`
 	// Discovery explicitly selects OAuth authorization-server metadata using
 	// trusted endpoint locations. Zero preserves the unadvertised legacy profile.
@@ -719,7 +720,7 @@ func (s *Service) Token(ctx context.Context, request TokenRequest) (out TokenRes
 		if !selected {
 			return out, ErrUnsupportedGrant
 		}
-		if !validExchangeRequest(request, client) {
+		if !validExchangeRequest(request, client, s.config.APIKeyExchange) {
 			return out, ErrInvalidRequest
 		}
 		if request.Scopes != nil {

@@ -199,3 +199,130 @@ func TestAPIKeyExchangePolicyKeepsFrozenDepthAndClockBounds(t *testing.T) {
 		}
 	}
 }
+
+func TestLegacyAPIKeyExchangeFormRequiresExplicitProfileAndPreservesBareBytes(t *testing.T) {
+	policy := oauth.APIKeyExchangePolicy{LegacySHA256: true}
+	headers := []string{clientBasicHeader("machine-client", strings.Repeat("A", 43))}
+	fields := url.Values{"grant_type": {string(oauth.TokenExchangeGrant)}, "subject_token_type": {oauth.APIKeyTokenType}, "resource": {"https://resource.example"}, "scope": {"identity:read"}}
+	for _, bare := range []string{"x", "bare+token/%\x00", "idk_" + strings.Repeat("A", 43), strings.Repeat("B", 4096)} {
+		fields.Set("subject_token", bare)
+		request, err := oauth.ParseAPIKeyExchangeForm(fields.Encode(), headers, policy)
+		if err != nil || request.SubjectToken != bare || request.SubjectTokenType != oauth.APIKeyTokenType || request.ClientID != "machine-client" || request.GrantType != oauth.TokenExchangeGrant {
+			t.Fatal("explicit legacy parser changed bounded historical bytes or caller channel", len(bare), err)
+		}
+	}
+	fields.Set("subject_token", "unchanged-existing-bare")
+	for _, parse := range []func(string, []string) (oauth.TokenRequest, error){
+		oauth.ParseTokenFormWithClientAuthentication,
+		func(raw string, headers []string) (oauth.TokenRequest, error) {
+			return oauth.ParseAPIKeyExchangeForm(raw, headers, oauth.APIKeyExchangePolicy{})
+		},
+	} {
+		if _, err := parse(fields.Encode(), headers); !errors.Is(err, oauth.ErrInvalidRequest) {
+			t.Fatal("default modern parser implicitly enabled bare legacy keys", err)
+		}
+	}
+	for _, extra := range []string{"&subject_token=x", "&actor_token=x", "&actor_token_type=x", "&subject=human", "&tenant_id=foreign", "&client_id=body-client", "&audience=https%3A%2F%2Fresource.example", "&code=x", "&refresh_token=x"} {
+		if _, err := oauth.ParseAPIKeyExchangeForm(fields.Encode()+extra, headers, policy); !errors.Is(err, oauth.ErrInvalidRequest) {
+			t.Fatal("selected legacy parser opened conflicting or free-form authority", err)
+		}
+	}
+	for _, headers := range [][]string{nil, {headers[0], headers[0]}} {
+		if _, err := oauth.ParseAPIKeyExchangeForm(fields.Encode(), headers, policy); !errors.Is(err, oauth.ErrInvalidRequest) {
+			t.Fatal("legacy parser accepted missing or ambiguous Basic credentials", err)
+		}
+	}
+	for _, invalid := range []string{"", strings.Repeat("B", 4097)} {
+		fields.Set("subject_token", invalid)
+		if _, err := oauth.ParseAPIKeyExchangeForm(fields.Encode(), headers, policy); !errors.Is(err, oauth.ErrInvalidRequest) {
+			t.Fatal("selected historical input exceeded its owning 1..4096-byte limit", err)
+		}
+	}
+	fields.Set("subject_token", "unchanged-existing-bare")
+	fields.Set("subject_token_type", oauth.AccessTokenType)
+	if _, err := oauth.ParseAPIKeyExchangeForm(fields.Encode(), headers, policy); !errors.Is(err, oauth.ErrInvalidRequest) {
+		t.Fatal("legacy bytes were relabeled as standard OAuth access", err)
+	}
+	fields.Set("subject_token", strings.Repeat("A", 43))
+	if _, err := oauth.ParseAPIKeyExchangeForm(fields.Encode(), headers, policy); err != nil {
+		t.Fatal("explicit legacy root profile prevented an opaque access descendant", err)
+	}
+	fields.Set("subject_token_type", oauth.APIKeyTokenType)
+	fields.Set("subject_token", "idk_"+strings.Repeat("A", 43))
+	if _, err := oauth.ParseAPIKeyExchangeForm(fields.Encode(), headers, oauth.APIKeyExchangePolicy{}); err != nil {
+		t.Fatal("additive parser changed the default modern source profile", err)
+	}
+	fields.Set("resource", "https://"+strings.Repeat("r", 2049))
+	if _, err := oauth.ParseAPIKeyExchangeForm(fields.Encode(), headers, policy); !errors.Is(err, oauth.ErrInvalidRequest) {
+		t.Fatal("legacy subject bound weakened another field's existing bound", err)
+	}
+	wire, err := json.Marshal(oauth.APIKeyExchangePolicy{})
+	if err != nil || strings.Contains(string(wire), "LegacySHA256") {
+		t.Fatal("default modern policy changed its historical serialized fingerprint")
+	}
+}
+
+func TestLegacyAPIKeyExchangeServiceUsesSelectedProfileNotTokenPrefix(t *testing.T) {
+	sessions, _, _, _ := coreSessionFixture(t)
+	config, basic := workloadCoreConfig(t)
+	config.Clients[0].Workload = nil
+	config.Clients[0].Redirects = []string{"https://client.example/cb"}
+	config.Clients[0].APIKeyExchange = true
+	config.APIKeyExchange = &oauth.APIKeyExchangePolicy{}
+	calls := 0
+	store := workloadBoundaryStore{call: func(_ context.Context, command oauth.TokenCommand) (oauth.TokenResult, error) {
+		calls++
+		if command.Client.Workload != nil || command.Client.HumanCodeExchange || command.Request.SubjectTokenType != oauth.APIKeyTokenType {
+			t.Fatal("legacy source became workload/human/standard-access authority")
+		}
+		return oauth.TokenResult{}, oauth.ErrInvalidGrant
+	}}
+	request := oauth.TokenRequest{GrantType: oauth.TokenExchangeGrant, ClientID: config.Clients[0].ID, ClientAuthentication: basic, SubjectToken: "unchanged-existing-bare", SubjectTokenType: oauth.APIKeyTokenType, Resource: config.Resource, Scopes: []string{"identity:read"}, Network: "192.0.2.1"}
+	service, err := oauth.NewService(config, oauth.Dependencies{Sessions: sessions, Store: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Token(context.Background(), request); !errors.Is(err, oauth.ErrInvalidRequest) || calls != 0 {
+		t.Fatal("modern default selected bare SHA256 verification implicitly", err)
+	}
+	config.APIKeyExchange.LegacySHA256 = true
+	service, err = oauth.NewService(config, oauth.Dependencies{Sessions: sessions, Store: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, wire := range []string{"unchanged-existing-bare", "idk_" + strings.Repeat("A", 43), strings.Repeat("B", 4096)} {
+		request.SubjectToken = wire
+		if _, err := service.Token(context.Background(), request); !errors.Is(err, oauth.ErrInvalidGrant) {
+			t.Fatal("explicit profile did not hand unchanged bounded input to its native owner", err)
+		}
+	}
+	if calls != 3 {
+		t.Fatal("credential text selected a different profile or skipped its owner")
+	}
+}
+
+func FuzzLegacyAPIKeyExchangeFormPreservesOnlyBoundedSelectedBytes(f *testing.F) {
+	for _, bare := range []string{"x", "bare+token/%\x00", "idk_" + strings.Repeat("A", 43), strings.Repeat("B", 4096), strings.Repeat("B", 4097), string([]byte{0xff, 0, '+'})} {
+		f.Add(bare, false)
+		f.Add(bare, true)
+	}
+	headers := []string{clientBasicHeader("machine-client", strings.Repeat("A", 43))}
+	f.Fuzz(func(t *testing.T, bare string, duplicate bool) {
+		if len(bare) > 8192 {
+			return
+		}
+		fields := url.Values{"grant_type": {string(oauth.TokenExchangeGrant)}, "subject_token": {bare}, "subject_token_type": {oauth.APIKeyTokenType}, "resource": {"https://resource.example"}}
+		raw := fields.Encode()
+		if duplicate {
+			raw += "&subject_token=x"
+		}
+		out, err := oauth.ParseAPIKeyExchangeForm(raw, headers, oauth.APIKeyExchangePolicy{LegacySHA256: true})
+		valid := !duplicate && len(bare) >= 1 && len(bare) <= 4096
+		if valid && (err != nil || out.SubjectToken != bare || out.SubjectTokenType != oauth.APIKeyTokenType || out.ClientID != "machine-client") {
+			t.Fatal("bounded selected historical bytes did not round-trip unchanged")
+		}
+		if !valid && (!errors.Is(err, oauth.ErrInvalidRequest) || out.SubjectToken != "") {
+			t.Fatal("duplicate or out-of-bound historical input produced a request")
+		}
+	})
+}

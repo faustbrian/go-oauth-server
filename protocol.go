@@ -279,7 +279,43 @@ func ParseTokenFormWithClientAuthentication(raw string, authorization []string) 
 	return r, nil
 }
 
+// ParseAPIKeyExchangeForm parses the separately selected API-key exchange
+// profile with exactly one Basic header and no body credentials or authority
+// overrides. Policy is trusted server configuration, never a request field.
+// LegacySHA256 admits 1..4096 unchanged historical bytes through the owning
+// apikey parser; false retains modern syntax. Other fields keep their existing
+// bounds. Parsing proves no client, key, actor or tenant authority: Service and
+// the selected native source must authenticate the exact input independently.
+// Existing generic parsers remain modern-only. Errors contain no credential.
+func ParseAPIKeyExchangeForm(raw string, authorization []string, policy APIKeyExchangePolicy) (TokenRequest, error) {
+	if len(authorization) != 1 {
+		return TokenRequest{}, ErrInvalidRequest
+	}
+	subjectLimit := 2048
+	if policy.LegacySHA256 {
+		subjectLimit = 4096
+	}
+	values, err := parseFieldsWithSubjectLimit(raw, []string{"grant_type", "subject_token", "subject_token_type", "requested_token_type", "resource", "audience", "scope"}, subjectLimit)
+	if err != nil || values.Get("grant_type") != string(TokenExchangeGrant) {
+		return TokenRequest{}, ErrInvalidRequest
+	}
+	r, err := parseTokenValuesWithAPIKeyPolicy(values, false, &policy)
+	if err != nil {
+		return TokenRequest{}, err
+	}
+	credential, err := ParseClientAuthentication(authorization)
+	if err != nil {
+		return TokenRequest{}, err
+	}
+	r.ClientID, r.ClientAuthentication = credential.ClientID(), credential
+	return r, nil
+}
+
 func parseTokenValues(values url.Values, requireClient bool) (TokenRequest, error) {
+	return parseTokenValuesWithAPIKeyPolicy(values, requireClient, nil)
+}
+
+func parseTokenValuesWithAPIKeyPolicy(values url.Values, requireClient bool, policy *APIKeyExchangePolicy) (TokenRequest, error) {
 	r := TokenRequest{GrantType: GrantType(values.Get("grant_type")), ClientID: values.Get("client_id"), Resource: values.Get("resource")}
 	if r.GrantType != TokenExchangeGrant {
 		for _, name := range []string{"subject_token", "subject_token_type", "requested_token_type", "audience"} {
@@ -301,7 +337,7 @@ func parseTokenValues(values url.Values, requireClient bool) (TokenRequest, erro
 			return TokenRequest{}, ErrInvalidRequest
 		}
 		r.SubjectToken, r.SubjectTokenType, r.RequestedTokenType, r.Audience = values.Get("subject_token"), values.Get("subject_token_type"), values.Get("requested_token_type"), values.Get("audience")
-		if !validExchangeSubjectSyntax(r.SubjectToken, r.SubjectTokenType) || hasField(values, "requested_token_type") && r.RequestedTokenType != AccessTokenType || r.Audience != "" && !validOrigin(r.Audience) || r.Resource == "" && r.Audience == "" {
+		if !validExchangeSubjectSyntaxForPolicy(r.SubjectToken, r.SubjectTokenType, policy) || hasField(values, "requested_token_type") && r.RequestedTokenType != AccessTokenType || r.Audience != "" && !validOrigin(r.Audience) || r.Resource == "" && r.Audience == "" {
 			return TokenRequest{}, ErrInvalidRequest
 		}
 		if hasField(values, "scope") {
@@ -388,6 +424,10 @@ func ParseRevocationForm(raw string, authorization []string) (RevokeRequest, err
 }
 
 func parseFields(raw string, allowed []string) (url.Values, error) {
+	return parseFieldsWithSubjectLimit(raw, allowed, 2048)
+}
+
+func parseFieldsWithSubjectLimit(raw string, allowed []string, subjectLimit int) (url.Values, error) {
 	if len(raw) == 0 || len(raw) > 16384 || strings.Count(raw, "&") >= len(allowed) {
 		return nil, ErrInvalidRequest
 	}
@@ -396,7 +436,11 @@ func parseFields(raw string, allowed []string) (url.Values, error) {
 		return nil, ErrInvalidRequest
 	}
 	for name, entries := range values {
-		if !slices.Contains(allowed, name) || len(entries) != 1 || len(entries[0]) > 2048 {
+		limit := 2048
+		if name == "subject_token" {
+			limit = subjectLimit
+		}
+		if !slices.Contains(allowed, name) || len(entries) != 1 || len(entries[0]) > limit {
 			return nil, ErrInvalidRequest
 		}
 	}

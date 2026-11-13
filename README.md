@@ -6,9 +6,10 @@ single-factor user sessions, plus explicitly configured workload client-credenti
 This is not a complete OAuth/OIDC provider or a
 stable released API.
 
-The separate [modern USER API-key exchange profile](docs/api-key-exchange.md)
+The separate [USER API-key exchange profile](docs/api-key-exchange.md)
 lets a configured owning Basic client obtain narrower opaque access from an
-actual modern key. The key actor, USER subject and Basic caller stay distinct;
+actual modern key or an explicitly selected imported bare SHA-256 key.
+Modern remains the default. The key actor, USER subject and Basic caller stay distinct;
 matching native source composition, forward history and explicit bootstrap are
 required. No HTTP, organization or JWT profile is selected.
 
@@ -44,6 +45,9 @@ replacement authentication engine.
   exclusive public-none or confidential-Basic credential channels. Configure
   each confidential client's startup-only `ClientSecretVerifier` from a borrowed
   `password.Secret`, then destroy that startup secret.
+- `ParseAPIKeyExchangeForm` is the additive explicitly configured API-key parser.
+  `APIKeyExchangePolicy.LegacySHA256` selects bounded unchanged historical bare
+  bytes; the generic parser and omitted-zero modern policy stay unchanged.
 - `Service.AuthenticateClient` performs bounded current-client admission through
   those same configured or native registry authenticators before transport
   policy such as an authenticated-client rate bucket. It performs no durable

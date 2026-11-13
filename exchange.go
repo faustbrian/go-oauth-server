@@ -38,17 +38,22 @@ type HumanCodeExchangePolicy struct {
 	AllowRefreshIssuedAccess bool `json:",omitempty"`
 }
 
-// APIKeyExchangePolicy selects modern USER-key delegation for explicitly opted-in
+// APIKeyExchangePolicy selects USER-key delegation for explicitly opted-in
 // configured Basic clients. A key authenticates its integration actor, never its
 // human owner or the Basic caller. The native adapter must supply the real key
 // verifier, separate primary observations and final Work fences; this policy
-// alone grants no key, tenant or owner authority. Organization, legacy, JWT,
+// alone grants no key, tenant or owner authority. Organization, JWT,
 // refresh-bearer, actor-token and private-session inputs remain unselected.
 // Zero MaximumDepth means four; explicit values can only lower that ceiling.
 // ClockUncertainty and MaximumDuration must fit the ten-second race budget.
 type APIKeyExchangePolicy struct {
 	MaximumDepth     uint8
 	ClockUncertainty time.Duration
+	// LegacySHA256 selects the existing bare SHA-256 source instead of modern
+	// key syntax. The native source must use the exact verify-only configuration;
+	// token text never selects or falls back between algorithms. False preserves
+	// modern behavior and its serialized configuration fingerprints.
+	LegacySHA256 bool `json:",omitempty"`
 }
 
 // APIKeyExchangeUnknownError retains only nonsecret correlation for the actual
@@ -120,7 +125,7 @@ func (p WorkloadExchangePolicy) validated(c Config) (WorkloadExchangePolicy, err
 	return p, nil
 }
 
-func validExchangeRequest(r TokenRequest, client Client) bool {
+func validExchangeRequest(r TokenRequest, client Client, apiKeyPolicy *APIKeyExchangePolicy) bool {
 	if r.CommandID != "" {
 		if _, err := identity.ParseCommandID(string(r.CommandID)); err != nil {
 			return false
@@ -131,13 +136,21 @@ func validExchangeRequest(r TokenRequest, client Client) bool {
 		return false
 	}
 	sourceTypeAllowed := r.SubjectTokenType == AccessTokenType || client.APIKeyExchange && r.SubjectTokenType == APIKeyTokenType
-	if !sourceTypeAllowed || !validExchangeSubjectSyntax(r.SubjectToken, r.SubjectTokenType) {
+	if !sourceTypeAllowed || !validExchangeSubjectSyntaxForPolicy(r.SubjectToken, r.SubjectTokenType, apiKeyPolicy) {
 		return false
 	}
 	requestedTypeAllowed := r.RequestedTokenType == "" || r.RequestedTokenType == AccessTokenType
 	exactTarget := (r.Resource == "") != (r.Audience == "") && (r.Resource == client.Resource || r.Audience == client.Resource)
 	otherGrantsAbsent := r.Code == "" && r.CodeVerifier == "" && r.RedirectURI == "" && r.RefreshToken == ""
 	return requestedTypeAllowed && exactTarget && otherGrantsAbsent
+}
+
+func validExchangeSubjectSyntaxForPolicy(wire, tokenType string, policy *APIKeyExchangePolicy) bool {
+	if tokenType == APIKeyTokenType && policy != nil && policy.LegacySHA256 {
+		_, err := apikey.ParseLegacySecret(wire)
+		return err == nil
+	}
+	return validExchangeSubjectSyntax(wire, tokenType)
 }
 
 // The credential owner defines modern key syntax. Neither branch proves bearer

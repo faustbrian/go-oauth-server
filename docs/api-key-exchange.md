@@ -1,4 +1,4 @@
-# Modern USER API-key access exchange
+# USER API-key access exchange
 
 This separately selected finite profile uses `Service.Token` and the RFC8693
 grant with the private source type
@@ -11,9 +11,24 @@ Select `Config.APIKeyExchange` and each intended `Client.APIKeyExchange`.
 `MaximumDepth` defaults to four and may only be lowered. The trusted
 `ClockUncertainty` and `MaximumDuration` must fit the ten-second race budget.
 The owning client uses its existing configured Basic verifier. Public clients,
-managed clients, human-code/workload relabeling, organization keys, legacy keys,
+managed clients, human-code/workload relabeling, organization keys,
 JWT sources, actor tokens, refresh bearers and private-session inputs are not
 selected. This does not add an HTTP or Reference route.
+
+Modern HMAC-with-pepper keys remain the default. The separately selected
+`APIKeyExchangePolicy.LegacySHA256=true` profile admits existing imported bare
+SHA-256 USER keys only through their actual verify-only native configuration.
+The selection comes from trusted startup configuration, not credential text,
+prefixes or a form parameter; it is not a fallback between algorithms.
+
+Use the additive `ParseAPIKeyExchangeForm(rawForm, basicHeaders, policy)` for
+that explicit selection. It preserves the owning `LegacySecret` parser's
+1..4096-byte historical limit and unchanged decoded bytes, including a value
+that happens to look like a modern key. It still requires one Basic header,
+closed fields and an exact resource or audience; other fields keep their old
+bounds. The existing generic parser and omitted-zero modern policy are unchanged.
+Parsing proves no client or key authority. `Service.Token` and the matching
+native owner must authenticate independently.
 
 ## Native composition and rollout
 
@@ -22,7 +37,8 @@ Use matching published root/native and identity API-key modules. Set native
 
 - `TenantID` is startup scope, never a request-selected tenant.
 - `Configuration` is the actual modern, active, uncached, unlimited-quota key
-  configuration. Its issuer, environment and audience must exactly equal the
+  configuration, or the exact verify-only legacy configuration when
+  `LegacySHA256` is selected. Its issuer, environment and audience must exactly equal the
   OAuth issuer, environment and configured resource. An unrelated API audience
   is not mapped into new OAuth authority.
 - `Source` is the real `apikey/postgres.Service` on the same primary database.
@@ -46,6 +62,23 @@ ordinary grants. Replace unaware selected instances before activation, then call
 `Store.BootstrapAPIKeyExchangeClient` with each actual configured Basic client.
 Epoch one is idempotent; an advanced epoch is withdrawal, never repaired by
 bootstrap. Construction and token/introspection calls initialize nothing.
+
+For imported keys, install the source owner's existing `LegacyMigrationSource`
+and initialize its distinct legacy configuration before import or OAuth bootstrap.
+The actual key service retains modern `ServiceConfig.Configuration` for all new
+issuance and the selected verify-only `LegacyConfiguration` for existing records.
+Authorized digest-only imports preserve IDs, USER ownership/tenant, restrictions,
+versions, replacement lineage and tombstones without plaintext or a new paid-key
+issuance. Import retries cannot revive revoked material. Existing keys need no
+invented prefix or forced rotation; optional rotation uses the owning service's
+modern successor workflow.
+
+`AllowLegacyNoExpiry` preserves an actually absent historical credential expiry.
+It does not mean an already-expired source, invent a far-future expiry, renew
+verification timestamps or permit unbounded OAuth access. New access remains
+bounded by configured TTL and five minutes; descendants also retain their actual
+parent's expiry. Current evidence still expires from the original primary read
+start, and original metadata-only recovery cannot issue or redeliver a token.
 
 ## Issuance and authority
 

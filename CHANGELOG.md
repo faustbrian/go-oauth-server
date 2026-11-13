@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add an explicit legacy SHA-256 USER-key source selection and additive
+  `ParseAPIKeyExchangeForm` parser for unchanged 1..4096-byte historical bare
+  credentials. Other fields, Basic-only channels and default modern parsing/
+  policy fingerprints are unchanged. Matching verify-only native composition is
+  required; this does not enable legacy issuance or algorithm fallback.
+
 - Add a separately selected configured-Basic modern USER API-key exchange
   profile, private source-token type and access-only narrowing/depth limits.
   Matching native source composition is required. Preserve exact nonsecret

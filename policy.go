@@ -102,7 +102,7 @@ type Client struct {
 	// authentication or alter existing registration/grant identity. False retains
 	// the existing profile; the global/native selection is also required.
 	HumanCodeExchange bool `json:",omitempty"`
-	// APIKeyExchange selects the distinct modern USER-key integration profile.
+	// APIKeyExchange selects the distinct USER-key integration profile.
 	// It requires configured Basic authentication and matching global/native
 	// selections; it does not turn the caller or key owner into a human actor.
 	APIKeyExchange    bool `json:",omitempty"`

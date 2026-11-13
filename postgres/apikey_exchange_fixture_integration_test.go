@@ -48,8 +48,9 @@ type apiKeyNativeExchange struct {
 // only for an API-key actor and its USER resource, never the manager's human
 // session or the separately authenticated Basic client as a subject substitute.
 type apiKeyExchangeFixturePolicy struct {
-	base authorization.Service
-	user identity.UserID
+	base   authorization.Service
+	user   identity.UserID
+	legacy bool
 }
 
 func (p apiKeyExchangeFixturePolicy) Decide(ctx context.Context, c authorization.DecisionContext) (authorization.Decision, error) {
@@ -67,17 +68,24 @@ func (p apiKeyExchangeFixturePolicy) Decide(ctx context.Context, c authorization
 	if string(r.Tenant) == baselineTenant && r.Subject.ID != "" {
 		allowed := false
 		if r.Subject.Kind == authorization.SubjectUser && string(r.Subject.ID) == string(p.user) {
-			configuration := r.Resource.Type == "api-key" && r.Resource.ID == "m33-modern-user"
+			configuration := r.Resource.Type == "api-key" && (r.Resource.ID == "m33-modern-user" || p.legacy && r.Resource.ID == "m33-legacy-user")
 			ownUser := r.Resource.Type == "identity.user" && string(r.Resource.ID) == string(p.user)
+			admission := r.Resource.Type == "identity.request-admission" && string(r.Resource.ID) == string(r.Action)
 			switch r.Action {
 			case "identity.apikey.create", "identity.apikey.delete", "identity.apikey.get":
-				allowed = configuration || ownUser || r.Resource.Type == "identity.request-admission" && string(r.Resource.ID) == string(r.Action)
+				allowed = configuration || ownUser || admission
+			case "identity.apikey.import":
+				legacyConfiguration := r.Resource.Type == "api-key" && r.Resource.ID == "m33-legacy-user"
+				importSource := r.Resource.Type == "api-key-import-source" && r.Resource.ID == "m33-authenticated-import"
+				allowed = p.legacy && (legacyConfiguration || ownUser || admission || importSource)
 			case "identity:read", "identity:write":
 				allowed = configuration
 			}
 		}
 		if r.Action == "identity.apikey.verify" {
-			allowed = r.Subject.Kind == authorization.SubjectAPIKey && r.Resource.Type == "identity.user" && string(r.Resource.ID) == string(p.user) || r.Subject.Kind == authorization.SubjectServiceAccount && r.Subject.ID == "m33-modern-user" && r.Resource.Type == "identity.anonymous-flow"
+			keySubject := r.Subject.Kind == authorization.SubjectAPIKey && r.Resource.Type == "identity.user" && string(r.Resource.ID) == string(p.user)
+			unmatchedSource := r.Subject.Kind == authorization.SubjectServiceAccount && (r.Subject.ID == "m33-modern-user" || p.legacy && r.Subject.ID == "m33-legacy-user") && r.Resource.Type == "identity.anonymous-flow"
+			allowed = keySubject || unmatchedSource
 		}
 		if r.Action == "identity.command.query" && r.Resource.Type == "identity.command" && (r.Subject.Kind == authorization.SubjectAPIKey || r.Subject.Kind == authorization.SubjectUser && string(r.Subject.ID) == string(p.user)) {
 			allowed = true
@@ -167,6 +175,14 @@ func apiKeyExchangeFixture(t *testing.T, faults ...*oauthCommitFault) apiKeyNati
 }
 
 func apiKeyExchangeFixtureObserved(t *testing.T, trace *apiKeySQLTrace, faults ...*oauthCommitFault) apiKeyNativeExchange {
+	return configuredAPIKeyExchangeFixture(t, trace, false, faults...)
+}
+
+func legacyAPIKeyExchangeFixture(t *testing.T, faults ...*oauthCommitFault) apiKeyNativeExchange {
+	return configuredAPIKeyExchangeFixture(t, nil, true, faults...)
+}
+
+func configuredAPIKeyExchangeFixture(t *testing.T, trace *apiKeySQLTrace, legacy bool, faults ...*oauthCommitFault) apiKeyNativeExchange {
 	t.Helper()
 	f := passwordFixture(t, faults...)
 	manager, user := genuineAPIKeyManagerBearer(t, f)
@@ -180,7 +196,7 @@ func apiKeyExchangeFixtureObserved(t *testing.T, trace *apiKeySQLTrace, faults .
 			f.oauth.Protocol.Clients[i] = client
 		}
 	}
-	policy := apiKeyExchangeFixturePolicy{base: f.oauth.Coordinator.QueryPolicy.Authorization, user: user}
+	policy := apiKeyExchangeFixturePolicy{base: f.oauth.Coordinator.QueryPolicy.Authorization, user: user, legacy: legacy}
 	query, admission := *f.oauth.Coordinator.QueryPolicy, *f.oauth.Coordinator.AdmissionPolicy
 	query.Authorization, admission.Authorization = policy, policy
 	f.oauth.Coordinator.QueryPolicy, f.oauth.Coordinator.AdmissionPolicy = &query, &admission
@@ -198,6 +214,30 @@ func apiKeyExchangeFixtureObserved(t *testing.T, trace *apiKeySQLTrace, faults .
 	configuration, err := apikey.NewConfiguration(apikey.ConfigurationSpec{ID: "m33-modern-user", Revision: 1, State: apikey.ConfigurationActive, Issuer: f.oauth.Protocol.Issuer.String(), Environment: f.oauth.Protocol.Environment, Audience: client.Resource, PermissionReduction: apikey.PermissionReductionNarrow, MaximumLifetime: 90 * 24 * time.Hour, MaximumRead: 4 * time.Second, ClockUncertainty: time.Millisecond, DecisionRaceBudget: time.Millisecond, Quota: apikey.QuotaUnlimited, Cache: apikey.CacheDisabled})
 	if err != nil {
 		t.Fatal(err)
+	}
+	selectedConfiguration := configuration
+	var legacyConfiguration apikey.Configuration
+	var canonicalKeyID func(context.Context, apikey.KeyID) error
+	keyHistory := migrations.Source(apikeypg.MigrationSource{Version: 7100})
+	if legacy {
+		spec := configuration.Spec()
+		spec.ID, spec.Algorithm, spec.State = "m33-legacy-user", apikey.AlgorithmLegacySHA256V1, apikey.ConfigurationVerifyOnly
+		spec.AllowLegacyNoExpiry = true
+		legacyConfiguration, err = apikey.NewConfiguration(spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		selectedConfiguration = legacyConfiguration
+		canonicalKeyID = func(ctx context.Context, id apikey.KeyID) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if id != "01ARZ3NDEKTSV4RRFFQ69G5FAV" && id != "01ARZ3NDEKTSV4RRFFQ69G5FAT" {
+				return apikey.ErrInvalid
+			}
+			return nil
+		}
+		keyHistory = apikeypg.LegacyMigrationSource{Base: keyHistory, Version: 7101}
 	}
 	pepper, err := apikey.NewPepper(1, pepperBytes[:])
 	if err != nil {
@@ -220,7 +260,7 @@ func apiKeyExchangeFixtureObserved(t *testing.T, trace *apiKeySQLTrace, faults .
 		namespace string
 		source    migrations.Source
 	}{
-		{"identity_api_keys", apikeypg.MigrationSource{Version: 7100}},
+		{"identity_api_keys", keyHistory},
 		{"oauth_server", oauthpostgres.APIKeyExchangeMigrationSource{Base: oauthpostgres.MigrationSource{Schema: "oauth_store", Version: 7000}, Schema: "oauth_store", Version: 7200}},
 	} {
 		backend, err := migrationdb.New(db)
@@ -239,16 +279,21 @@ func apiKeyExchangeFixtureObserved(t *testing.T, trace *apiKeySQLTrace, faults .
 			t.Fatal("actual selected source/OAuth history", err)
 		}
 	}
-	keyOwner, err := apikeypg.NewService(f.pool, apikeypg.ServiceConfig{Configuration: configuration, Clock: clock.System{}, MaximumDuration: 4 * time.Second, Sessions: f.sessions, Session: f.oauth.Session.Repository, Profile: f.oauth.Session.Profile, LookupKeys: map[uint32]session.DigestKey{11: f.phoneInput.signin.Issuance.LookupKey}, Authorization: policy, PolicyID: "m33-api-key-source", PolicyVersion: 9, Pepper: pepper, Counters: counters, Risk: risk.ProtectedProviderAdmissionCustodyConfig{Evaluation: evaluation, ConfigurationID: "m33-api-key-provider", Keys: slices.Clone(f.oauth.Counters.EvidenceKeys)}, CounterPolicy: counterPolicy, Coordinator: f.oauth.Coordinator, RequestKeys: requestKeys, ActiveEnvelopeKeyID: "m33-api-key-envelope", RetainedEnvelopeKeys: map[string][]byte{"m33-api-key-envelope": envelopeBytes[:]}})
+	keyOwner, err := apikeypg.NewService(f.pool, apikeypg.ServiceConfig{Configuration: configuration, LegacyConfiguration: legacyConfiguration, ValidateCanonicalKeyID: canonicalKeyID, Clock: clock.System{}, MaximumDuration: 4 * time.Second, Sessions: f.sessions, Session: f.oauth.Session.Repository, Profile: f.oauth.Session.Profile, LookupKeys: map[uint32]session.DigestKey{11: f.phoneInput.signin.Issuance.LookupKey}, Authorization: policy, PolicyID: "m33-api-key-source", PolicyVersion: 9, Pepper: pepper, Counters: counters, Risk: risk.ProtectedProviderAdmissionCustodyConfig{Evaluation: evaluation, ConfigurationID: "m33-api-key-provider", Keys: slices.Clone(f.oauth.Counters.EvidenceKeys)}, CounterPolicy: counterPolicy, Coordinator: f.oauth.Coordinator, RequestKeys: requestKeys, ActiveEnvelopeKeyID: "m33-api-key-envelope", RetainedEnvelopeKeys: map[string][]byte{"m33-api-key-envelope": envelopeBytes[:]}})
 	if err != nil {
 		t.Fatal("actual API-key source owner", err)
 	}
 	if err := keyOwner.InitializeConfiguration(f.ctx, f.tenant); err != nil {
 		t.Fatal(err)
 	}
-	f.oauth.Protocol.APIKeyExchange = &oauth.APIKeyExchangePolicy{MaximumDepth: 4, ClockUncertainty: time.Millisecond}
+	if legacy {
+		if err := keyOwner.InitializeLegacyConfiguration(f.ctx, f.tenant); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.oauth.Protocol.APIKeyExchange = &oauth.APIKeyExchangePolicy{MaximumDepth: 4, ClockUncertainty: time.Millisecond, LegacySHA256: legacy}
 	f.oauth.Protocol.OwningClientIntrospection = true
-	f.oauth.APIKeyExchange = &oauthpostgres.APIKeyExchangeConfig{TenantID: f.tenant, Configuration: configuration, Source: keyOwner, ClientPolicyNamespace: "m33-api-key-clients"}
+	f.oauth.APIKeyExchange = &oauthpostgres.APIKeyExchangeConfig{TenantID: f.tenant, Configuration: selectedConfiguration, Source: keyOwner, ClientPolicyNamespace: "m33-api-key-clients"}
 	store, err := oauthpostgres.NewStore(f.pool, f.oauth, f.keys)
 	if err != nil {
 		t.Fatal("actual selected API-key exchange store", err)
@@ -260,5 +305,5 @@ func apiKeyExchangeFixtureObserved(t *testing.T, trace *apiKeySQLTrace, faults .
 	if err != nil {
 		t.Fatal(err)
 	}
-	return apiKeyNativeExchange{f: f, client: client, basic: basic, service: service, store: store, keys: keyOwner, configuration: configuration, manager: manager, user: user}
+	return apiKeyNativeExchange{f: f, client: client, basic: basic, service: service, store: store, keys: keyOwner, configuration: selectedConfiguration, manager: manager, user: user}
 }

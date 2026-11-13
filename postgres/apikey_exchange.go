@@ -22,11 +22,14 @@ import (
 	oauth "github.com/faustbrian/go-oauth-server"
 )
 
-// APIKeyExchangeConfig selects one trusted modern USER-key source, not a tenant
+// APIKeyExchangeConfig selects one trusted USER-key source, not a tenant
 // chosen by an OAuth request. Source must be the actual native owner on this
 // Store's primary database and outlive it. Configuration must describe that
 // owner's exact issuer/environment/audience/revision. This initial profile is
 // uncached and unlimited-quota only; other profiles are not silently weakened.
+// Root LegacySHA256 must match an explicit verify-only legacy configuration;
+// otherwise the active modern profile is required. Absent historical expiry
+// needs the owning legacy policy and never removes OAuth's finite lifetime.
 // ClientPolicyNamespace is an independent existing authorization namespace,
 // bootstrapped explicitly per configured Basic registration after all seven
 // APIKeyExchangeMigrationSource steps. An advanced epoch is withdrawal, not
@@ -45,7 +48,10 @@ func (APIKeyExchangeConfig) MarshalJSON() ([]byte, error) { return nil, oauth.Er
 
 func (c APIKeyExchangeConfig) validated(parent Config, protocol oauth.Config) (APIKeyExchangeConfig, error) {
 	p := c.Configuration.Spec()
-	selectedSource := c.Source != nil && c.Configuration.Validate() == nil && c.Configuration.AllowsVerification() && p.Algorithm == apikey.AlgorithmModernHMACSHA256 && p.Quota == apikey.QuotaUnlimited && p.Cache == apikey.CacheDisabled
+	modern := p.Algorithm == apikey.AlgorithmModernHMACSHA256 && p.State == apikey.ConfigurationActive
+	legacy := p.Algorithm == apikey.AlgorithmLegacySHA256V1 && p.State == apikey.ConfigurationVerifyOnly
+	profileMatches := protocol.APIKeyExchange != nil && (protocol.APIKeyExchange.LegacySHA256 && legacy || !protocol.APIKeyExchange.LegacySHA256 && modern)
+	selectedSource := c.Source != nil && c.Configuration.Validate() == nil && c.Configuration.AllowsVerification() && profileMatches && p.Quota == apikey.QuotaUnlimited && p.Cache == apikey.CacheDisabled
 	exactAudience := p.Issuer == protocol.Issuer.String() && p.Environment == protocol.Environment && p.Audience == protocol.Resource
 	if !selectedSource || !exactAudience || (authority.AuthorityScope{TenantID: authorization.TenantID(c.TenantID), PolicyNamespace: c.ClientPolicyNamespace, SubjectID: "scope-validation"}).Validate() != nil {
 		return APIKeyExchangeConfig{}, oauth.ErrInvalidRequest
@@ -101,7 +107,10 @@ func (s apiKeyGrantSource) binding(configuration apikey.Configuration) (apikey.S
 		return apikey.SourceAuthorityBinding{}, oauth.ErrInvalidGrant
 	}
 	b := apikey.SourceAuthorityBinding{ConfigurationAuthority: apikey.ConfigurationAuthorityBinding{TenantID: s.Owner.TenantID, ConfigurationID: s.ConfigurationID, Version: s.ConfigurationAuthority}, ConfigurationRevision: s.ConfigurationRevision, KeyID: s.KeyID, Owner: owner, AuthorityVersion: s.AuthorityVersion, RootID: s.RootID, RootVersion: s.RootVersion, Issuer: s.Issuer, Environment: s.Environment, Audience: s.Audience, Grant: slices.Clone(s.Grant), ExpiresAt: s.ExpiresAt}
-	historicalWindow := !s.ReadStartedAt.IsZero() && !s.VerifiedAt.Before(s.ReadStartedAt) && s.VerifiedAt.Sub(s.ReadStartedAt) <= configuration.Spec().MaximumRead && s.ValidUntil.After(s.VerifiedAt) && !s.ValidUntil.After(s.ReadStartedAt.Add(20*time.Second)) && !s.ValidUntil.After(s.ExpiresAt)
+	// Only the owning source binding may admit an absent legacy expiry. It
+	// never removes the original verification window's independent deadline.
+	withinCredentialExpiry := s.ExpiresAt.IsZero() || !s.ValidUntil.After(s.ExpiresAt)
+	historicalWindow := !s.ReadStartedAt.IsZero() && !s.VerifiedAt.Before(s.ReadStartedAt) && s.VerifiedAt.Sub(s.ReadStartedAt) <= configuration.Spec().MaximumRead && s.ValidUntil.After(s.VerifiedAt) && !s.ValidUntil.After(s.ReadStartedAt.Add(20*time.Second)) && withinCredentialExpiry
 	if b.Validate(configuration) != nil || !historicalWindow {
 		return apikey.SourceAuthorityBinding{}, oauth.ErrInvalidGrant
 	}
@@ -133,7 +142,8 @@ func (s *Store) validAPIKeyGrant(g grantRecord, client oauth.Client) bool {
 	scope := s.apiKeyClientScope(client)
 	ownerMatches := g.Tenant == s.config.APIKeyExchange.TenantID && g.Tenant == binding.Owner.Spec().TenantID && g.User == binding.Owner.Spec().UserID
 	clientMatches := g.ClientID == client.ID && g.ClientVersion == client.Version && g.ClientFingerprint == clientFingerprint(client) && source.ClientNamespace == scope.PolicyNamespace && source.ClientAuthoritySubject == string(scope.SubjectID) && source.ClientAuthorityVersion == 1
-	ceilingMatches := g.Resource == source.Audience && g.Resource == client.Resource && scopeSubset(g.Scopes, source.Grant) && scopeSubset(g.Scopes, client.Scopes) && !hasExtensionScopes(g.Scopes) && !g.ExpiresAt.After(source.ExpiresAt) && g.ExpiresAt.After(g.CreatedAt) && !g.ExpiresAt.After(g.CreatedAt.Add(s.config.Protocol.AccessTTL))
+	withinCredentialExpiry := source.ExpiresAt.IsZero() || !g.ExpiresAt.After(source.ExpiresAt)
+	ceilingMatches := g.Resource == source.Audience && g.Resource == client.Resource && scopeSubset(g.Scopes, source.Grant) && scopeSubset(g.Scopes, client.Scopes) && !hasExtensionScopes(g.Scopes) && withinCredentialExpiry && g.ExpiresAt.After(g.CreatedAt) && !g.ExpiresAt.After(g.CreatedAt.Add(s.config.Protocol.AccessTTL))
 	return err == nil && ownerMatches && clientMatches && ceilingMatches && source.Policy == *s.config.Protocol.APIKeyExchange
 }
 
@@ -469,17 +479,27 @@ func (s *Store) exchangeAPIKey(ctx context.Context, client oauth.Client, request
 	var p *phase
 	var verificationQuery apikey.VerificationReconcileQuery
 	if request.SubjectTokenType == oauth.APIKeyTokenType {
-		secret, err := apikey.ParseSecret(request.SubjectToken)
+		configuration := s.config.APIKeyExchange.Configuration
+		// Separate domain-separated coordinator command, stable across retries.
+		attempt := s.apiKeyVerificationAttempt(client, command)
+		verificationRequest := apikey.AtomicVerificationRequest{AttemptID: attempt, TenantID: s.config.APIKeyExchange.TenantID, ConfigurationID: configuration.Spec().ID, ConfigurationRevision: configuration.Spec().Revision, RequiredPermissions: selected}
+		// The configured source selects exactly one parser/algorithm. A token
+		// prefix is never a hint to try another credential profile.
+		switch configuration.Spec().Algorithm {
+		case apikey.AlgorithmModernHMACSHA256:
+			verificationRequest.Secret, err = apikey.ParseSecret(request.SubjectToken)
+		case apikey.AlgorithmLegacySHA256V1:
+			verificationRequest.LegacySecret, err = apikey.ParseLegacySecret(request.SubjectToken)
+		default:
+			return fail(oauth.ErrInvalidGrant)
+		}
 		if err != nil {
 			return fail(oauth.ErrInvalidGrant)
 		}
-		// Separate domain-separated coordinator command, stable across retries.
-		attempt := s.apiKeyVerificationAttempt(client, command)
-		configuration := s.config.APIKeyExchange.Configuration
-		verification, err := s.config.APIKeyExchange.Source.VerifyAndConsume(ctx, apikey.AtomicVerificationRequest{AttemptID: attempt, TenantID: s.config.APIKeyExchange.TenantID, ConfigurationID: configuration.Spec().ID, ConfigurationRevision: configuration.Spec().Revision, Secret: secret, RequiredPermissions: selected})
+		verification, err := s.config.APIKeyExchange.Source.VerifyAndConsume(ctx, verificationRequest)
 		verificationQuery = apikey.VerificationReconcileQuery{AttemptID: verification.AttemptID, TenantID: s.config.APIKeyExchange.TenantID, Fingerprint: verification.Fingerprint, Original: verification.Original}
 		request.SubjectToken = ""
-		secret = apikey.Secret{}
+		verificationRequest.Secret, verificationRequest.LegacySecret = apikey.Secret{}, apikey.LegacySecret{}
 		if verification.Outcome == identity.CommitOutcomeUnknown || verification.Outcome == identity.CommitOutcomeInProgress {
 			if verificationQuery.Validate() != nil {
 				verificationQuery = apikey.VerificationReconcileQuery{}
@@ -508,7 +528,11 @@ func (s *Store) exchangeAPIKey(ctx context.Context, client oauth.Client, request
 		source.ClientAuthorityVersion = 1
 		source.Policy = *s.config.Protocol.APIKeyExchange
 		now := s.now()
-		g := grantRecord{ID: string(command), Tenant: source.Owner.TenantID, User: source.Owner.UserID, ClientID: client.ID, ClientVersion: client.Version, ClientFingerprint: clientFingerprint(client), Source: []identity.FeatureField{}, Scopes: selected, Resource: client.Resource, CreatedAt: now, ExpiresAt: minTime(source.ExpiresAt, now.Add(min(s.config.Protocol.AccessTTL, 5*time.Minute))), APIKeySource: source}
+		expires := now.Add(min(s.config.Protocol.AccessTTL, 5*time.Minute))
+		if !source.ExpiresAt.IsZero() {
+			expires = minTime(expires, source.ExpiresAt)
+		}
+		g := grantRecord{ID: string(command), Tenant: source.Owner.TenantID, User: source.Owner.UserID, ClientID: client.ID, ClientVersion: client.Version, ClientFingerprint: clientFingerprint(client), Source: []identity.FeatureField{}, Scopes: selected, Resource: client.Resource, CreatedAt: now, ExpiresAt: expires, APIKeySource: source}
 		p = &phase{store: s, client: client, input: phaseInput{Schema: 1, Configuration: s.identity, Transition: createAPIKeyGrant, Grant: g, CreatedAt: now, Scopes: selected, Intent: s.intent("api-key-exchange-v1", string(command), string(source.KeyID), request.Resource, request.Audience, strings.Join(selected, " ")), Network: request.Network}}
 		p.input.APIKeyExchange = &apiKeyExchangeLineage{RootID: string(source.RootID), RootVersion: source.RootVersion, ParentID: string(source.RootID), ParentVersion: source.RootVersion, ParentTokenType: oauth.APIKeyTokenType, Depth: 1, SourceFingerprint: apiKeySourceFingerprint(source), Issuer: source.Issuer, Environment: source.Environment, ClientID: client.ID, ClientVersion: client.Version, Resource: client.Resource, SourceReadStartedAt: source.ReadStartedAt, SourceValidUntil: source.ValidUntil}
 		p.bind(command, "identity.oauth-server.token", g.ID)

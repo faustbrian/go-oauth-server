@@ -3,15 +3,36 @@
 Experimental persistence and public service composition for the
 [selected authorization-code profile](../docs/selected-profile.md).
 
-## Optional modern USER API-key exchange
+## Optional USER API-key exchange
 
 Select the [finite API-key profile](../docs/api-key-exchange.md) with the real
-native API-key Service on the same primary database and one trusted modern,
-uncached unlimited-quota configuration. Issuer, environment and source audience
+native API-key Service on the same primary database and one trusted modern or
+explicit verify-only legacy, uncached unlimited-quota configuration.
+Issuer, environment and source audience
 must exactly match OAuth; the USER owner, key actor and Basic caller remain
 distinct. Install all seven `APIKeyExchangeMigrationSource` successor steps
 before source/client bootstrap and runtime opt-in. Plain OAuth history suffices;
 workload/device capabilities are not mandatory or implicitly enabled.
+
+Modern remains the default. Set root `APIKeyExchangePolicy.LegacySHA256` only
+with the exact native verify-only legacy configuration; mismatched policy/source
+algorithms fail construction. Parse selected historical forms through the
+additive `oauth.ParseAPIKeyExchangeForm`; existing generic/default modern parsing
+is unchanged. The configured algorithm, never a token prefix, chooses the real
+`AtomicVerificationRequest.Secret` or `LegacySecret` owner. Existing bare bytes
+remain unchanged within the legacy parser's 1..4096-byte bound.
+
+Install the source owner's existing legacy migration and initialize its selected
+legacy configuration before authorized digest-only import or OAuth bootstrap.
+Imported USER IDs/ownership, restrictions, versions, expiry/tombstones and
+replacement lineage remain original; import is not key issuance, and retries
+cannot revive revocation. The borrowed key service retains modern configuration
+for all new issuance and modern successors. No raw source key is stored by OAuth.
+Explicit `AllowLegacyNoExpiry` retains actual absent credential expiry, but new
+OAuth access remains bounded by configured TTL/five minutes and each descendant
+by its real parent. Original source freshness and metadata-only recovery do not
+renew or reconstruct a credential. This selection adds no SQL or schema change;
+the existing API-key lineage history is reused.
 
 First access retains its real key root without fake OAuth/session ancestry;
 later access points to real OAuth parents. Current source Work fences and native

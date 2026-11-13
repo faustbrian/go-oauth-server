@@ -14,8 +14,8 @@ require (
 	github.com/faustbrian/go-http-client/v2 v2.1.0
 	github.com/faustbrian/go-identifier/v2 v2.0.3-0.20261015083104-9892f17723c0
 	github.com/faustbrian/go-identity v0.0.0-20261109180909-8901e7f09812
-	github.com/faustbrian/go-identity/apikey v0.0.0-20261113140858-14b809c958f7
-	github.com/faustbrian/go-identity/apikey/postgres v0.0.0-20261113150852-ae528e034e9b
+	github.com/faustbrian/go-identity/apikey v0.0.0-20261113192516-5fe33204f8ed
+	github.com/faustbrian/go-identity/apikey/postgres v0.0.0-20261113195830-936ab4a80658
 	github.com/faustbrian/go-identity/delivery v0.0.0-20261015061706-1f0b46ab1053
 	github.com/faustbrian/go-identity/delivery/postgres v0.0.0-20261015104034-f16881100907
 	github.com/faustbrian/go-identity/email v0.0.0-20261018110349-e38aa409e7d8
@@ -36,7 +36,7 @@ require (
 	github.com/faustbrian/go-identity/session v0.0.0-20261028180115-9a0e8a020cce
 	github.com/faustbrian/go-identity/session/postgres v0.0.0-20261027044816-80f08eb82bb9
 	github.com/faustbrian/go-migrations/v3 v3.1.1-0.20261015110643-ca105f265cfc
-	github.com/faustbrian/go-oauth-server v0.0.0-20261113181714-9886c1b7f2b6
+	github.com/faustbrian/go-oauth-server v0.0.0-20261113200135-6da80d0c2f51
 	github.com/faustbrian/go-oauth-server/device v0.0.0-20261023095306-ca7b0b8a9b26
 	github.com/faustbrian/go-oauth-server/oidc v0.0.0-20261026095351-baa3ff6f2bf5
 	github.com/faustbrian/go-password/v2 v2.0.2-0.20261015050515-4eb0fefa60ff

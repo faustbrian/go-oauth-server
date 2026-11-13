@@ -66,7 +66,7 @@ type Config struct {
 	// namespaces: the public authority owner has no separate subject-kind key.
 	HumanCodeExchangeClientNamespace string
 	// APIKeyExchange borrows the actual primary key owner for the explicitly
-	// selected configured-Basic modern USER-key delegation profile. Nil leaves
+	// selected configured-Basic USER-key delegation profile. Nil leaves
 	// existing profiles and their schema requirements unchanged.
 	APIKeyExchange *APIKeyExchangeConfig
 	// ConsentManagement enables own-consent reads/withdrawal and mandatory

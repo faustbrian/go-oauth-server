@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Support explicitly selected imported bare SHA-256 USER-key exchange through
+  the actual native verification/source-fence owners. Require exact agreement
+  between root policy and verify-only source configuration; preserve absent
+  historical expiry without unbounded OAuth access or renewed freshness.
+  Narrowing, revocation/non-resurrection and original metadata-only recovery
+  retain their existing owners. Modern issuance/defaults and SQL/history are unchanged.
+
 - Add opt-in modern USER-key delegation through the actual native API-key
   verifier, fresh primary observations and registered Work source fences.
   Preserve key actor/USER subject/Basic caller separation, real key-root and

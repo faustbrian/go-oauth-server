@@ -2,6 +2,7 @@ package oauthpostgres
 
 import (
 	"errors"
+	"slices"
 	"testing"
 
 	oauth "github.com/faustbrian/go-oauth-server"
@@ -88,5 +89,37 @@ func TestConfidentialOIDCMetadataReplacementPreservesOriginalClassAndPolicyIdent
 	policy.ConfidentialOIDCUpdates = false
 	if out, err := store.updatedClient(client, replacement); !errors.Is(err, oauth.ErrAccessDenied) || out.ID != "" {
 		t.Fatal("creation-only policy admitted confidential replacement", err)
+	}
+}
+
+func TestRetainedOIDCMetadataReplacementKeepsOriginalRegistration(t *testing.T) {
+	store, execution, id := cursorReadFixture()
+	store.config.Protocol.Resource = "https://api.example"
+	p := store.config.Protocol.ManagedClients
+	p.ConfidentialOIDC, p.ConfidentialOIDCUpdates = true, true
+	registration, _ := oauth.NewOIDCSubjectRegistration("pairwise", "client.example", "subjects", 1)
+	p.PairwiseRegistrations = []oauth.OIDCSubjectRegistration{registration}
+	retainedPolicy := store.managementPolicy()
+	p.ConfidentialPairwiseUpdates = true
+	client := oauth.Client{ID: id, Owner: execution.Request.Owner, Version: 1, Resource: store.config.Protocol.Resource, AuthenticationMethod: "client_secret_basic", SubjectRegistration: &registration, Redirects: p.Redirects, Scopes: []string{"openid"}}
+	updated, err := store.updatedClient(client, &clientReplacement{Redirects: client.Redirects, Scopes: client.Scopes})
+	if err != nil || updated.SubjectRegistration == nil || *updated.SubjectRegistration != registration || updated.Public || updated.AuthenticationMethod != client.AuthenticationMethod {
+		t.Fatal("native pairwise replacement did not retain its original registration", err)
+	}
+	if out, err := store.updatedClient(client, &clientReplacement{Redirects: []string{"https://foreign.example/cb"}, Scopes: client.Scopes}); err == nil || out.ID != "" {
+		t.Fatal("native replacement attached a foreign registered sector")
+	}
+	p.PublicClients, p.PublicOIDC, p.PublicOIDCUpdates = true, true, true
+	store.config.PublicClients = true
+	p.PublicOIDCScopes = []string{"openid", "email", "phone", "profile"}
+	p.PublicOIDCClaimsUpdates = true
+	client.Public, client.AuthenticationMethod, client.SubjectRegistration = true, "none", nil
+	client.Scopes = []string{"email", "openid", "phone", "profile"}
+	updated, err = store.updatedClient(client, &clientReplacement{Redirects: client.Redirects, Scopes: []string{"email", "openid"}})
+	if err != nil || !updated.Public || updated.SubjectRegistration != nil || !slices.Equal(updated.Scopes, []string{"email", "openid"}) {
+		t.Fatal("native public claims replacement escaped its selected scope ceiling", err)
+	}
+	if store.managementPolicy() != retainedPolicy {
+		t.Fatal("new operation selections changed retained management preparation identity")
 	}
 }

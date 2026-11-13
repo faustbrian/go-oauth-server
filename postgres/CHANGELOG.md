@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Support explicitly selected metadata replacement for existing confidential
+  single-host pairwise and public profile/email/phone OIDC clients through the
+  existing Work/CAS/recovery owner. Preserve pairwise registration/binding and
+  secret custody; old consent/grants/UserInfo deny and new grants use fresh
+  consent/S256 with the same subject and selected claims. Reuse installed
+  migration history without new SQL or a new authority engine.
+
 - Support explicitly selected confidential Basic/default-subject/openid-only OIDC
   metadata replacement through the existing management Work/CAS and recovery.
   Preserve secret digest generations and default subject while invalidating old

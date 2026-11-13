@@ -285,7 +285,8 @@ It requires native/protocol public-client activation and `PublicOIDC`; that
 Boolean alone remains openid-only. Keep the managed OAuth `Scopes` ceiling and
 the established genuine configured-client catalog unchanged. This profile selects
 only default-subject public browser clients, never confidential/pairwise claims,
-device, address/offline access, custom fields or metadata replacement.
+device, address/offline access or custom fields. Creation selection alone never
+enables metadata replacement; its separate update selection is documented below.
 
 Adopt the matching published root and compose the actual child with the selected
 `ProfileUserInfo`, `EmailUserInfo` and `PhoneUserInfo` options. Name requires the
@@ -356,8 +357,8 @@ registrations. A manager's `ClientManagementRequest.SubjectRegistration` may
 select only one exact allowed registration; every redirect must use its single
 registered host. Selection is immutable, confidential Basic/browser/`openid`
 only. Nil retains the original default public subject and canonical persisted
-registration/request-intent bytes. Additional claims, multi-host sector URIs
-and metadata replacement are not selected. Public pairwise requires the
+registration/request-intent bytes. Additional claims and multi-host sector URIs
+are not selected; creation alone enables no metadata replacement. Public pairwise requires the
 separate public-class selection below.
 
 Append the existing `PairwiseMigrationSource` after the deployment's actual
@@ -612,6 +613,34 @@ and default subject. Pairwise/claims/device/workload OIDC updates, authenticatio
 changes and RFC7592 stay excluded. `TestNativeConfidentialOIDCClientUpdate*`
 consumes actual creation, independent RP validation and the original native
 replay/rollback/lost-COMMIT owner, without adding an HTTP route or new engine.
+
+For already-supported confidential single-host pairwise clients, additionally
+select `Protocol.ManagedClients.ConfidentialPairwiseUpdates` alongside
+`ConfidentialOIDCUpdates` and the existing exact `PairwiseRegistrations` ceiling.
+Keep `Management.Public=false` and `Scopes: []string{"openid"}`. No request
+`SubjectRegistration` edit is permitted: the original value, policy/key version
+and sector remain unchanged, including under protected mutation/recovery fences.
+Replacement redirects must retain that sector even when another host is in the
+global redirect ceiling. Subject custody remains with the existing installed
+pairwise keys/bindings; new grants reuse the same stable binding, not a new subject.
+
+For already-supported public account-claims clients, additionally select
+`Protocol.ManagedClients.PublicOIDCClaimsUpdates` alongside `PublicOIDCUpdates`
+and the existing exact `PublicOIDCScopes` ceiling. Keep `Management.Public=true`
+and the default subject. Complete OIDC scope replacements may narrow/change
+selected profile/email/phone scopes within that ceiling but must retain `openid`;
+OAuth/OIDC conversion and confidential/pairwise claims remain excluded. Actual
+native profile/contact and child UserInfo composition are unchanged prerequisites.
+Old consent/code/access/refresh/UserInfo deny; fresh explicit consent/S256 grants
+only the new selected claims, with independently verified unchanged subject.
+
+Both operation selectors default to false and do not change retained native
+preparation identity. Reuse installed client/rotation/update/signing plus the
+selected public or pairwise history. Existing `ClientUpdateMigrationSource` may
+append at a fresh version after that deployment's populated history without
+rewriting old SQL; no new schema or management engine is introduced.
+`TestNativeRetainedOIDCClientUpdate*` consumes genuine creation and independent
+RP flows, required-effect rollback, current denial and lost-COMMIT recovery.
 
 The existing sole Work serializes update/rotation/deletion and ordinary grant
 admission on the same client root, preserving original <=20s authority through

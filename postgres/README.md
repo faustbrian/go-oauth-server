@@ -569,8 +569,34 @@ never a generation inferred from today's aggregate. Existing history, digest
 framing and original recovery remain intact.
 Public metadata updates keep every secret slot null and its bookkeeping
 generation unchanged. They use the already installed update/public constraints;
-no additional migration or registration access token is required. OIDC and
-workload metadata updates and RFC7592 management remain unselected.
+no additional migration or registration access token is required. Workload and
+unselected OIDC metadata updates and RFC7592 management remain excluded.
+
+`Protocol.ManagedClients.PublicOIDCUpdates=true` separately selects replacement
+for an already-supported public/default-subject/openid-only OIDC browser client.
+It requires existing `PublicClients`/`PublicOIDC`, composed OIDC core/child, and
+the same installed public/rotation/update histories. No additional migration is
+needed. Send the existing `ClientUpdateRequest` with `Management.Public=true`,
+the discovered ID/version and genuine original management custody, complete
+redirect/post-logout replacements within the fixed ceilings, and unchanged
+`Scopes: []string{"openid"}`. Creation does not implicitly select this operation.
+
+The shared structural predicate checks ORIGINAL and replacement registration
+before metadata is overwritten, including under the existing protected root
+lock and final Work fence. Default subject registration, `none`, owner, resource
+and all null secret slots are preserved. OIDC/OAuth conversion, confidential,
+pairwise, additional-claim, device-OIDC and workload replacements are excluded;
+the existing OAuth path still preserves its supported device flag. The new
+omitted-zero selector leaves old canonical policy/intent bytes unchanged.
+Every actual replacement advances client authority once: old consent,
+codes/access/refresh and UserInfo access deny; new exact redirects require fresh
+explicit consent and S256. Subject derivation and signing stay with existing
+owners; replacing redirects does not change the default subject.
+
+The native consumer `TestNativePublicOIDCClientUpdate*` starts with real password
+session/client issuance and independent RP discovery/S256/ID-token/UserInfo, then
+exercises replacement, original recovery, current denial and contention. It does
+not provide HTTP/Reference routes or broaden OIDC/whole-unit qualification.
 
 The existing sole Work serializes update/rotation/deletion and ordinary grant
 admission on the same client root, preserving original <=20s authority through

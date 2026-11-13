@@ -32,11 +32,11 @@ func (s *Store) updatedClient(c oauth.Client, r *clientReplacement) (oauth.Clien
 	if r == nil || c.Version == ^uint64(0) {
 		return oauth.Client{}, oauth.ErrInvalidRequest
 	}
-	// Metadata replacement remains the OAuth-only profile. Check the original
-	// scopes before overwriting them, including at the protected mutation call,
-	// so selecting OIDC creation cannot also convert an existing OIDC client.
+	// Check both original and replacement class before overwriting metadata,
+	// including at the protected mutation/final fence. OIDC creation alone does
+	// not select replacement, and another OIDC class cannot be converted here.
 	policy := s.config.Protocol.ManagedClients
-	if policy == nil || !scopeSubset(c.Scopes, policy.Scopes.Scopes()) {
+	if policy == nil || !policy.AllowsMetadataReplacement(c, r.Scopes) {
 		return oauth.Client{}, oauth.ErrAccessDenied
 	}
 	c.Version++

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add explicit native public/default-subject/openid-only OIDC redirect and
+  post-logout replacement through the existing management Work/CAS and original
+  recovery. Reuse installed public/rotation/update histories without new SQL or
+  schema. Secret custody, default subject and other OIDC-class exclusions remain
+  unchanged; earlier client-version consent/grants/UserInfo access are withdrawn.
+
 - Support native current-manager metadata replacement for no-secret public
   OAuth browser clients using existing public/update migration history and
   request-key recovery. The expected class is bound to immutable preparation

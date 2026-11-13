@@ -45,19 +45,20 @@ import (
 )
 
 type authenticatedPasswordFixture struct {
-	ctx            context.Context
-	pool           *database.Pool
-	tenant         identity.TenantID
-	browser        auth.BearerCredential
-	csrf           session.CSRFToken
-	sessions       *session.SessionService
-	keys           *keyring.Provider
-	oauth          oauthpostgres.Config
-	signOut        func()
-	changePassword func()
-	signInAgain    func() (auth.BearerCredential, session.CSRFToken)
-	anotherUser    func() (auth.BearerCredential, session.CSRFToken)
-	phoneInput     *nativePhoneInput
+	ctx                        context.Context
+	pool                       *database.Pool
+	tenant                     identity.TenantID
+	browser                    auth.BearerCredential
+	csrf                       session.CSRFToken
+	sessions                   *session.SessionService
+	keys                       *keyring.Provider
+	oauth                      oauthpostgres.Config
+	signOut                    func()
+	changePassword             func()
+	signInAgain                func() (auth.BearerCredential, session.CSRFToken)
+	anotherUser                func() (auth.BearerCredential, session.CSRFToken)
+	anotherUserWithCredentials func(func(string, []byte)) (auth.BearerCredential, session.CSRFToken)
+	phoneInput                 *nativePhoneInput
 }
 
 // The explicit provider seam records at most one bounded rendered registration
@@ -477,7 +478,7 @@ func passwordFixtureWithSignupRecovery(t *testing.T, change bool, profileSchema 
 		}
 		return auth.NewBearerCredential(cookies[0].Value), csrf
 	}
-	anotherUser := func() (auth.BearerCredential, session.CSRFToken) {
+	anotherUser := func(consumeCredentials func(string, []byte)) (auth.BearerCredential, session.CSRFToken) {
 		// A separate browser performs the same public registration/confirmation/
 		// sign-in journey. No identity/session rows or authority are fabricated.
 		previous := client.Jar
@@ -518,6 +519,15 @@ func passwordFixtureWithSignupRecovery(t *testing.T, change bool, profileSchema 
 		if status != 200 || json.Unmarshal(body, &confirmed) != nil || !confirmed.Confirmed || confirmed.CommitOutcome != "committed" || len(cookies) != 0 {
 			t.Fatal("second-user real confirmation failed", status)
 		}
+		if consumeCredentials != nil {
+			// The optional consumer borrows only this invocation's generated
+			// credentials for genuine native BearerSignin, never a saved cookie.
+			borrowedPassword := []byte(password)
+			func() {
+				defer clear(borrowedPassword)
+				consumeCredentials(address, borrowedPassword)
+			}()
+		}
 		flow = preauth("password")
 		status, body, headers, cookies := call("/v1/password/signin", map[string]any{"flowID": string(flow.FlowID), "identifier": address, "password": password, "callbackURL": origin + "/confirm"}, "")
 		var signed passwordhttp.SigninResponse
@@ -537,7 +547,7 @@ func passwordFixtureWithSignupRecovery(t *testing.T, change bool, profileSchema 
 	phoneCandidate := []byte(candidate)
 	phoneSessionKey := material("session-token")
 	t.Cleanup(func() { clear(phoneCandidate); clear(phoneSessionKey) })
-	return authenticatedPasswordFixture{ctx: ctx, pool: pool, tenant: baselineTenant, browser: browser, csrf: csrf, sessions: sessions, keys: keys, oauth: config, signOut: signOut, changePassword: changePassword, signInAgain: signInAgain, anotherUser: anotherUser,
+	return authenticatedPasswordFixture{ctx: ctx, pool: pool, tenant: baselineTenant, browser: browser, csrf: csrf, sessions: sessions, keys: keys, oauth: config, signOut: signOut, changePassword: changePassword, signInAgain: signInAgain, anotherUser: func() (auth.BearerCredential, session.CSRFToken) { return anotherUser(nil) }, anotherUserWithCredentials: anotherUser,
 		phoneInput: &nativePhoneInput{signin: graph.signin, signup: graph.signup, hibp: graph.hibp, keys: phoneKeys, identifier: address, password: phoneCandidate, sessionKey: phoneSessionKey}}
 }
 

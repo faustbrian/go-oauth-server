@@ -42,6 +42,8 @@ type apiKeyNativeExchange struct {
 	configuration apikey.Configuration
 	manager       apikey.Authentication
 	user          identity.UserID
+	sourceConfig  apikeypg.ServiceConfig
+	managerRisk   risk.AuthenticationAdmissionCustodyConfig
 }
 
 // This is application policy, not authentication. OAuth issuance is allowed
@@ -99,12 +101,17 @@ func (p apiKeyExchangeFixturePolicy) Decide(ctx context.Context, c authorization
 
 func genuineAPIKeyManagerBearer(t *testing.T, f authenticatedPasswordFixture) (apikey.Authentication, identity.UserID) {
 	t.Helper()
+	return genuineAPIKeyManagerBearerWithRisk(t, f, phoneAuthenticationRisk(t, f))
+}
+
+func genuineAPIKeyManagerBearerWithRisk(t *testing.T, f authenticatedPasswordFixture, authenticationRisk risk.AuthenticationAdmissionCustodyConfig) (apikey.Authentication, identity.UserID) {
+	t.Helper()
 	input := f.phoneInput
 	c := input.signin
 	c.Transport, c.CSRFKey, c.Issuance.Cookie = password.BearerSignin, session.CSRFKey{}, session.CookiePolicy{}
 	// Reuse the existing real counted-authentication fixture, not phone state,
 	// a risk double or a cookie token reclassified as a bearer session.
-	c.Risk = phoneAuthenticationRisk(t, f)
+	c.Risk = authenticationRisk
 	signin, err := passwordpg.NewSigninService(f.pool, c)
 	if err != nil {
 		t.Fatal("actual bearer signin owner configuration", err)
@@ -185,7 +192,8 @@ func legacyAPIKeyExchangeFixture(t *testing.T, faults ...*oauthCommitFault) apiK
 func configuredAPIKeyExchangeFixture(t *testing.T, trace *apiKeySQLTrace, legacy bool, faults ...*oauthCommitFault) apiKeyNativeExchange {
 	t.Helper()
 	f := passwordFixture(t, faults...)
-	manager, user := genuineAPIKeyManagerBearer(t, f)
+	managerRisk := phoneAuthenticationRisk(t, f)
+	manager, user := genuineAPIKeyManagerBearerWithRisk(t, f, managerRisk)
 	if trace != nil {
 		f.pool = observedAPIKeyPool(t, f, trace)
 	}
@@ -279,7 +287,13 @@ func configuredAPIKeyExchangeFixture(t *testing.T, trace *apiKeySQLTrace, legacy
 			t.Fatal("actual selected source/OAuth history", err)
 		}
 	}
-	keyOwner, err := apikeypg.NewService(f.pool, apikeypg.ServiceConfig{Configuration: configuration, LegacyConfiguration: legacyConfiguration, ValidateCanonicalKeyID: canonicalKeyID, Clock: clock.System{}, MaximumDuration: 4 * time.Second, Sessions: f.sessions, Session: f.oauth.Session.Repository, Profile: f.oauth.Session.Profile, LookupKeys: map[uint32]session.DigestKey{11: f.phoneInput.signin.Issuance.LookupKey}, Authorization: policy, PolicyID: "m33-api-key-source", PolicyVersion: 9, Pepper: pepper, Counters: counters, Risk: risk.ProtectedProviderAdmissionCustodyConfig{Evaluation: evaluation, ConfigurationID: "m33-api-key-provider", Keys: slices.Clone(f.oauth.Counters.EvidenceKeys)}, CounterPolicy: counterPolicy, Coordinator: f.oauth.Coordinator, RequestKeys: requestKeys, ActiveEnvelopeKeyID: "m33-api-key-envelope", RetainedEnvelopeKeys: map[string][]byte{"m33-api-key-envelope": envelopeBytes[:]}})
+	sourceConfig := apikeypg.ServiceConfig{Configuration: configuration, LegacyConfiguration: legacyConfiguration, ValidateCanonicalKeyID: canonicalKeyID, Clock: clock.System{}, MaximumDuration: 4 * time.Second, Sessions: f.sessions, Session: f.oauth.Session.Repository, Profile: f.oauth.Session.Profile, LookupKeys: map[uint32]session.DigestKey{11: f.phoneInput.signin.Issuance.LookupKey}, Authorization: policy, PolicyID: "m33-api-key-source", PolicyVersion: 9, Pepper: pepper, Counters: counters, Risk: risk.ProtectedProviderAdmissionCustodyConfig{Evaluation: evaluation, ConfigurationID: "m33-api-key-provider", Keys: slices.Clone(f.oauth.Counters.EvidenceKeys)}, CounterPolicy: counterPolicy, Coordinator: f.oauth.Coordinator, RequestKeys: requestKeys, ActiveEnvelopeKeyID: "m33-api-key-envelope", RetainedEnvelopeKeys: map[string][]byte{"m33-api-key-envelope": slices.Clone(envelopeBytes[:])}}
+	t.Cleanup(func() {
+		for _, key := range sourceConfig.RetainedEnvelopeKeys {
+			clear(key)
+		}
+	})
+	keyOwner, err := apikeypg.NewService(f.pool, sourceConfig)
 	if err != nil {
 		t.Fatal("actual API-key source owner", err)
 	}
@@ -305,5 +319,5 @@ func configuredAPIKeyExchangeFixture(t *testing.T, trace *apiKeySQLTrace, legacy
 	if err != nil {
 		t.Fatal(err)
 	}
-	return apiKeyNativeExchange{f: f, client: client, basic: basic, service: service, store: store, keys: keyOwner, configuration: selectedConfiguration, manager: manager, user: user}
+	return apiKeyNativeExchange{f: f, client: client, basic: basic, service: service, store: store, keys: keyOwner, configuration: selectedConfiguration, manager: manager, user: user, sourceConfig: sourceConfig, managerRisk: managerRisk}
 }

@@ -18,7 +18,6 @@ import (
 	auth "github.com/faustbrian/go-authentication/v2"
 	"github.com/faustbrian/go-authorization/v3"
 	identity "github.com/faustbrian/go-identity"
-	"github.com/faustbrian/go-identity/apikey"
 	kernel "github.com/faustbrian/go-identity/postgres"
 	"github.com/faustbrian/go-identity/risk"
 	"github.com/faustbrian/go-identity/session"
@@ -80,7 +79,7 @@ type phase struct {
 	oidc              func(context.Context, oauth.OIDCClaimsInput) (oauth.OIDCClaimsProjection, error)
 	device            *DeviceStore
 	deviceCodes       *devicePreparation
-	apiKeyObservation *apikey.SourceAuthorityObservation
+	apiKeyObservation *apiKeyCurrentAuthority
 }
 
 var _ kernel.FeaturePreparationContributor = (*phase)(nil)
@@ -99,6 +98,9 @@ func workloadOperation(name string) identity.FeatureOperation {
 func apiKeyOperation(name string) identity.FeatureOperation {
 	return identity.FeatureOperation{Owner: "oauth-server", OperationID: name, SchemaID: name + ".user-api-key-v1", SchemaVersion: 1, RecordRequirement: identity.FeatureRecordRequired}
 }
+func organizationAPIKeyOperation(name string) identity.FeatureOperation {
+	return identity.FeatureOperation{Owner: "oauth-server", OperationID: name, SchemaID: name + ".organization-api-key-v1", SchemaVersion: 1, RecordRequirement: identity.FeatureRecordRequired, SubjectRequirement: identity.FeatureSubjectAnonymousFlow}
+}
 func (p *phase) operation(name string) identity.FeatureOperation {
 	if name == dynamicRegistrationOperation {
 		return p.registrationOperation()
@@ -113,6 +115,9 @@ func (p *phase) operation(name string) identity.FeatureOperation {
 		return workloadOperation(name)
 	}
 	if p.input.Grant.APIKeySource != nil {
+		if p.store.organizationAPIKeyID != "" {
+			return organizationAPIKeyOperation(name)
+		}
 		return apiKeyOperation(name)
 	}
 	return operation(name)
@@ -120,7 +125,11 @@ func (p *phase) operation(name string) identity.FeatureOperation {
 func (p *phase) FeatureOperations() []identity.FeatureOperation {
 	operations := []identity.FeatureOperation{operation("identity.oauth-server.authorize"), operation("identity.oauth-server.continue"), operation("identity.oauth-server.token"), operation("identity.oauth-server.revoke"), workloadOperation("identity.oauth-server.token"), workloadOperation("identity.oauth-server.revoke")}
 	if p.store != nil && p.store.config.Protocol.APIKeyExchange != nil {
-		operations = append(operations, apiKeyOperation("identity.oauth-server.token"), apiKeyOperation("identity.oauth-server.revoke"))
+		if p.store.organizationAPIKeyID != "" {
+			operations = append(operations, organizationAPIKeyOperation("identity.oauth-server.token"), organizationAPIKeyOperation("identity.oauth-server.revoke"))
+		} else {
+			operations = append(operations, apiKeyOperation("identity.oauth-server.token"), apiKeyOperation("identity.oauth-server.revoke"))
+		}
 	}
 	if p.store != nil && p.store.config.ConsentManagement {
 		operations = append(operations, operation("identity.oauth-server.consent-delete"))

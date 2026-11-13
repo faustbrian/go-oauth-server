@@ -71,7 +71,11 @@ func (p *phase) mutateOAuth(ctx context.Context, w kernel.Work) error {
 			return identity.UnavailableError{}
 		}
 		defer clear(keySource)
-		n, err := w.Exec(ctx, `INSERT INTO `+s+`.grants(grant_id,tenant_id,user_id,client_id,client_version,client_fingerprint,source_session,scopes,resource,state,created_at,expires_at,version,api_key_source,api_key_only) VALUES($1,$2,$3,$4,$5::numeric,$6,'[]'::jsonb,$7::jsonb,$8,'active',$9,$10,1,$11::jsonb,true)`, g.ID, string(g.Tenant), string(g.User), g.ClientID, strconv.FormatUint(g.ClientVersion, 10), g.ClientFingerprint[:], string(scopes), g.Resource, g.CreatedAt, g.ExpiresAt, string(keySource))
+		var user any = string(g.User)
+		if p.store.organizationAPIKeyID != "" {
+			user = nil
+		}
+		n, err := w.Exec(ctx, `INSERT INTO `+s+`.grants(grant_id,tenant_id,user_id,client_id,client_version,client_fingerprint,source_session,scopes,resource,state,created_at,expires_at,version,api_key_source,api_key_only) VALUES($1,$2,$3,$4,$5::numeric,$6,'[]'::jsonb,$7::jsonb,$8,'active',$9,$10,1,$11::jsonb,true)`, g.ID, string(g.Tenant), user, g.ClientID, strconv.FormatUint(g.ClientVersion, 10), g.ClientFingerprint[:], string(scopes), g.Resource, g.CreatedAt, g.ExpiresAt, string(keySource))
 		if err != nil {
 			return err
 		}

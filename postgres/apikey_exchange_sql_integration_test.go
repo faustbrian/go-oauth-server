@@ -44,7 +44,7 @@ type apiKeySQLTrace struct {
 }
 
 func selectedAPIKeySQL(sql string) bool {
-	if strings.HasPrefix(sql, "SELECT count(*)=4 AND bool_and(convalidated) FROM pg_constraint") {
+	if strings.HasPrefix(sql, "SELECT count(*)=4 AND bool_and(convalidated) FROM pg_constraint") || strings.HasPrefix(sql, "SELECT count(*)=2 AND bool_and(convalidated) AND NOT (SELECT attnotnull") {
 		return true
 	}
 	if !strings.Contains(sql, `"oauth_store".`) {

@@ -3,6 +3,36 @@
 Experimental persistence and public service composition for the
 [selected authorization-code profile](../docs/selected-profile.md).
 
+## Optional organization API-key exchange
+
+The separate [modern organization profile](../docs/organization-api-key-exchange.md)
+uses actual native organization/key/current Work owners and a fixed server-owned
+tenant/organization/source selector. Compose `OrganizationAPIKeyExchangeConfig`
+with `NewOrganizationAPIKeyExchangeStore` / `NewOrganizationAPIKeyExchangeService`;
+leave old `Config.APIKeyExchange` nil. Existing USER constructors and public
+configuration shapes stay unchanged. The source must be the real native
+`NewOrganizationService`, with exact issuer/environment/audience and modern
+uncached unlimited-quota configuration on this primary.
+
+Install all four forward `OrganizationAPIKeyExchangeMigrationSource` steps after
+the seven API-key history steps before selection/client bootstrap. Tagged-owner
+checks expand and validate separately under short lock waits, with no row
+rewrite/backfill or destructive Down. Both new checks must be validated and
+`user_id` nullable before bootstrap can succeed. Populated USER/optional workload
+shapes remain valid; shared schema alone enables no capability or device
+dependency. Route organization traffic only to aware instances; the caller owns
+schema-before-profile sequencing and bounded migration contexts.
+
+Use `NewOrganizationResourceVerifier` for actual opaque organization access,
+not RFC7662 Active or USER `NewResourceVerifier`. The typed principal exposes the
+actual organization owner, API-key actor and separate configured Basic caller,
+tenant, resource and root/parent lineage. Its original scope/read-start/deadline
+cannot be renewed by a copy. Creator membership removal denies human management
+without revoking the integration; current organization/key/parent withdrawal
+denies resource use, introspection and new descendants. Introspection omits `sub`.
+Exact Basic/original-handle recovery returns historical metadata even after
+withdrawal, never a credential, principal or new authority.
+
 ## Optional USER API-key exchange
 
 Select the [finite API-key profile](../docs/api-key-exchange.md) with the real

@@ -12,6 +12,7 @@ import (
 	"github.com/faustbrian/go-authorization/v3"
 	authority "github.com/faustbrian/go-authorization/v3/postgres"
 	identity "github.com/faustbrian/go-identity"
+	"github.com/faustbrian/go-identity/apikey"
 	kernel "github.com/faustbrian/go-identity/postgres"
 	"github.com/faustbrian/go-identity/risk"
 	riskpg "github.com/faustbrian/go-identity/risk/postgres"
@@ -123,18 +124,19 @@ func (Config) MarshalText() ([]byte, error) { return nil, oauth.ErrInvalidReques
 // participant and encrypted preparation. Immutable configuration is safe for
 // concurrent callers; requests remain borrowed until their bounded call returns.
 type Store struct {
-	pool           *database.Pool
-	config         Config
-	schema         string
-	identity       [32]byte
-	domain         *kernel.Repository
-	profiles       *kernel.Repository
-	counters       *riskpg.Repository
-	crypto         *envelope.Service
-	active         oauth.TokenDigestKey
-	policy         *authority.AuthorityStore
-	endSession     *sessionpg.OIDCEndSessionEffect
-	sessionRecords *sessionpg.Repository
+	pool                 *database.Pool
+	config               Config
+	schema               string
+	identity             [32]byte
+	domain               *kernel.Repository
+	profiles             *kernel.Repository
+	counters             *riskpg.Repository
+	crypto               *envelope.Service
+	active               oauth.TokenDigestKey
+	policy               *authority.AuthorityStore
+	endSession           *sessionpg.OIDCEndSessionEffect
+	sessionRecords       *sessionpg.Repository
+	organizationAPIKeyID apikey.OrganizationID
 }
 
 var _ oauth.Store = (*Store)(nil)
@@ -143,6 +145,10 @@ var _ oauth.Store = (*Store)(nil)
 // Unsupported session profiles and missing current counter/lockout owners deny;
 // no caller-written domain store, Work, coordinator or phase hook is accepted.
 func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, error) {
+	return newStore(pool, c, keys, "")
+}
+
+func newStore(pool *database.Pool, c Config, keys *keyring.Provider, organizationID apikey.OrganizationID) (*Store, error) {
 	protocol, err := c.Protocol.Validated()
 	if err != nil || pool == nil || pool.Raw() == nil || keys == nil || !validSchema(c.Schema) || c.IntentKey == ([32]byte{}) || c.ActiveEnvelopeKeyID == "" || len(c.ActiveEnvelopeKeyID) > 256 || c.PolicyID == "" || len(c.PolicyID) > 128 || c.Coordinator.MaximumDuration <= 0 || c.Coordinator.MaximumDuration > protocol.MaximumDuration || c.Coordinator.QueryPolicy == nil || c.Coordinator.AdmissionPolicy == nil || c.Coordinator.QueryPolicy.PolicyVersion != c.Coordinator.AdmissionPolicy.PolicyVersion || c.Counters.CommandCounters == nil || !c.Counters.EnforceLockouts || len(c.TokenKeys) < 1 || len(c.TokenKeys) > 4 || len(c.CSRFKeys) > 4 {
 		return nil, oauth.ErrInvalidRequest
@@ -272,7 +278,7 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 		// selected identity here, not an alias to caller-owned personal defaults.
 		c.ProfileUserInfo = &ProfileUserInfoConfig{ProfileSchema: c.ProfileUserInfo.ProfileSchema}
 	}
-	s := &Store{pool: pool, config: c, schema: pgx.Identifier{c.Schema}.Sanitize(), profiles: profiles}
+	s := &Store{pool: pool, config: c, schema: pgx.Identifier{c.Schema}.Sanitize(), profiles: profiles, organizationAPIKeyID: organizationID}
 	if c.RPInitiatedLogout {
 		if s.endSession, err = sessionpg.NewOIDCEndSessionEffect(c.Session.Repository, c.Session.Profile); err != nil {
 			return nil, oauth.ErrInvalidRequest
@@ -356,6 +362,12 @@ func NewStore(pool *database.Pool, c Config, keys *keyring.Provider) (*Store, er
 	}
 	s.identity = sha256.Sum256(frame)
 	clear(frame)
+	if organizationID != "" {
+		// Separate selected owner/configuration custody without changing a byte
+		// of existing USER/unselected grant/preparation identities.
+		source := c.APIKeyExchange
+		s.identity = s.intent("oauth-organization-api-key-profile-v1", string(s.identity[:]), string(source.TenantID), string(organizationID), source.Configuration.Spec().ID, fmt.Sprint(source.Configuration.Spec().Revision), source.ClientPolicyNamespace)
+	}
 	// ConsentReuseTTL is deliberately outside this legacy identity: changing a
 	// reuse ceiling must not strand existing grants or encrypted preparation.
 	// Explicit approval freezes its actual expiry; silent reuse never renews it
@@ -381,6 +393,10 @@ func NewService(pool *database.Pool, c Config, keys *keyring.Provider) (*oauth.S
 	if err != nil {
 		return nil, err
 	}
+	return serviceFromStore(pool, store)
+}
+
+func serviceFromStore(pool *database.Pool, store *Store) (*oauth.Service, error) {
 	if store.config.Protocol.ManagedClients == nil && !webSelected(store.config.Protocol.Clients) {
 		return oauth.NewService(store.config.Protocol, oauth.Dependencies{Store: store})
 	}

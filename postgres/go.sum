@@ -69,10 +69,10 @@ github.com/faustbrian/go-identity/anonymous v0.0.0-20261023043948-50a36bd23473 h
 github.com/faustbrian/go-identity/anonymous v0.0.0-20261023043948-50a36bd23473/go.mod h1:Dp7jafZMRUt5nb0SScWgRShAffsXzReVw6RMChkjXk4=
 github.com/faustbrian/go-identity/anonymous/postgres v0.0.0-20261023055944-d2f004fd7b32 h1:vy5UXtPWKEeEfL/e+7fPCf8qrY3hIdtYP4RbkM3RQQs=
 github.com/faustbrian/go-identity/anonymous/postgres v0.0.0-20261023055944-d2f004fd7b32/go.mod h1:0U3JJ9pSRU6XLzsqgVzZ1QtCfe/r9nqXyKf8wct14rQ=
-github.com/faustbrian/go-identity/apikey v0.0.0-20261113192516-5fe33204f8ed h1:WZ+MOpRxb3u2x5wzg3VKTaeFN3znrPF3djbTZIMaG0A=
-github.com/faustbrian/go-identity/apikey v0.0.0-20261113192516-5fe33204f8ed/go.mod h1:/g+HcCipi5KkToWvE+nB2YvYte70Pku/ORoigs3UZVo=
-github.com/faustbrian/go-identity/apikey/postgres v0.0.0-20261113195830-936ab4a80658 h1:KfSdumI8WmmEQMhd3/rwpiV2z2pihlS/rtNGfHbfsmo=
-github.com/faustbrian/go-identity/apikey/postgres v0.0.0-20261113195830-936ab4a80658/go.mod h1:DIKPsqg3PSH+O/XqXZkOFYD1+jTDNDUVf/pDEKUSASQ=
+github.com/faustbrian/go-identity/apikey v0.0.0-20261113215732-bf335a362cf6 h1:9kaTfKuqgLWjn9+LRWSXC96tuOPN/OT46qKr3RAD1oc=
+github.com/faustbrian/go-identity/apikey v0.0.0-20261113215732-bf335a362cf6/go.mod h1:/g+HcCipi5KkToWvE+nB2YvYte70Pku/ORoigs3UZVo=
+github.com/faustbrian/go-identity/apikey/postgres v0.0.0-20261113220605-63fb159b7564 h1:pt8WRvBb0BSZfwrr80y1iivFtcir/uaYaoLYpl8E8lA=
+github.com/faustbrian/go-identity/apikey/postgres v0.0.0-20261113220605-63fb159b7564/go.mod h1:wsoZG+HeCPLOlpdEAIqTVh6EoHBTQl0e47zlK3vXExM=
 github.com/faustbrian/go-identity/delivery v0.0.0-20261015061706-1f0b46ab1053 h1:XFlSTdRmnTbUMrVY1nRcwFUCtNR19cqP9XUoKqreHd0=
 github.com/faustbrian/go-identity/delivery v0.0.0-20261015061706-1f0b46ab1053/go.mod h1:gbHmgfef5iSUtki7ZEa7HnqngXCugftiOgDlPQGwYx0=
 github.com/faustbrian/go-identity/delivery/postgres v0.0.0-20261015104034-f16881100907 h1:dLBvHl7G/7ZAuvrlF/BtO3KDEnvIGXNVMvOU9YslG0s=
@@ -147,8 +147,8 @@ github.com/faustbrian/go-migrations/v2 v2.0.0 h1:ipOKc3CA0p8vL5GPVh6xISQUfLiPCBf
 github.com/faustbrian/go-migrations/v2 v2.0.0/go.mod h1:bMXoptsGWGmURbKwwCoZxrNqHBgdmzXPxXlipGyWMsM=
 github.com/faustbrian/go-migrations/v3 v3.1.1-0.20261015110643-ca105f265cfc h1:ucFzW4uR8SbrVgWpW3b8hk4klJsGiDVBq7+sPrziFMg=
 github.com/faustbrian/go-migrations/v3 v3.1.1-0.20261015110643-ca105f265cfc/go.mod h1:h9WNJuNOR77bYc9ni8VPeyFTAyQcmyjCAmT5Bko8w60=
-github.com/faustbrian/go-oauth-server v0.0.0-20261113200135-6da80d0c2f51 h1:1Y3hkSv2PLSDVtYbkGV9MjsLczPcIPcrZqTvUfWLEGI=
-github.com/faustbrian/go-oauth-server v0.0.0-20261113200135-6da80d0c2f51/go.mod h1:+k9Y+Rf4+tH5QsZ1rFcKFj3nssPDWDcwuELq+28DdcI=
+github.com/faustbrian/go-oauth-server v0.0.0-20261113225045-5a8c0a3ec14d h1:GMfcRBzT+onxtYqGhS64PpksM+Iw0/l4We9zSO9KEhM=
+github.com/faustbrian/go-oauth-server v0.0.0-20261113225045-5a8c0a3ec14d/go.mod h1:+k9Y+Rf4+tH5QsZ1rFcKFj3nssPDWDcwuELq+28DdcI=
 github.com/faustbrian/go-oauth-server/device v0.0.0-20261023095306-ca7b0b8a9b26 h1:4VHiVpFQ/R2+04d6aguEVvhUn3FQBtFwwKrf6M/GdE8=
 github.com/faustbrian/go-oauth-server/device v0.0.0-20261023095306-ca7b0b8a9b26/go.mod h1:LnZF60y+g1e0FBhKL9mKphKBx5G1RKlGsLot5E1CjbE=
 github.com/faustbrian/go-oauth-server/oidc v0.0.0-20261026095351-baa3ff6f2bf5 h1:HL8OSpgH5jYwsiz31XsZU20KhRnpJuNLjTajzNUPvBw=

@@ -717,7 +717,11 @@ func (p *phase) bind(id identity.CommandID, operation, record string) {
 	if g.APIKeySource != nil {
 		p.input.Binding.ActorID = identity.ActorID(g.APIKeySource.KeyID)
 		p.input.Binding.ActorKind = authorization.SubjectAPIKey
-		p.input.Binding.SchemaID = apiKeyOperation(operation).SchemaID
+		p.input.Binding.SchemaID = p.operation(operation).SchemaID
+		if p.store.organizationAPIKeyID != "" {
+			p.input.Binding.UserID = ""
+			p.input.Binding.AnonymousFlowID = g.ID
+		}
 	}
 	if p.registering() {
 		p.input.Binding.UserID = ""

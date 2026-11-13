@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add separate fixed-organization modern API-key Store/Service/resource
+  composition through existing native key/organization/Work owners. Preserve
+  creator-independent integration authority, restricted real root/parent lineage,
+  current withdrawal denial and original metadata-only recovery. Install the
+  four forward tagged-owner schema steps before opt-in/bootstrap; old USER and
+  optional workload histories/rows remain compatible without backfill, device
+  dependency, public USER shape changes or a new journal/authority engine.
+
 - Support explicitly selected imported bare SHA-256 USER-key exchange through
   the actual native verification/source-fence owners. Require exact agreement
   between root policy and verify-only source configuration; preserve absent

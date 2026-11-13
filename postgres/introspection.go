@@ -85,7 +85,7 @@ func (s *Store) Introspect(ctx context.Context, c oauth.IntrospectionCommand) (o
 		observation, sourceErr := s.observeAPIKey(ctx, target.Grant, client)
 		err = sourceErr
 		credentialExpiry = target.Grant.APIKeySource.ExpiresAt
-		if err == nil && (!scopeSubset(scopes, observation.Grant) || !now.Before(observation.ValidUntil)) {
+		if err == nil && (!scopeSubset(scopes, observation.grant()) || !now.Before(observation.until())) {
 			err = oauth.ErrInvalidGrant
 		}
 		if err == nil {
@@ -171,7 +171,7 @@ func (s *Store) Introspect(ctx context.Context, c oauth.IntrospectionCommand) (o
 		if err != nil {
 			return out, introspectionError(ctx, err)
 		}
-		if !scopeSubset(scopes, observation.Grant) {
+		if !scopeSubset(scopes, observation.grant()) {
 			return out, nil
 		}
 		if err := s.readAPIKeyLineage(ctx, target, client, now); err != nil {
@@ -181,7 +181,7 @@ func (s *Store) Introspect(ctx context.Context, c oauth.IntrospectionCommand) (o
 		if err != nil {
 			return out, err
 		}
-		if !activeIntrospectionArtifact(target, now) || !now.Before(observation.ValidUntil) {
+		if !activeIntrospectionArtifact(target, now) || !now.Before(observation.until()) {
 			return out, nil
 		}
 		if finished := s.now(); finished.Before(start) || !finished.Before(start.Add(20*time.Second)) {

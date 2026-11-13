@@ -98,23 +98,31 @@ func apiKeySourceFromVerification(r apikey.VerificationResult, configuration api
 	if err != nil {
 		return nil, err
 	}
-	return &apiKeyGrantSource{ConfigurationID: b.ConfigurationAuthority.ConfigurationID, ConfigurationRevision: b.ConfigurationRevision, ConfigurationAuthority: b.ConfigurationAuthority.Version, KeyID: b.KeyID, RootID: b.RootID, Owner: b.Owner.Spec(), AuthorityVersion: b.AuthorityVersion, RootVersion: b.RootVersion, Issuer: b.Issuer, Environment: b.Environment, Audience: b.Audience, Grant: slices.Clone(b.Grant), ExpiresAt: b.ExpiresAt, ReadStartedAt: r.ReadStartedAt, VerifiedAt: r.VerifiedAt, ValidUntil: r.ValidUntil}, nil
+	return apiKeySourceProjection(b, r), nil
 }
 
 func (s apiKeyGrantSource) binding(configuration apikey.Configuration) (apikey.SourceAuthorityBinding, error) {
+	b, err := s.sourceBinding()
+	if err != nil || b.Validate(configuration) != nil || !s.sourceWindow(configuration) {
+		return apikey.SourceAuthorityBinding{}, oauth.ErrInvalidGrant
+	}
+	return b, nil
+}
+
+func (s apiKeyGrantSource) sourceBinding() (apikey.SourceAuthorityBinding, error) {
 	owner, err := apikey.NewOwner(s.Owner)
 	if err != nil {
 		return apikey.SourceAuthorityBinding{}, oauth.ErrInvalidGrant
 	}
 	b := apikey.SourceAuthorityBinding{ConfigurationAuthority: apikey.ConfigurationAuthorityBinding{TenantID: s.Owner.TenantID, ConfigurationID: s.ConfigurationID, Version: s.ConfigurationAuthority}, ConfigurationRevision: s.ConfigurationRevision, KeyID: s.KeyID, Owner: owner, AuthorityVersion: s.AuthorityVersion, RootID: s.RootID, RootVersion: s.RootVersion, Issuer: s.Issuer, Environment: s.Environment, Audience: s.Audience, Grant: slices.Clone(s.Grant), ExpiresAt: s.ExpiresAt}
+	return b, nil
+}
+
+func (s apiKeyGrantSource) sourceWindow(configuration apikey.Configuration) bool {
 	// Only the owning source binding may admit an absent legacy expiry. It
 	// never removes the original verification window's independent deadline.
 	withinCredentialExpiry := s.ExpiresAt.IsZero() || !s.ValidUntil.After(s.ExpiresAt)
-	historicalWindow := !s.ReadStartedAt.IsZero() && !s.VerifiedAt.Before(s.ReadStartedAt) && s.VerifiedAt.Sub(s.ReadStartedAt) <= configuration.Spec().MaximumRead && s.ValidUntil.After(s.VerifiedAt) && !s.ValidUntil.After(s.ReadStartedAt.Add(20*time.Second)) && withinCredentialExpiry
-	if b.Validate(configuration) != nil || !historicalWindow {
-		return apikey.SourceAuthorityBinding{}, oauth.ErrInvalidGrant
-	}
-	return b, nil
+	return !s.ReadStartedAt.IsZero() && !s.VerifiedAt.Before(s.ReadStartedAt) && s.VerifiedAt.Sub(s.ReadStartedAt) <= configuration.Spec().MaximumRead && s.ValidUntil.After(s.VerifiedAt) && !s.ValidUntil.After(s.ReadStartedAt.Add(20*time.Second)) && withinCredentialExpiry
 }
 
 func (s *Store) apiKeyExchangeSelected(client oauth.Client) bool {
@@ -125,6 +133,12 @@ func (s *Store) apiKeyClientScope(client oauth.Client) authority.AuthorityScope 
 	h := sha256.New()
 	_, _ = h.Write([]byte("golib.oauth.user-api-key-client-authority.v1\x00"))
 	var size [8]byte
+	if s.organizationAPIKeyID != "" {
+		_, _ = h.Write([]byte("organization-source\x00"))
+		binary.BigEndian.PutUint64(size[:], uint64(len(s.organizationAPIKeyID)))
+		_, _ = h.Write(size[:])
+		_, _ = h.Write([]byte(s.organizationAPIKeyID))
+	}
 	binary.BigEndian.PutUint64(size[:], uint64(len(client.ID)))
 	_, _ = h.Write(size[:])
 	_, _ = h.Write([]byte(client.ID))
@@ -138,13 +152,12 @@ func (s *Store) validAPIKeyGrant(g grantRecord, client oauth.Client) bool {
 		return false
 	}
 	source := g.APIKeySource
-	binding, err := source.binding(s.config.APIKeyExchange.Configuration)
 	scope := s.apiKeyClientScope(client)
-	ownerMatches := g.Tenant == s.config.APIKeyExchange.TenantID && g.Tenant == binding.Owner.Spec().TenantID && g.User == binding.Owner.Spec().UserID
+	ownerMatches := s.sourceOwnerMatches(g)
 	clientMatches := g.ClientID == client.ID && g.ClientVersion == client.Version && g.ClientFingerprint == clientFingerprint(client) && source.ClientNamespace == scope.PolicyNamespace && source.ClientAuthoritySubject == string(scope.SubjectID) && source.ClientAuthorityVersion == 1
 	withinCredentialExpiry := source.ExpiresAt.IsZero() || !g.ExpiresAt.After(source.ExpiresAt)
 	ceilingMatches := g.Resource == source.Audience && g.Resource == client.Resource && scopeSubset(g.Scopes, source.Grant) && scopeSubset(g.Scopes, client.Scopes) && !hasExtensionScopes(g.Scopes) && withinCredentialExpiry && g.ExpiresAt.After(g.CreatedAt) && !g.ExpiresAt.After(g.CreatedAt.Add(s.config.Protocol.AccessTTL))
-	return err == nil && ownerMatches && clientMatches && ceilingMatches && source.Policy == *s.config.Protocol.APIKeyExchange
+	return ownerMatches && clientMatches && ceilingMatches && source.Policy == *s.config.Protocol.APIKeyExchange
 }
 
 func hasExtensionScopes(scopes []string) bool {
@@ -214,6 +227,9 @@ func (s *Store) BootstrapAPIKeyExchangeClient(ctx context.Context, request oauth
 	if err != nil || !ready {
 		return oauth.ErrUnavailable
 	}
+	if err := s.organizationAPIKeySchemaReady(ctx); err != nil {
+		return err
+	}
 	scope := s.apiKeyClientScope(client)
 	current, err := s.policy.Get(ctx, scope)
 	if err == nil {
@@ -279,20 +295,19 @@ func apiKeyWorkError(ctx context.Context, err error) error {
 	return err
 }
 
-func (s *Store) observeAPIKey(ctx context.Context, g grantRecord, client oauth.Client) (apikey.SourceAuthorityObservation, error) {
+func (s *Store) observeAPIKey(ctx context.Context, g grantRecord, client oauth.Client) (apiKeyCurrentAuthority, error) {
 	if !s.validAPIKeyGrant(g, client) {
-		return apikey.SourceAuthorityObservation{}, oauth.ErrInvalidGrant
+		return apiKeyCurrentAuthority{}, oauth.ErrInvalidGrant
 	}
 	if err := s.apiKeyClientAuthority(ctx, client); err != nil {
-		return apikey.SourceAuthorityObservation{}, apiKeyError(ctx, err)
+		return apiKeyCurrentAuthority{}, apiKeyError(ctx, err)
 	}
-	binding, _ := g.APIKeySource.binding(s.config.APIKeyExchange.Configuration)
-	observation, err := s.config.APIKeyExchange.Source.ObserveSourceAuthority(ctx, binding)
+	observation, err := s.currentAPIKey(ctx, g)
 	if err != nil {
-		return apikey.SourceAuthorityObservation{}, apiKeyError(ctx, err)
+		return apiKeyCurrentAuthority{}, apiKeyError(ctx, err)
 	}
-	if !scopeSubset(g.Scopes, observation.Grant) {
-		return apikey.SourceAuthorityObservation{}, oauth.ErrInvalidGrant
+	if !scopeSubset(g.Scopes, observation.grant()) {
+		return apiKeyCurrentAuthority{}, oauth.ErrInvalidGrant
 	}
 	return observation, nil
 }
@@ -386,7 +401,12 @@ func (s *Store) readAPIKeyLineage(ctx context.Context, a artifactRecord, client 
 
 func (p *phase) checkAPIKeySource(ctx context.Context, w kernel.Work) error {
 	g := p.input.Grant
-	if !p.store.validAPIKeyGrant(g, p.client) || p.input.Binding.ActorKind != authorization.SubjectAPIKey || p.input.Binding.ActorID != identity.ActorID(g.APIKeySource.KeyID) || p.input.Binding.UserID != g.User {
+	b := p.input.Binding
+	flowMatches := b.AnonymousFlowID == ""
+	if p.store.organizationAPIKeyID != "" {
+		flowMatches = b.UserID == "" && b.AnonymousFlowID == g.ID
+	}
+	if !p.store.validAPIKeyGrant(g, p.client) || b.ActorKind != authorization.SubjectAPIKey || b.ActorID != identity.ActorID(g.APIKeySource.KeyID) || b.UserID != g.User || !flowMatches {
 		return identity.ForbiddenError{}
 	}
 	if !p.issuing() {
@@ -395,21 +415,20 @@ func (p *phase) checkAPIKeySource(ctx context.Context, w kernel.Work) error {
 	if p.apiKeyObservation == nil || p.input.ExchangeObservation == nil {
 		return identity.ForbiddenError{}
 	}
-	binding, err := g.APIKeySource.binding(p.store.config.APIKeyExchange.Configuration)
-	if err != nil || p.apiKeyObservation.Validate(binding, p.store.config.APIKeyExchange.Configuration, p.store.now()) != nil {
+	if p.apiKeyObservation.validate(p.store, g, p.store.now()) != nil {
 		return identity.ForbiddenError{}
 	}
 	if err := authority.RequireAuthority(ctx, w, p.store.apiKeyClientScope(p.client), 1, p.store.config.Protocol.MaximumDuration); err != nil {
 		return apiKeyWorkError(ctx, err)
 	}
-	if err := p.store.config.APIKeyExchange.Source.RequireSourceAuthority(ctx, w, p, *p.apiKeyObservation); err != nil {
+	if err := p.apiKeyObservation.require(ctx, p.store, w, p); err != nil {
 		return apiKeyWorkError(ctx, err)
 	}
 	now, err := w.DatabaseTime(ctx)
 	if err != nil {
 		return err
 	}
-	if !now.Before(p.input.ExchangeObservation.ValidUntil) || !p.store.now().Before(p.input.ExchangeObservation.ValidUntil) || !scopeSubset(p.input.Scopes, p.apiKeyObservation.Grant) {
+	if !now.Before(p.input.ExchangeObservation.ValidUntil) || !p.store.now().Before(p.input.ExchangeObservation.ValidUntil) || !scopeSubset(p.input.Scopes, p.apiKeyObservation.grant()) {
 		return identity.ForbiddenError{}
 	}
 	if p.input.Transition == createAPIKeyGrant {
@@ -431,7 +450,12 @@ func (p *phase) checkAPIKeySource(ctx context.Context, w kernel.Work) error {
 
 func (s *Store) apiKeyVerificationAttempt(client oauth.Client, command identity.CommandID) apikey.VerificationAttemptID {
 	c := s.config.APIKeyExchange.Configuration.Spec()
-	digest := s.intent("oauth-user-api-key-verification-v1", string(command), client.ID, strconv.FormatUint(client.Version, 10), string(s.config.APIKeyExchange.TenantID), c.ID, strconv.FormatUint(c.Revision, 10))
+	values := []string{"oauth-user-api-key-verification-v1", string(command), client.ID, strconv.FormatUint(client.Version, 10), string(s.config.APIKeyExchange.TenantID), c.ID, strconv.FormatUint(c.Revision, 10)}
+	if s.organizationAPIKeyID != "" {
+		values[0] = "oauth-organization-api-key-verification-v1"
+		values = append(values, string(s.organizationAPIKeyID))
+	}
+	digest := s.intent(values...)
 	return apikey.VerificationAttemptID(base64.RawURLEncoding.EncodeToString(digest[:16]))
 }
 
@@ -441,7 +465,11 @@ func (s *Store) initialAPIKeyRecoveryPhase(ctx context.Context, client oauth.Cli
 	}
 	q := *request.APIKeyVerification
 	expected := s.apiKeyVerificationAttempt(client, request.CommandID)
-	if q.Validate() != nil || q.AttemptID != expected || q.TenantID != s.config.APIKeyExchange.TenantID || q.Original.ActorKind != authorization.SubjectAPIKey || q.Original.UserID == "" || q.Original.AnonymousFlowID != "" {
+	ownerScopeMatches := q.Original.UserID != "" && q.Original.AnonymousFlowID == ""
+	if s.organizationAPIKeyID != "" {
+		ownerScopeMatches = q.Original.UserID == "" && q.Original.AnonymousFlowID == string(q.AttemptID)
+	}
+	if q.Validate() != nil || q.AttemptID != expected || q.TenantID != s.config.APIKeyExchange.TenantID || q.Original.ActorKind != authorization.SubjectAPIKey || !ownerScopeMatches {
 		return nil, oauth.ErrAccessDenied
 	}
 	actual, err := s.config.APIKeyExchange.Source.ReconcileVerifyAndConsume(ctx, q)
@@ -512,7 +540,7 @@ func (s *Store) exchangeAPIKey(ctx context.Context, client oauth.Client, request
 		if verification.Validate() != nil || verification.Result == nil || verification.State != apikey.VerificationAttemptNotApplicable {
 			return fail(oauth.ErrInvalidGrant)
 		}
-		source, err := apiKeySourceFromVerification(*verification.Result, configuration, s.now())
+		source, err := s.sourceFromVerification(*verification.Result, s.now())
 		if err != nil {
 			return fail(apiKeyError(ctx, err))
 		}
@@ -581,13 +609,13 @@ func (s *Store) exchangeAPIKey(ctx context.Context, client oauth.Client, request
 		return fail(err)
 	}
 	p.apiKeyObservation = &observation
-	until := observation.ValidUntil
+	until := observation.until()
 	if p.input.Transition == createAPIKeyGrant {
 		until = minTime(until, p.input.Grant.APIKeySource.ValidUntil)
 	} else {
 		until = minTime(until, p.input.TargetExpires)
 	}
-	p.input.ExchangeObservation = &exchangeObservation{ReadStartedAt: observation.ReadStartedAt, ValidUntil: until}
+	p.input.ExchangeObservation = &exchangeObservation{ReadStartedAt: observation.started(), ValidUntil: until}
 	p.input.ClientAuthentication = proof
 	result, err := p.execute(ctx)
 	out := oauth.TokenResult{Outcome: result.Outcome, CommandID: command, Replayed: !p.applied}

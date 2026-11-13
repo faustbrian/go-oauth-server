@@ -100,15 +100,28 @@ func (s *Store) managementObservation(ctx context.Context, c oauth.ClientManagem
 	}
 	var r oauth.ClientManagementRequest
 	var err error
+	request := c.Request
+	publicUpdate := action == "identity.oauth-server.client-update" && request.Public
+	if publicUpdate {
+		if !s.config.PublicClients || !p.PublicClients {
+			return c, oauth.ErrAccessDenied
+		}
+		// Public is an immutable update precondition. Keep the existing
+		// delete-shaped custody validator's registration-edit prohibition intact.
+		request.Public = false
+	}
 	if !c.Delete && c.Request.Workload != nil {
 		r, err = oauth.ValidateWorkloadClientManagementRequest(c.Request, *p, s.config.Protocol.Issuer)
 	} else if !c.Delete && c.Request.SubjectRegistration != nil {
 		r, err = oauth.ValidatePairwiseClientManagementRequest(c.Request, *p, s.config.Protocol.Issuer)
 	} else {
-		r, err = oauth.ValidateClientManagementRequest(c.Request, c.Delete, *p, s.config.Protocol.Issuer)
+		r, err = oauth.ValidateClientManagementRequest(request, c.Delete, *p, s.config.Protocol.Issuer)
 	}
 	if err != nil {
 		return c, err
+	}
+	if publicUpdate {
+		r.Public = true
 	}
 	c.Request = r
 	if c.ValidateAt(s.now()) != nil {
@@ -235,7 +248,10 @@ func (s *Store) clientManagementPhase(ctx context.Context, c oauth.ClientManagem
 		if client.Workload != nil && action != "identity.oauth-server.client-delete" {
 			return nil, oauth.ErrAccessDenied
 		}
-		if client.Public && action != "identity.oauth-server.client-delete" {
+		if action == "identity.oauth-server.client-update" && client.Public != r.Public {
+			return nil, oauth.ErrAccessDenied
+		}
+		if client.Public && action != "identity.oauth-server.client-delete" && action != "identity.oauth-server.client-update" {
 			return nil, oauth.ErrAccessDenied
 		}
 		if s.config.ClientMetadataUpdates {
@@ -326,6 +342,9 @@ func (p *phase) prepareClientKey(ctx context.Context, k kernel.RequestKeyPrepara
 			return nil, identity.ForbiddenError{}
 		}
 		client = r.Client
+		if i.Transition == updateManagedClient && client.Public != c.Request.Public {
+			return nil, identity.ForbiddenError{}
+		}
 		if p.store.config.ClientMetadataUpdates {
 			i.ClientChange.SecretVersion = r.SecretVersion
 		}

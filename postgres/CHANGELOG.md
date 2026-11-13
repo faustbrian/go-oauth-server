@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Support native current-manager metadata replacement for no-secret public
+  OAuth browser clients using existing public/update migration history and
+  request-key recovery. The expected class is bound to immutable preparation
+  and current registration; updates preserve null secret custody and invalidate
+  earlier consent/grant versions. No new migration or RFC7592 authority is added.
+
 - Support explicitly selected confidential Basic RFC7591 registration through
   the existing managed-client digest and reveal-once custody. Initial-token
   consumption and client creation remain one protected Work. The distinct

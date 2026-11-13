@@ -420,7 +420,7 @@ func (p *phase) buildCommand() error {
 			return oauth.ErrInvalidRequest
 		}
 		if i.Transition == updateManagedClient {
-			if p.client.Public || p.client.Workload != nil || !p.store.config.ClientMetadataUpdates || i.ClientChange.SecretVersion == 0 {
+			if p.client.Workload != nil || !p.store.config.ClientMetadataUpdates || i.ClientChange.SecretVersion == 0 {
 				return oauth.ErrInvalidRequest
 			}
 			if _, err := p.store.updatedClient(p.client, i.ClientChange.Replacement); err != nil {

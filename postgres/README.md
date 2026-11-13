@@ -120,8 +120,9 @@ Basic credentials; supplied Basic credentials deny. Fresh get/list and protocol
 services read the current native registration, not a creation-response cache.
 Deletion accepts the discovered ID/version with the ordinary closed delete
 request (`Public` omitted/false); it withdraws descendants under existing client
-fences. Public secret rotation and metadata replacement remain unselected and
-deny; `Public=false` confidential creation and rotation are unchanged.
+fences. Public secret rotation remains unselected and denies; public OAuth-only
+metadata replacement additionally requires the existing update history/selection
+described below. `Public=false` confidential creation and rotation are unchanged.
 
 The forward schema preserves existing confidential metadata/digests and denies
 public rows carrying a secret. Activation does not change the original native
@@ -547,12 +548,16 @@ fail closed on separated counters. Constructors neither install nor infer schema
 `ClientUpdate` accepts exact existing management custody (current ID/version,
 immutable owner/tenant, original fresh password session, origin/CSRF and native
 request key) plus complete nonempty `Redirects` and `Scopes` replacements within
-the configured immutable ceilings. No patch merge, resource/authentication-method
-edit, secret input or additional ownership/client class is accepted. Even an
+the configured immutable ceilings. `Management.Public` must match the discovered
+immutable registration class. Public OAuth browser clients require both existing
+`PublicClients` selections and installed public-client history; `false` preserves
+confidential Basic updates. No patch merge, resource/authentication-method
+edit, class conversion, secret input or additional ownership is accepted. Even an
 identical replacement advances authority exactly once. **All old consent,
 interactions, codes, access and refresh grants are invalid.** Unchanged Basic
-custody performs only NEW explicit consent/code/S256 authorization at the new
-registration version; removed redirects/scopes deny on warm ordinary services.
+custody, or public `none` authentication, performs only NEW explicit
+consent/code/S256 authorization at the new registration version; removed
+redirects/scopes deny on warm ordinary services.
 
 Only registration authority advances. Both digest bytes/generations and any
 predecessor's original exclusive overlap expiry remain unchanged. Later rotation
@@ -562,6 +567,10 @@ preparation captures the actual secret generation. Published preparation without
 that optional field retains its original coupled client-version interpretation,
 never a generation inferred from today's aggregate. Existing history, digest
 framing and original recovery remain intact.
+Public metadata updates keep every secret slot null and its bookkeeping
+generation unchanged. They use the already installed update/public constraints;
+no additional migration or registration access token is required. OIDC and
+workload metadata updates and RFC7592 management remain unselected.
 
 The existing sole Work serializes update/rotation/deletion and ordinary grant
 admission on the same client root, preserving original <=20s authority through

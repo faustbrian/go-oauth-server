@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add explicit `ManagedClientPolicy.ConfidentialOIDCUpdates` for exact-version
+  redirect/post-logout replacement of existing Basic/default-subject/openid-only
+  browser clients. Existing management authority, digest generations and original
+  recovery are retained; old consent/grants/UserInfo deny and fresh authenticated
+  consent/S256 is required. Creation-only and omitted-zero defaults remain unchanged.
+
 - Add explicit `ManagedClientPolicy.PublicOIDCUpdates` for exact-version
   redirect/post-logout replacement of existing public, default-subject,
   openid-only browser clients. Existing request/Updater ownership, current

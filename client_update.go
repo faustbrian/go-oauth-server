@@ -84,7 +84,11 @@ func ValidateClientUpdateRequest(r ClientUpdateRequest, p ManagedClientPolicy, i
 	r.Management.Public = public
 	// Creation does not select OIDC replacement. This explicit finite profile
 	// preserves openid-only semantics; current source metadata is fenced later.
-	if hasExtensionScope(r.Scopes) && (!p.PublicOIDCUpdates || !p.PublicOIDC || !r.Management.Public || !minimalManagedBrowserOIDC(false, r.Scopes)) {
+	oidcUpdateSelected := p.ConfidentialOIDC && p.ConfidentialOIDCUpdates
+	if r.Management.Public {
+		oidcUpdateSelected = p.PublicOIDC && p.PublicOIDCUpdates
+	}
+	if hasExtensionScope(r.Scopes) && (!oidcUpdateSelected || !minimalManagedBrowserOIDC(false, r.Scopes)) {
 		return ClientUpdateRequest{}, ErrInvalidScope
 	}
 	if _, err := identity.ParseSubjectID(r.Management.ClientID[len(ManagedClientPrefix):]); err != nil {
@@ -105,9 +109,9 @@ func ValidateClientUpdateRequest(r ClientUpdateRequest, p ManagedClientPolicy, i
 
 // AllowsMetadataReplacement checks only immutable source/target profile shape,
 // never manager authority or registration existence. OAuth replacements retain
-// their original ceiling, including stored device capability. Explicit public
-// OIDC replacement preserves the existing minimal browser class: default subject,
-// none authentication and openid only, with no conversion from another class.
+// their original ceiling, including stored device capability. Explicit OIDC
+// replacement preserves the existing minimal browser class: default subject,
+// openid only and the original public none or confidential Basic authentication.
 // Native owners must repeat this against protected original metadata.
 func (p ManagedClientPolicy) AllowsMetadataReplacement(current Client, scopes []string) bool {
 	if current.Workload != nil {
@@ -116,16 +120,22 @@ func (p ManagedClientPolicy) AllowsMetadataReplacement(current Client, scopes []
 	if !hasExtensionScope(current.Scopes) && !hasExtensionScope(scopes) {
 		return scopeSubset(current.Scopes, p.Scopes.values) && scopeSubset(scopes, p.Scopes.values)
 	}
-	defaultPublicOIDC := current.Public && current.AuthenticationMethod == "none" && current.SubjectRegistration == nil && minimalManagedBrowserOIDC(current.DeviceAuthorization, current.Scopes)
-	return p.PublicOIDCUpdates && defaultPublicOIDC && minimalManagedBrowserOIDC(current.DeviceAuthorization, scopes) && p.AllowsRegistration(current.Public, current.DeviceAuthorization, current.Scopes, nil)
+	if current.SubjectRegistration != nil || !minimalManagedBrowserOIDC(current.DeviceAuthorization, current.Scopes) || !minimalManagedBrowserOIDC(current.DeviceAuthorization, scopes) {
+		return false
+	}
+	selectedClass := p.ConfidentialOIDCUpdates && !current.Public && current.AuthenticationMethod == "client_secret_basic"
+	if current.Public {
+		selectedClass = p.PublicOIDCUpdates && current.AuthenticationMethod == "none"
+	}
+	return selectedClass && p.AllowsRegistration(current.Public, current.DeviceAuthorization, current.Scopes, nil)
 }
 
 // ClientUpdate atomically replaces only redirects/scopes of one exact managed
 // registration. Existing fresh-session, origin/CSRF and keyed native management
 // authority remain mandatory. Public clients retain none authentication and no
-// secret custody. Public/default-subject/openid-only browser registrations need
-// the explicit PublicOIDCUpdates selection and composed OIDC owner. Other OIDC,
-// static and workload variants remain unselected.
+// secret custody. Default-subject/openid-only browser registrations need their
+// explicit PublicOIDCUpdates or ConfidentialOIDCUpdates selection and composed
+// OIDC owner. Other OIDC, static and workload variants remain unselected.
 func (s *Service) ClientUpdate(ctx context.Context, r ClientUpdateRequest) (out ClientUpdateResult, err error) {
 	defer func() {
 		if recover() != nil {

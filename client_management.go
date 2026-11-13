@@ -63,6 +63,11 @@ type ManagedClientPolicy struct {
 	// subject. It requires configured OIDCScopes containing openid, not PublicClients.
 	// Creation, private reads, authorization and issuance require OIDC composition.
 	ConfidentialOIDC bool `json:",omitempty"`
+	// ConfidentialOIDCUpdates separately selects redirect/post-logout replacement
+	// of existing Basic, default-subject, openid-only browser registrations. It
+	// requires ConfidentialOIDC, never changes secret custody or grants manager
+	// authority, and zero preserves existing policy bytes and update denial.
+	ConfidentialOIDCUpdates bool `json:",omitempty"`
 	// PairwiseRegistrations is an explicit trusted ceiling for confidential,
 	// openid-only single-host registrations. It requires ConfidentialOIDC and
 	// selects no key material or subject derivation. Nil retains default subjects.
@@ -97,6 +102,9 @@ func (p ManagedClientPolicy) validated(c Config) (ManagedClientPolicy, error) {
 		return ManagedClientPolicy{}, ErrInvalidRequest
 	}
 	if p.ConfidentialOIDC && !c.OIDCScopes.Contains("openid") {
+		return ManagedClientPolicy{}, ErrInvalidRequest
+	}
+	if p.ConfidentialOIDCUpdates && !p.ConfidentialOIDC {
 		return ManagedClientPolicy{}, ErrInvalidRequest
 	}
 	if len(p.PublicOIDCScopes) != 0 {

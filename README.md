@@ -171,7 +171,7 @@ replacement authentication engine.
   static/deleted client, secret, digest or encrypted preparation is returned.
   Pages are snapshots, not permission or mutation-version leases.
 - `Service.ClientUpdate` optionally replaces the complete redirect/scope sets of
-  one exact discovered managed OAuth browser client/version within fixed
+  one exact discovered managed browser client/version within fixed
   configured ceilings. Existing fresh manager, origin/CSRF and request-key
   authority remain required. Every commit advances registration authority and
   invalidates old consent/grants, including a replacement with identical sets.
@@ -190,6 +190,14 @@ replacement authentication engine.
   OAuth updates retain their existing behavior, including stored device flags.
   The default subject, owner, resource, none authentication and null secret
   custody remain unchanged; new-version explicit consent/S256 is required.
+  Independently select `ManagedClientPolicy.ConfidentialOIDCUpdates` with
+  `ConfidentialOIDC` for existing Basic/default-subject/`openid`-only clients.
+  Keep `Management.Public=false`, complete redirects/post-logout replacements
+  and `Scopes: []string{"openid"}`. The composed OIDC owner and existing native
+  update/rotation histories remain required, not public-client support. Basic
+  digest generations, overlap custody and default subject are unchanged; only
+  registration authority advances. Original client credentials authenticate
+  fresh S256/explicit consent, never the old consent/grants/UserInfo access.
 - `Service.DiscoveryOauth` returns OAuth-only RFC8414 metadata when explicitly
   selected by `Config.Discovery`. Trusted issuer-origin endpoint configuration
   and actual configured clients determine grants, authentication methods, S256,

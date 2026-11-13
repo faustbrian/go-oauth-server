@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add explicit `ManagedClientPolicy.PublicOIDCUpdates` for exact-version
+  redirect/post-logout replacement of existing public, default-subject,
+  openid-only browser clients. Existing request/Updater ownership, current
+  manager/CSRF, no-secret custody and original recovery remain unchanged; old
+  consent/grants are invalidated. OIDC creation alone does not select updates,
+  and default policy bytes plus other OIDC-class exclusions are preserved.
+
 - Support owner-authorized exact-version metadata replacement for managed
   public OAuth browser clients through the existing `ClientUpdate` API.
   `Management.Public` names the expected immutable class and requires selected

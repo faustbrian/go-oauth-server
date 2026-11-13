@@ -181,6 +181,15 @@ replacement authentication engine.
   `PublicClients` and retains `none` authentication without generating a secret.
   This precondition cannot convert a public client to confidential or vice versa.
   Matching native forward history and compatible-fleet activation are required.
+  `ManagedClientPolicy.PublicOIDCUpdates` separately selects existing public,
+  default-subject, `openid`-only browser clients. It requires `PublicClients`,
+  `PublicOIDC`, and actual OIDC composition; creation enablement alone never
+  authorizes replacement. Send `Scopes: []string{"openid"}` with complete
+  registered redirect/post-logout replacements. No OIDC/OAuth conversion,
+  pairwise/claims/device/confidential/workload OIDC update is selected. Ordinary
+  OAuth updates retain their existing behavior, including stored device flags.
+  The default subject, owner, resource, none authentication and null secret
+  custody remain unchanged; new-version explicit consent/S256 is required.
 - `Service.DiscoveryOauth` returns OAuth-only RFC8414 metadata when explicitly
   selected by `Config.Discovery`. Trusted issuer-origin endpoint configuration
   and actual configured clients determine grants, authentication methods, S256,

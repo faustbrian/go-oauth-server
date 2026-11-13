@@ -48,6 +48,11 @@ type ManagedClientPolicy struct {
 	// the actual child still reads trusted UserInfoSource through its original
 	// core. OAuth Scopes and retained policy stay unchanged.
 	PublicOIDC bool `json:",omitempty"`
+	// PublicOIDCUpdates separately selects redirect/post-logout replacement for
+	// existing default-subject, openid-only public browser registrations. It
+	// requires PublicOIDC/PublicClients and grants no management authority.
+	// Zero preserves the original OAuth-only update contract and policy bytes.
+	PublicOIDCUpdates bool `json:",omitempty"`
 	// PublicOIDCScopes optionally selects an exact additional scope ceiling for
 	// default-subject public browser clients. It requires PublicOIDC, includes
 	// openid, and may additionally contain profile, email and phone. Nil retains
@@ -86,6 +91,9 @@ func (p ManagedClientPolicy) validated(c Config) (ManagedClientPolicy, error) {
 		return ManagedClientPolicy{}, ErrInvalidRequest
 	}
 	if p.PublicOIDC && (!p.PublicClients || !c.OIDCScopes.Contains("openid")) {
+		return ManagedClientPolicy{}, ErrInvalidRequest
+	}
+	if p.PublicOIDCUpdates && !p.PublicOIDC {
 		return ManagedClientPolicy{}, ErrInvalidRequest
 	}
 	if p.ConfidentialOIDC && !c.OIDCScopes.Contains("openid") {

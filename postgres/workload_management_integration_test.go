@@ -299,7 +299,7 @@ func installManagedWorkloadProfile(t *testing.T, f *authenticatedPasswordFixture
 	return w
 }
 
-func TestNativeManagedWorkloadDoesNotSelectRotationOrMetadataReplacement(t *testing.T) {
+func TestNativeManagedWorkloadDoesNotSelectMetadataReplacement(t *testing.T) {
 	f := passwordFixture(t)
 	enableClientUpdates(t, &f)
 	w := installManagedWorkloadProfile(t, &f)
@@ -307,15 +307,11 @@ func TestNativeManagedWorkloadDoesNotSelectRotationOrMetadataReplacement(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := service.ClientCreate(f.ctx, managedWorkloadCreateRequest(t, f, w, "machine-no-rotation-update"))
+	created, err := service.ClientCreate(f.ctx, managedWorkloadCreateRequest(t, f, w, "machine-no-update"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	secret, _ := created.Secret.Reveal()
-	rotate := clientRotationRequest(t, f, created.Client, "unsupported-machine-rotation", 0)
-	if out, err := service.ClientRotateSecret(f.ctx, rotate); err == nil || out.Secret != (oauth.Token{}) {
-		t.Fatal("machine selected global human secret rotation")
-	}
 	if _, err := service.ClientUpdate(f.ctx, clientUpdateRequest(t, f, created.Client, "unsupported-machine-update")); err == nil {
 		t.Fatal("machine converted to human metadata class")
 	}

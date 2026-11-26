@@ -441,10 +441,10 @@ func (p *phase) buildCommand() error {
 			return oauth.ErrInvalidRequest
 		}
 		if i.Transition == rotateManagedSecret {
-			if p.client.Public || p.client.Workload != nil || !p.store.config.ClientSecretRotation || i.ClientChange.Overlap < 0 || i.ClientChange.Overlap > 24*time.Hour || i.ClientChange.Overlap%time.Microsecond != 0 {
+			if p.client.Public || !p.validRotationWorkload() || !p.store.config.ClientSecretRotation || i.ClientChange.Overlap < 0 || i.ClientChange.Overlap > 24*time.Hour || i.ClientChange.Overlap%time.Microsecond != 0 {
 				return oauth.ErrInvalidRequest
 			}
-		} else if i.ClientChange.Overlap != 0 {
+		} else if i.ClientChange.Overlap != 0 || i.ClientChange.RotationWorkload != nil {
 			return oauth.ErrInvalidRequest
 		}
 		if i.ClientChange.SecretVersion != 0 && (!p.store.config.ClientMetadataUpdates || i.ClientChange.SecretVersion > p.client.Version) {

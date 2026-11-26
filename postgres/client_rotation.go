@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/faustbrian/go-authorization/v3"
+	authority "github.com/faustbrian/go-authorization/v3/postgres"
 	identity "github.com/faustbrian/go-identity"
 	kernel "github.com/faustbrian/go-identity/postgres"
 	oauth "github.com/faustbrian/go-oauth-server"
@@ -54,6 +55,16 @@ func (s *Store) RotateClientSecret(ctx context.Context, e oauth.ClientSecretRota
 	}
 	p.input.Transition = rotateManagedSecret
 	p.input.ClientChange.Overlap = r.Overlap
+	if p.client.Workload != nil {
+		// Reuse machine issuance's actual directory and service-account reads.
+		// Prepared-key replay restores the original snapshot instead of renewing
+		// those epochs from this invocation's observation.
+		observed, err := s.workloadGrant(ctx, p.client, "", p.client.Scopes)
+		if err != nil {
+			return out, err
+		}
+		p.input.ClientChange.RotationWorkload = observed.Workload
+	}
 	if err = s.coordinator(p); err != nil {
 		return out, err
 	}
@@ -101,4 +112,54 @@ func (s *Store) RotateClientSecret(ctx context.Context, e oauth.ClientSecretRota
 		out.Secret, err = oauth.ParseToken(p.output.ClientSecret)
 	}
 	return out, err
+}
+
+func (p *phase) validRotationWorkload() bool {
+	w := p.input.ClientChange.RotationWorkload
+	if p.client.Workload == nil {
+		return w == nil
+	}
+	if w == nil || p.client.Workload.TenantID() != p.input.Grant.Tenant {
+		return false
+	}
+	if w.ID != p.client.Workload.ID() || w.Platform != p.client.Owner.PlatformID() {
+		return false
+	}
+	configured := p.store.config.WorkloadAuthority
+	if w.GlobalAuthorityID != configured.GlobalAuthorityID || w.PolicyNamespace != configured.PolicyNamespace {
+		return false
+	}
+	if w.GlobalVersion == 0 || w.TenantVersion == 0 || w.AuthorizationVersion == 0 {
+		return false
+	}
+	if p.store.config.Protocol.WorkloadExchange == nil {
+		return w.ClientPolicyNamespace == "" && w.ClientAuthorizationVersion == 0
+	}
+	return w.ClientPolicyNamespace == p.store.config.WorkloadExchangeClientNamespace && w.ClientAuthorizationVersion == p.client.Version
+}
+
+func (p *phase) checkRotationWorkload(ctx context.Context, work kernel.Work) error {
+	if !p.validRotationWorkload() {
+		return identity.ForbiddenError{}
+	}
+	w := p.input.ClientChange.RotationWorkload
+	if w == nil {
+		return nil
+	}
+	if err := work.RequireActiveDirectoryAuthority(ctx, p, kernel.DirectoryAuthorityAdmission{Query: kernel.DirectoryAuthorityQuery{GlobalAuthorityID: w.GlobalAuthorityID, TenantID: p.input.Grant.Tenant}, GlobalVersion: w.GlobalVersion, TenantVersion: w.TenantVersion}); err != nil {
+		return err
+	}
+	// These are the same public authority owners as workload issuance, not a
+	// manager impersonating a service account or an independently mutable epoch.
+	scope := authority.AuthorityScope{TenantID: authorization.TenantID(p.input.Grant.Tenant), PolicyNamespace: w.PolicyNamespace, SubjectID: authorization.SubjectID(w.ID)}
+	if err := authority.RequireAuthority(ctx, work, scope, w.AuthorizationVersion, p.store.config.Protocol.MaximumDuration); err != nil {
+		return workloadError(ctx, err)
+	}
+	if w.ClientAuthorizationVersion != 0 {
+		scope.PolicyNamespace, scope.SubjectID = w.ClientPolicyNamespace, authorization.SubjectID(p.client.ID)
+		if err := authority.RequireAuthority(ctx, work, scope, w.ClientAuthorizationVersion, p.store.config.Protocol.MaximumDuration); err != nil {
+			return workloadError(ctx, err)
+		}
+	}
+	return nil
 }

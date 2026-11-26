@@ -74,7 +74,8 @@ never a raw retained key, renewed principal, credential redelivery or new journa
 ## Optional managed workload clients
 
 The existing native `NewService` can register a confidential machine through
-`ClientCreate` and terminally withdraw it through `ClientDelete`. Set
+`ClientCreate`, rotate its Basic secret through `ClientRotateSecret`, and
+terminally withdraw it through `ClientDelete`. Set
 `Protocol.ManagedClients.Workloads` to an exact bounded allowlist built with
 `oauth.NewWorkload`. Each binding must use the management tenant, a trusted
 service-account ID and its access lifetime. Set `WorkloadAuthority` to the
@@ -103,13 +104,30 @@ withdraws subsequent issuance and token use without an unbounded grant sweep.
 The original matched-secret snapshot fences protected work and delivery within
 twenty seconds even without selecting secret rotation or its migration.
 
+Select `ClientSecretRotation` only after installing the existing
+`ClientRotationMigrationSource` history. Rotation uses the same fresh human
+manager/CSRF/platform authorization, plus original directory and service-account
+epochs checked under protected Work. It preserves the exact workload binding
+and accepts no replacement machine metadata. The existing overlap policy is
+unchanged: zero retires the predecessor immediately; a microsecond-precise
+duration up to 24 hours permits only the immediate predecessor until its
+original exclusive expiry. Every rotation advances the client version, so
+previously issued machine access is invalid even during secret overlap; either
+live secret can issue new current-version access. A second rotation removes
+the older predecessor. Fresh known commitment reveals one successor; exact
+retries and lost-COMMIT recovery return only original metadata, never a secret.
+Missing, denied or unavailable authority fails closed without rotating state.
+
 Authorized private `ClientGet`/`ClientList` include selected machine metadata
 alongside retained human clients; compositions without workload selection keep
-their human-only view. Public reads, machine secret rotation and machine
-metadata replacement are not selected, even when human rotation/update is
-enabled. This profile does not select standard token exchange; the independent
+their human-only view. Public reads and machine metadata replacement remain
+unselected, even when human metadata update is enabled. This profile does not
+select standard token exchange; the independent
 global exchange profile and its real authority remain separate requirements.
 Native managed exchange is not qualified by this registration consumer.
+The [managed rotation consumer](workload_rotation_integration_test.go) composes
+real creation, issuance, rotation, bounded overlap/expiry, epoch withdrawal,
+atomic required effects and original metadata-only recovery.
 
 ## Optional current profile-name UserInfo
 

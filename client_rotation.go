@@ -84,6 +84,8 @@ func ValidateClientSecretRotationRequest(r ClientSecretRotationRequest, p Manage
 
 // ClientRotateSecret rotates one exact managed confidential client/version using
 // current fresh human password authority, exact platform policy and CSRF.
+// Selected managed workloads additionally retain their native current directory
+// and service-account authority; machine metadata cannot be edited by rotation.
 func (s *Service) ClientRotateSecret(ctx context.Context, r ClientSecretRotationRequest) (out ClientSecretRotationResult, err error) {
 	defer func() {
 		if recover() != nil {

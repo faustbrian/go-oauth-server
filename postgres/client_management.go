@@ -30,6 +30,9 @@ type clientMutation struct {
 	SecretVersion       uint64
 	Replacement         *clientReplacement
 	DynamicRegistration *registrationMutation
+	// Rotation retains the actual machine-owner epochs in the existing sealed
+	// preparation; they never replace the human manager's independent custody.
+	RotationWorkload *workloadSource
 }
 
 func (m clientMutation) MarshalJSON() ([]byte, error) {
@@ -41,7 +44,8 @@ func (m clientMutation) MarshalJSON() ([]byte, error) {
 		SecretVersion       uint64                `json:",omitempty"`
 		Replacement         *clientReplacement    `json:",omitempty"`
 		DynamicRegistration *registrationMutation `json:",omitempty"`
-	}{registrationWire(m.Client), m.Version, m.Policy, m.Overlap, m.SecretVersion, m.Replacement, m.DynamicRegistration})
+		RotationWorkload    *workloadSource       `json:",omitempty"`
+	}{registrationWire(m.Client), m.Version, m.Policy, m.Overlap, m.SecretVersion, m.Replacement, m.DynamicRegistration, m.RotationWorkload})
 }
 func (m *clientMutation) UnmarshalJSON(wire []byte) error {
 	var v struct {
@@ -52,6 +56,7 @@ func (m *clientMutation) UnmarshalJSON(wire []byte) error {
 		SecretVersion       uint64                `json:",omitempty"`
 		Replacement         *clientReplacement    `json:",omitempty"`
 		DynamicRegistration *registrationMutation `json:",omitempty"`
+		RotationWorkload    *workloadSource       `json:",omitempty"`
 	}
 	if err := decodeJSON(wire, &v); err != nil {
 		return err
@@ -60,7 +65,7 @@ func (m *clientMutation) UnmarshalJSON(wire []byte) error {
 	if err != nil {
 		return err
 	}
-	*m = clientMutation{Client: c, Version: v.Version, Policy: v.Policy, Overlap: v.Overlap, SecretVersion: v.SecretVersion, Replacement: v.Replacement, DynamicRegistration: v.DynamicRegistration}
+	*m = clientMutation{Client: c, Version: v.Version, Policy: v.Policy, Overlap: v.Overlap, SecretVersion: v.SecretVersion, Replacement: v.Replacement, DynamicRegistration: v.DynamicRegistration, RotationWorkload: v.RotationWorkload}
 	return nil
 }
 
@@ -245,7 +250,7 @@ func (s *Store) clientManagementPhase(ctx context.Context, c oauth.ClientManagem
 			return nil, err
 		}
 		client = existing.Client
-		if client.Workload != nil && action != "identity.oauth-server.client-delete" {
+		if client.Workload != nil && action != "identity.oauth-server.client-delete" && action != "identity.oauth-server.client-rotate-secret" {
 			return nil, oauth.ErrAccessDenied
 		}
 		if action == "identity.oauth-server.client-update" && client.Public != r.Public {
@@ -398,6 +403,11 @@ func (p *phase) checkClientChange(ctx context.Context, w kernel.Work, final bool
 	i := p.input
 	if i.ClientChange.Policy != p.store.managementPolicy() {
 		return identity.ForbiddenError{}
+	}
+	if i.Transition == rotateManagedSecret {
+		if err := p.checkRotationWorkload(ctx, w); err != nil {
+			return err
+		}
 	}
 	// The exact platform decision is made before protected Work. This digest
 	// binds its immutable configured policy revision; the common phase admission

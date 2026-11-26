@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Support secret rotation for selected managed workload clients through the
+  existing fresh human manager, sealed preparation and sole Work coordinator.
+  Fence original directory/service-account epochs, retain reveal-once and
+  metadata-only retry/recovery, invalidate old token incarnations, and preserve
+  bounded exclusive predecessor overlap. Reuse installed client rotation and
+  workload history without new schema, authority or journal ownership.
+
 - Add separate fixed-organization modern API-key Store/Service/resource
   composition through existing native key/organization/Work owners. Preserve
   creator-independent integration authority, restricted real root/parent lineage,

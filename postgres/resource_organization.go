@@ -16,7 +16,9 @@ import (
 // organization policy. Install and select the separate modern organization key
 // profile first; no consent/session USER substitute or introspection Active
 // value is accepted. Pool, keys, source and clocks remain caller-owned and must
-// outlive concurrent calls. No worker, cache, journal or migration is installed.
+// outlive concurrent calls. A nonzero policy.Verification.Cache enables the
+// root verifier's bounded in-process reuse only. No worker, distributed cache,
+// journal or migration is installed.
 func NewOrganizationResourceVerifier(pool *database.Pool, c Config, keys *keyring.Provider, selected OrganizationAPIKeyExchangeConfig, policy oauth.OrganizationResourceVerificationConfig) (*oauth.OrganizationResourceVerifier, error) {
 	policy, err := policy.Validated()
 	if err != nil || policy.OrganizationID != selected.OrganizationID || policy.Verification.TenantID != selected.Source.TenantID {

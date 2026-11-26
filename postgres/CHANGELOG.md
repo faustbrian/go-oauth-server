@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Adopt optional bounded warm decisions for modern organization access in the
+  existing PostgreSQL resource verifier. Strict verification remains the
+  default; expired decisions must recheck actual root and parent withdrawal.
+
 - Allow explicit bounded process-local human resource decision reuse through
   the existing native verifier constructor, preserving strict zero-default
   reads and actual root/parent/current-owner authority on cold/expired reads.

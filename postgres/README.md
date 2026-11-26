@@ -22,8 +22,8 @@ on a hit, copy or insertion. Warm calls perform no primary lookup. Revocation
 and blocking may remain invisible only until that original deadline, even if
 every invalidation event is lost; expired/missing evidence requires a bounded
 primary read and refresh failure denies. No stale fallback, issuance or lineage
-authority is added. Organization/workload, JWT and legacy projections are not
-selected; the separate organization constructor rejects this cache policy.
+authority is added. Workload, JWT and legacy projections are not selected;
+the separate organization constructor can opt into its own cache below.
 
 ## Optional organization API-key exchange
 
@@ -54,6 +54,13 @@ without revoking the integration; current organization/key/parent withdrawal
 denies resource use, introspection and new descendants. Introspection omits `sub`.
 Exact Basic/original-handle recovery returns historical metadata even after
 withdrawal, never a credential, principal or new authority.
+
+For this verifier, explicitly set `policy.Verification.Cache` to the same
+bounded policy above. Zero keeps strict reads. Warm positive decisions can
+retain the same organization, key, caller, scope and lineage only until their
+earliest original deadline. They do not consult PostgreSQL; an expired decision
+must refresh against actual current authority or deny. Creator membership
+removal is not withdrawal of the independent integration credential.
 
 ## Optional USER API-key exchange
 

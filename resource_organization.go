@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	identity "github.com/faustbrian/go-identity"
@@ -14,8 +15,9 @@ import (
 // OrganizationResourceVerificationConfig selects one trusted organization in
 // addition to the exact tenant/client/resource policy. It is startup input,
 // never a request override. Clock and reader lifetimes/concurrency follow
-// ResourceVerificationConfig. It selects opaque modern-key delegation only;
-// existing USER verification configuration and principals remain unchanged.
+// ResourceVerificationConfig, including its opt-in bounded cache policy. It
+// selects opaque modern-key delegation only; USER and organization verifier
+// decisions never share cache entries.
 type OrganizationResourceVerificationConfig struct {
 	Verification   ResourceVerificationConfig
 	OrganizationID apikey.OrganizationID
@@ -25,7 +27,7 @@ type OrganizationResourceVerificationConfig struct {
 // organization, key or client authority. Canonical ownership is native state.
 func (c OrganizationResourceVerificationConfig) Validated() (OrganizationResourceVerificationConfig, error) {
 	owned, err := c.Verification.Validated()
-	if err != nil || !identifier(string(c.OrganizationID)) || owned.Cache.Capacity != 0 {
+	if err != nil || !identifier(string(c.OrganizationID)) {
 		return OrganizationResourceVerificationConfig{}, ErrInvalidRequest
 	}
 	c.Verification = owned
@@ -108,11 +110,12 @@ type OrganizationResourceAccessReader interface {
 }
 
 // OrganizationResourceVerifier freezes exact policy independently of protocol
-// Service and RFC7662 metadata. It owns no pool, worker, cache or refresh loop.
+// Service and RFC7662 metadata. It owns no pool, worker or refresh loop.
 // Its immutable policy/reader are borrowed for concurrent bounded calls.
 type OrganizationResourceVerifier struct {
 	config OrganizationResourceVerificationConfig
 	reader OrganizationResourceAccessReader
+	cache  *resourceDecisionCache[OrganizationResourcePrincipal]
 }
 
 func (*OrganizationResourceVerifier) Format(f fmt.State, _ rune) {
@@ -127,7 +130,11 @@ func NewOrganizationResourceVerifier(c OrganizationResourceVerificationConfig, r
 	if err != nil || nilDependency(r) {
 		return nil, ErrInvalidRequest
 	}
-	return &OrganizationResourceVerifier{config: owned, reader: r}, nil
+	cache, err := newResourceDecisionCache[OrganizationResourcePrincipal](owned.Verification.Cache.Capacity)
+	if err != nil {
+		return nil, err
+	}
+	return &OrganizationResourceVerifier{config: owned, reader: r, cache: cache}, nil
 }
 
 // OrganizationResourcePrincipal is an opaque result of one completed resource
@@ -180,6 +187,33 @@ func (p OrganizationResourcePrincipal) ReadStartedAt() time.Time { return p.star
 // ValidUntil returns the earliest original expiry, without refreshing authority.
 func (p OrganizationResourcePrincipal) ValidUntil() time.Time { return p.until }
 
+func (p OrganizationResourcePrincipal) evidenceWindow() (time.Time, time.Time) {
+	return p.start, p.until
+}
+
+// detached retains only bounded identifier bytes. A trusted reader's string
+// can still be a small view into a larger borrowed response or token buffer.
+func (p OrganizationResourcePrincipal) detached() (OrganizationResourcePrincipal, error) {
+	owner := p.owner.Spec()
+	p.tenant = identity.TenantID(strings.Clone(string(p.tenant)))
+	owner.TenantID = p.tenant
+	owner.OrganizationID = apikey.OrganizationID(strings.Clone(string(owner.OrganizationID)))
+	var err error
+	p.owner, err = apikey.NewOwner(owner)
+	if err != nil {
+		return OrganizationResourcePrincipal{}, ErrUnavailable
+	}
+	p.actor = apikey.KeyID(strings.Clone(string(p.actor)))
+	p.client = strings.Clone(p.client)
+	p.resource = strings.Clone(p.resource)
+	p.scope = strings.Clone(p.scope)
+	p.lineage.RootID = p.actor
+	p.lineage.ParentID = strings.Clone(p.lineage.ParentID)
+	p.lineage.ParentTokenType = strings.Clone(p.lineage.ParentTokenType)
+	p.lineage.TokenID = strings.Clone(p.lineage.TokenID)
+	return p, nil
+}
+
 // RequireScope checks only the exact verified scope and original clock window.
 // It neither refreshes evidence nor decides application-specific business policy.
 func (p OrganizationResourcePrincipal) RequireScope(scope string) (err error) {
@@ -199,8 +233,9 @@ func (p OrganizationResourcePrincipal) RequireScope(scope string) (err error) {
 }
 
 // Verify returns one scope-bound organization principal or a zero result/error.
-// Every call performs a genuine new reader invocation. Failure/cancellation can
-// never fall back to earlier authority or disclose a partial principal.
+// By default every call performs a genuine new reader invocation. Explicitly
+// cached calls reuse only still-valid exact token/scope decisions; a failed
+// refresh or cancellation cannot disclose earlier or partial authority.
 func (v *OrganizationResourceVerifier) Verify(ctx context.Context, r ResourceVerifyRequest) (out OrganizationResourcePrincipal, err error) {
 	defer func() {
 		if recover() != nil {
@@ -223,6 +258,16 @@ func (v *OrganizationResourceVerifier) Verify(ctx context.Context, r ResourceVer
 		return out, ErrInvalidScope
 	}
 	start := c.Clock.Now()
+	var key resourceCacheKey
+	if v.cache != nil {
+		key = v.cache.key(r.AccessToken, r.Scope)
+		if cached, ok := v.cache.load(key, start); ok {
+			if err := v.cache.checkDecision(ctx, key, cached, start, c.Clock); err != nil {
+				return out, err
+			}
+			return cached, nil
+		}
+	}
 	p, err := v.reader.ReadOrganizationResourceAccess(ctx, r.AccessToken)
 	if ctx.Err() != nil {
 		return out, ctx.Err()
@@ -254,5 +299,22 @@ func (v *OrganizationResourceVerifier) Verify(ctx context.Context, r ResourceVer
 	if !slices.Contains(scopes, r.Scope) {
 		return out, ErrInvalidScope
 	}
-	return OrganizationResourcePrincipal{owner: p.Owner, actor: p.APIKeyActor, tenant: p.TenantID, client: p.ClientID, clientVersion: p.ClientVersion, resource: p.Resource, scope: r.Scope, lineage: p.Lineage, start: p.ReadStartedAt, until: until, clock: c.Clock}, nil
+	principal := OrganizationResourcePrincipal{owner: p.Owner, actor: p.APIKeyActor, tenant: p.TenantID, client: p.ClientID, clientVersion: p.ClientVersion, resource: p.Resource, scope: r.Scope, lineage: p.Lineage, start: p.ReadStartedAt, until: until, clock: c.Clock}
+	if v.cache != nil {
+		principal, err = principal.detached()
+		if err != nil {
+			return out, err
+		}
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
+		v.cache.store(key, principal)
+		if err := v.cache.checkDecision(ctx, key, principal, start, c.Clock); err != nil {
+			return out, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return out, err
+	}
+	return principal, nil
 }

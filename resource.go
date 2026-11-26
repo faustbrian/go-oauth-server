@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	identity "github.com/faustbrian/go-identity"
@@ -89,7 +90,7 @@ type ResourceAccessReader interface {
 type ResourceVerifier struct {
 	config ResourceVerificationConfig
 	reader ResourceAccessReader
-	cache  *resourceDecisionCache
+	cache  *resourceDecisionCache[ResourcePrincipal]
 }
 
 func (*ResourceVerifier) Format(f fmt.State, _ rune) {
@@ -103,7 +104,7 @@ func NewResourceVerifier(c ResourceVerificationConfig, r ResourceAccessReader) (
 	if err != nil || nilDependency(r) {
 		return nil, ErrInvalidRequest
 	}
-	cache, err := newResourceDecisionCache(owned.Cache.Capacity)
+	cache, err := newResourceDecisionCache[ResourcePrincipal](owned.Cache.Capacity)
 	if err != nil {
 		return nil, err
 	}
@@ -139,6 +140,8 @@ func (p ResourcePrincipal) Resource() string { return p.resource }
 
 // ValidUntil returns original evidence expiry; reading it never renews custody.
 func (p ResourcePrincipal) ValidUntil() time.Time { return p.until }
+
+func (p ResourcePrincipal) evidenceWindow() (time.Time, time.Time) { return p.start, p.until }
 
 // RequireScope checks the exact verified scope using the original trusted clock.
 // It performs no refresh and grants no general resource/business authorization.
@@ -187,16 +190,8 @@ func (v *ResourceVerifier) Verify(ctx context.Context, r ResourceVerifyRequest) 
 	if v.cache != nil {
 		key = v.cache.key(r.AccessToken, r.Scope)
 		if cached, ok := v.cache.load(key, start); ok {
-			if err := cached.RequireScope(r.Scope); err != nil {
-				v.cache.expire(key, cached)
+			if err := v.cache.checkDecision(ctx, key, cached, start, v.config.Clock); err != nil {
 				return out, err
-			}
-			if now := v.config.Clock.Now(); now.Before(start) || !now.Before(cached.until) {
-				v.cache.expire(key, cached)
-				return out, ErrInvalidResourceToken
-			}
-			if ctx.Err() != nil {
-				return out, ctx.Err()
 			}
 			return cached, nil
 		}
@@ -233,14 +228,11 @@ func (v *ResourceVerifier) Verify(ctx context.Context, r ResourceVerifyRequest) 
 		return out, ctx.Err()
 	}
 	if v.cache != nil {
+		principal.scope = strings.Clone(principal.scope)
+		principal.subject = identity.UserID(strings.Clone(string(principal.subject)))
 		v.cache.store(key, principal)
-		if err := principal.RequireScope(r.Scope); err != nil {
-			v.cache.expire(key, principal)
+		if err := v.cache.checkDecision(ctx, key, principal, start, v.config.Clock); err != nil {
 			return out, err
-		}
-		if now := v.config.Clock.Now(); now.Before(start) || !now.Before(principal.until) {
-			v.cache.expire(key, principal)
-			return out, ErrInvalidResourceToken
 		}
 	}
 	if ctx.Err() != nil {

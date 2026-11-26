@@ -265,11 +265,15 @@ func TestResourceCacheRejectsUnboundedDeploymentPolicy(t *testing.T) {
 	}
 }
 
-func TestResourceCacheCannotSelectOrganizationProfile(t *testing.T) {
+func TestOrganizationResourceCacheUsesTheSameBoundedPolicy(t *testing.T) {
 	now := time.Now().UTC()
 	c, _ := resourceCacheFixture(&now)
+	if _, err := (oauth.OrganizationResourceVerificationConfig{Verification: c, OrganizationID: "organization"}).Validated(); err != nil {
+		t.Fatal("valid bounded organization cache selection denied", err)
+	}
+	c.Cache.ClockUncertainty = 10 * time.Second
 	if _, err := (oauth.OrganizationResourceVerificationConfig{Verification: c, OrganizationID: "organization"}).Validated(); !errors.Is(err, oauth.ErrInvalidRequest) {
-		t.Fatal("human cache selection claimed organization coverage", err)
+		t.Fatal("organization cache admitted an excessive deployment budget", err)
 	}
 	c.Cache = oauth.ResourceCachePolicy{}
 	if _, err := (oauth.OrganizationResourceVerificationConfig{Verification: c, OrganizationID: "organization"}).Validated(); err != nil {

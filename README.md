@@ -7,15 +7,16 @@ This is not a complete OAuth/OIDC provider or a
 stable released API.
 
 `ResourceVerificationConfig.Cache` optionally selects bounded process-local
-positive decisions on the existing native human opaque-access verifier. Leave
-the zero policy for strict per-request primary checks. Set `Capacity` (1..4096),
+positive decisions for the native human and modern organization opaque-access
+verifiers. Their decisions never share a cache. Leave the zero policy for
+strict per-request primary checks. Set `Capacity` (1..4096),
 `ClockUncertainty` and `DecisionRaceBudget`; the two positive deployment bounds
 plus `MaximumDuration` must total no more than ten seconds. Still-valid exact
 credential/scope decisions require no central lookup, retain the earliest
 original twenty-second evidence deadline and all token/credential expiry clips,
 and never authorize issuance or lineage changes. Expired evidence refreshes
 synchronously or denies, including during an outage. No invalidation service,
-JWT, organization, workload or legacy projection cache is selected.
+JWT, workload or legacy projection cache is selected.
 
 The separate [USER API-key exchange profile](docs/api-key-exchange.md)
 lets a configured owning Basic client obtain narrower opaque access from an
@@ -104,8 +105,9 @@ replacement authentication engine.
 - `OrganizationResourceVerifier.Verify` separately admits opaque modern-key
   organization access under exact trusted tenant/organization/client/resource
   bindings. Its typed read-only principal retains the original scope/freshness;
-  `RequireScope` is not application business policy. Organization introspection
-  metadata omits `sub` rather than inventing a USER.
+  a selected cache also retains the original organization/key/caller and
+  root/parent lineage. `RequireScope` is not application business policy.
+  Organization introspection metadata omits `sub` rather than inventing a USER.
 - `Service.ConsentGet/List/Delete` use genuine current own-session custody.
   Deletion additionally requires recent original authentication, issuer origin
   and same-browser CSRF; native consent-root withdrawal denies associated

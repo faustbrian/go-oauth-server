@@ -25,7 +25,7 @@ type OrganizationResourceVerificationConfig struct {
 // organization, key or client authority. Canonical ownership is native state.
 func (c OrganizationResourceVerificationConfig) Validated() (OrganizationResourceVerificationConfig, error) {
 	owned, err := c.Verification.Validated()
-	if err != nil || !identifier(string(c.OrganizationID)) {
+	if err != nil || !identifier(string(c.OrganizationID)) || owned.Cache.Capacity != 0 {
 		return OrganizationResourceVerificationConfig{}, ErrInvalidRequest
 	}
 	c.Verification = owned

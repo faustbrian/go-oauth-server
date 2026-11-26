@@ -18,6 +18,9 @@ var ErrInvalidResourceToken = errors.New("oauthserver: invalid resource token")
 // It selects exactly one native human client/tenant/resource and OAuth scope
 // catalog. Clock is trusted, fast and concurrency-safe; MaximumDuration is
 // 1ms..5s. A verifier borrows its reader/clock for its concurrent lifetime.
+// Cache is disabled by default; explicit selection changes withdrawal visibility
+// to the original evidence deadline, never beyond twenty seconds plus the
+// selected deployment uncertainty/race budget.
 type ResourceVerificationConfig struct {
 	Issuer          Issuer
 	Environment     string
@@ -28,11 +31,12 @@ type ResourceVerificationConfig struct {
 	Scopes          ScopeCatalog
 	Clock           Clock
 	MaximumDuration time.Duration
+	Cache           ResourceCachePolicy
 }
 
 // Validated checks the finite trusted policy without IO or authority claims.
 func (c ResourceVerificationConfig) Validated() (ResourceVerificationConfig, error) {
-	if !validOrigin(c.Issuer.String()) || !identifier(c.Environment) || !identifier(string(c.TenantID)) || !identifier(c.ClientID) || c.ClientVersion == 0 || c.ClientVersion == ^uint64(0) || !validOrigin(c.Resource) || len(c.Scopes.values) == 0 || hasExtensionScope(c.Scopes.values) || nilDependency(c.Clock) || c.MaximumDuration < time.Millisecond || c.MaximumDuration > 5*time.Second {
+	if !validOrigin(c.Issuer.String()) || !identifier(c.Environment) || !identifier(string(c.TenantID)) || !identifier(c.ClientID) || c.ClientVersion == 0 || c.ClientVersion == ^uint64(0) || !validOrigin(c.Resource) || len(c.Scopes.values) == 0 || hasExtensionScope(c.Scopes.values) || nilDependency(c.Clock) || c.MaximumDuration < time.Millisecond || c.MaximumDuration > 5*time.Second || !c.Cache.valid(c.MaximumDuration) {
 		return ResourceVerificationConfig{}, ErrInvalidRequest
 	}
 	return c, nil
@@ -85,6 +89,7 @@ type ResourceAccessReader interface {
 type ResourceVerifier struct {
 	config ResourceVerificationConfig
 	reader ResourceAccessReader
+	cache  *resourceDecisionCache
 }
 
 func (*ResourceVerifier) Format(f fmt.State, _ rune) {
@@ -98,7 +103,11 @@ func NewResourceVerifier(c ResourceVerificationConfig, r ResourceAccessReader) (
 	if err != nil || nilDependency(r) {
 		return nil, ErrInvalidRequest
 	}
-	return &ResourceVerifier{config: owned, reader: r}, nil
+	cache, err := newResourceDecisionCache(owned.Cache.Capacity)
+	if err != nil {
+		return nil, err
+	}
+	return &ResourceVerifier{config: owned, reader: r, cache: cache}, nil
 }
 
 // ResourcePrincipal is an opaque, scope-bound result of one completed access
@@ -151,7 +160,8 @@ func (p ResourcePrincipal) RequireScope(scope string) (err error) {
 
 // Verify returns only a scope-bound access principal or a zero result/error.
 // Invalid tokens and insufficient scopes fail closed; dependency failures and
-// cancellation return no metadata. Every call performs a new native read.
+// cancellation return no metadata. Default calls perform a new native read;
+// explicitly cached calls reuse only the exact still-valid scope decision.
 func (v *ResourceVerifier) Verify(ctx context.Context, r ResourceVerifyRequest) (out ResourcePrincipal, err error) {
 	defer func() {
 		if recover() != nil {
@@ -173,6 +183,24 @@ func (v *ResourceVerifier) Verify(ctx context.Context, r ResourceVerifyRequest) 
 		return out, ErrInvalidScope
 	}
 	start := v.config.Clock.Now()
+	var key resourceCacheKey
+	if v.cache != nil {
+		key = v.cache.key(r.AccessToken, r.Scope)
+		if cached, ok := v.cache.load(key, start); ok {
+			if err := cached.RequireScope(r.Scope); err != nil {
+				v.cache.expire(key, cached)
+				return out, err
+			}
+			if now := v.config.Clock.Now(); now.Before(start) || !now.Before(cached.until) {
+				v.cache.expire(key, cached)
+				return out, ErrInvalidResourceToken
+			}
+			if ctx.Err() != nil {
+				return out, ctx.Err()
+			}
+			return cached, nil
+		}
+	}
 	p, err := v.reader.ReadResourceAccess(ctx, r.AccessToken)
 	if ctx.Err() != nil {
 		return out, ctx.Err()
@@ -200,5 +228,23 @@ func (v *ResourceVerifier) Verify(ctx context.Context, r ResourceVerifyRequest) 
 	if !slices.Contains(scopes, r.Scope) {
 		return out, ErrInvalidScope
 	}
-	return ResourcePrincipal{subject: p.UserID, tenant: p.TenantID, resource: p.Resource, scope: r.Scope, start: p.ReadStartedAt, until: until, clock: v.config.Clock}, nil
+	principal := ResourcePrincipal{subject: p.UserID, tenant: v.config.TenantID, resource: v.config.Resource, scope: r.Scope, start: p.ReadStartedAt, until: until, clock: v.config.Clock}
+	if ctx.Err() != nil {
+		return out, ctx.Err()
+	}
+	if v.cache != nil {
+		v.cache.store(key, principal)
+		if err := principal.RequireScope(r.Scope); err != nil {
+			v.cache.expire(key, principal)
+			return out, err
+		}
+		if now := v.config.Clock.Now(); now.Before(start) || !now.Before(principal.until) {
+			v.cache.expire(key, principal)
+			return out, ErrInvalidResourceToken
+		}
+	}
+	if ctx.Err() != nil {
+		return out, ctx.Err()
+	}
+	return principal, nil
 }

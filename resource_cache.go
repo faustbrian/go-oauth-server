@@ -1,0 +1,124 @@
+package oauthserver
+
+import (
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"strings"
+	"sync"
+	"time"
+
+	identity "github.com/faustbrian/go-identity"
+)
+
+// ResourceCachePolicy explicitly selects bounded process-local positive reuse.
+// Zero disables reuse. Capacity is 1..4096 decisions; no token custody, shared
+// cache, invalidation delivery, background work or issuance authority is added.
+// ClockUncertainty and DecisionRaceBudget are trusted deployment bounds, each
+// positive when enabled. Together with MaximumDuration they must fit the ten
+// seconds reserved by SI-05/06 beyond the original twenty-second evidence.
+type ResourceCachePolicy struct {
+	Capacity                             int
+	ClockUncertainty, DecisionRaceBudget time.Duration
+}
+
+func (c ResourceCachePolicy) valid(read time.Duration) bool {
+	if c.Capacity == 0 {
+		return c.ClockUncertainty == 0 && c.DecisionRaceBudget == 0
+	}
+	return c.Capacity > 0 && c.Capacity <= 4096 && c.ClockUncertainty > 0 && c.ClockUncertainty <= 10*time.Second && c.DecisionRaceBudget > 0 && c.DecisionRaceBudget <= 10*time.Second && read+c.ClockUncertainty+c.DecisionRaceBudget <= 10*time.Second
+}
+
+type resourceCacheKey struct {
+	digest [sha256.Size]byte
+	scope  string
+}
+
+type resourceCacheEntry struct {
+	principal ResourcePrincipal
+	expired   bool
+}
+
+// resourceDecisionCache owns only validated decisions for one frozen verifier.
+// Its mutex never spans reader IO or clock callbacks. FIFO bounds both map and
+// key storage without keeping borrowed tokens or a reusable digest namespace.
+type resourceDecisionCache struct {
+	mu             sync.Mutex
+	secret         [32]byte
+	entries        map[resourceCacheKey]resourceCacheEntry
+	order          []resourceCacheKey
+	next, capacity int
+}
+
+func newResourceDecisionCache(capacity int) (*resourceDecisionCache, error) {
+	if capacity == 0 {
+		return nil, nil
+	}
+	c := &resourceDecisionCache{capacity: capacity, entries: make(map[resourceCacheKey]resourceCacheEntry, capacity), order: make([]resourceCacheKey, 0, capacity)}
+	if _, err := rand.Read(c.secret[:]); err != nil {
+		return nil, ErrUnavailable
+	}
+	return c, nil
+}
+
+func (c *resourceDecisionCache) key(token, scope string) resourceCacheKey {
+	h := hmac.New(sha256.New, c.secret[:])
+	_, _ = h.Write([]byte(token))
+	var digest [sha256.Size]byte
+	copy(digest[:], h.Sum(nil))
+	return resourceCacheKey{digest: digest, scope: scope}
+}
+
+func (c *resourceDecisionCache) load(key resourceCacheKey, now time.Time) (ResourcePrincipal, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, ok := c.entries[key]
+	if !ok || entry.expired {
+		return ResourcePrincipal{}, false
+	}
+	if !now.Before(entry.principal.until) {
+		// Observed expiry is terminal for this snapshot, even if a failed
+		// authority refresh is followed by a backwards clock adjustment.
+		entry.expired = true
+		c.entries[key] = entry
+		return ResourcePrincipal{}, false
+	}
+	return entry.principal, true
+}
+
+func (c *resourceDecisionCache) expire(key resourceCacheKey, p ResourcePrincipal) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if entry, ok := c.entries[key]; ok && entry.principal.start.Equal(p.start) && entry.principal.until.Equal(p.until) {
+		entry.expired = true
+		c.entries[key] = entry
+	}
+}
+
+func (c *resourceDecisionCache) store(key resourceCacheKey, p ResourcePrincipal) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Request and reader strings may be short views of much larger borrowed
+	// buffers. Own only the bounded decision fields, never their backing custody.
+	key.scope = strings.Clone(key.scope)
+	p.scope = key.scope
+	p.subject = identity.UserID(strings.Clone(string(p.subject)))
+	if entry, ok := c.entries[key]; ok {
+		current := entry.principal
+		// An older in-flight read cannot replace newer authoritative evidence;
+		// identical starts cannot lengthen an already retained deadline either.
+		if p.start.Before(current.start) || (p.start.Equal(current.start) && (entry.expired || p.until.After(current.until))) {
+			return
+		}
+		c.entries[key] = resourceCacheEntry{principal: p}
+		return
+	}
+	if len(c.order) < c.capacity {
+		c.order = append(c.order, key)
+	} else {
+		delete(c.entries, c.order[c.next])
+		c.order[c.next] = key
+		c.next = (c.next + 1) % c.capacity
+	}
+	c.entries[key] = resourceCacheEntry{principal: p}
+}

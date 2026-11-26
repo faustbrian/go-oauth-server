@@ -6,6 +6,17 @@ single-factor user sessions, plus explicitly configured workload client-credenti
 This is not a complete OAuth/OIDC provider or a
 stable released API.
 
+`ResourceVerificationConfig.Cache` optionally selects bounded process-local
+positive decisions on the existing native human opaque-access verifier. Leave
+the zero policy for strict per-request primary checks. Set `Capacity` (1..4096),
+`ClockUncertainty` and `DecisionRaceBudget`; the two positive deployment bounds
+plus `MaximumDuration` must total no more than ten seconds. Still-valid exact
+credential/scope decisions require no central lookup, retain the earliest
+original twenty-second evidence deadline and all token/credential expiry clips,
+and never authorize issuance or lineage changes. Expired evidence refreshes
+synchronously or denies, including during an outage. No invalidation service,
+JWT, organization, workload or legacy projection cache is selected.
+
 The separate [USER API-key exchange profile](docs/api-key-exchange.md)
 lets a configured owning Basic client obtain narrower opaque access from an
 actual modern key or an explicitly selected imported bare SHA-256 key.

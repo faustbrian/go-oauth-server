@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add explicit bounded process-local positive reuse to the existing human
+  opaque-access resource verifier. Default verification stays strict; warm
+  exact credential/scope decisions retain their original earliest deadline,
+  require no primary lookup and cannot fall back after expiry/refresh failure.
+  Capacity and deployment uncertainty/race budgets are bounded; organization
+  selection rejects this human-only cache policy.
+
 - Add an explicitly selected modern organization-key resource verification
   contract with typed owner/API-key actor/caller/root-parent metadata and an
   opaque principal retaining original scope and freshness. Existing USER public

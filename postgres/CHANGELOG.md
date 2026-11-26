@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Allow explicit bounded process-local human resource decision reuse through
+  the existing native verifier constructor, preserving strict zero-default
+  reads and actual root/parent/current-owner authority on cold/expired reads.
+  Warm decisions retain original evidence expiry without primary access;
+  expired refresh outages deny. No SQL, migration or invalidation service is added.
+
 - Support secret rotation for selected managed workload clients through the
   existing fresh human manager, sealed preparation and sole Work coordinator.
   Fence original directory/service-account epochs, retain reveal-once and

@@ -16,8 +16,10 @@ import (
 // primary OAuth/identity owners. Policy is trusted startup input, not request
 // selection. Install and select ConsentManagement before construction; exact
 // client/version/issuer/environment/resource mismatches deny, never retarget.
-// No introspection endpoint, client credential, cache, worker or migration is
-// installed. Borrowed pool, keys and clocks must outlive concurrent calls.
+// No introspection endpoint, client credential, worker or migration is installed.
+// policy.Cache optionally selects only bounded process-local decision reuse;
+// zero retains strict per-request primary checks. Borrowed pool, keys and clocks
+// must outlive concurrent calls.
 func NewResourceVerifier(pool *database.Pool, c Config, keys *keyring.Provider, policy oauth.ResourceVerificationConfig) (*oauth.ResourceVerifier, error) {
 	policy, err := policy.Validated()
 	if err != nil || !c.ConsentManagement {

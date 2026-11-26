@@ -149,6 +149,8 @@ github.com/faustbrian/go-migrations/v3 v3.1.1-0.20261015110643-ca105f265cfc h1:u
 github.com/faustbrian/go-migrations/v3 v3.1.1-0.20261015110643-ca105f265cfc/go.mod h1:h9WNJuNOR77bYc9ni8VPeyFTAyQcmyjCAmT5Bko8w60=
 github.com/faustbrian/go-oauth-server v0.0.0-20261113225045-5a8c0a3ec14d h1:GMfcRBzT+onxtYqGhS64PpksM+Iw0/l4We9zSO9KEhM=
 github.com/faustbrian/go-oauth-server v0.0.0-20261113225045-5a8c0a3ec14d/go.mod h1:+k9Y+Rf4+tH5QsZ1rFcKFj3nssPDWDcwuELq+28DdcI=
+github.com/faustbrian/go-oauth-server v0.0.0-20261126145047-c6b5254d6951 h1:2eD76utJseSLwrVgBqmb6bjGMIPFTSxYAMMudbBDMwI=
+github.com/faustbrian/go-oauth-server v0.0.0-20261126145047-c6b5254d6951/go.mod h1:+k9Y+Rf4+tH5QsZ1rFcKFj3nssPDWDcwuELq+28DdcI=
 github.com/faustbrian/go-oauth-server/device v0.0.0-20261023095306-ca7b0b8a9b26 h1:4VHiVpFQ/R2+04d6aguEVvhUn3FQBtFwwKrf6M/GdE8=
 github.com/faustbrian/go-oauth-server/device v0.0.0-20261023095306-ca7b0b8a9b26/go.mod h1:LnZF60y+g1e0FBhKL9mKphKBx5G1RKlGsLot5E1CjbE=
 github.com/faustbrian/go-oauth-server/oidc v0.0.0-20261026095351-baa3ff6f2bf5 h1:HL8OSpgH5jYwsiz31XsZU20KhRnpJuNLjTajzNUPvBw=

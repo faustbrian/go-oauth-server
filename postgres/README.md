@@ -3,6 +3,28 @@
 Experimental persistence and public service composition for the
 [selected authorization-code profile](../docs/selected-profile.md).
 
+## Optional bounded human resource decisions
+
+Use the existing `NewResourceVerifier(pool, config, keys, policy)` constructor
+with `policy.Cache = oauth.ResourceCachePolicy{Capacity: 256,
+ClockUncertainty: time.Second, DecisionRaceBudget: time.Second}` to opt in.
+The zero value retains current primary authority reads on every request. The
+positive clock/race bounds plus `policy.MaximumDuration` must fit ten seconds;
+choose them from the deployment's actual bounded assumptions, not request input.
+Each verifier owns up to the selected capacity (maximum 4096) of exact
+credential/scope decisions, keyed with its own ephemeral HMAC namespace; it
+retains no opaque token bytes and creates no pool, goroutine, service or schema.
+
+Only an already validated human opaque-access decision is reusable, including
+the selected genuine human code-access descendants. Its original earliest
+read-start, twenty-second maximum and token/credential expiry clips never move
+on a hit, copy or insertion. Warm calls perform no primary lookup. Revocation
+and blocking may remain invisible only until that original deadline, even if
+every invalidation event is lost; expired/missing evidence requires a bounded
+primary read and refresh failure denies. No stale fallback, issuance or lineage
+authority is added. Organization/workload, JWT and legacy projections are not
+selected; the separate organization constructor rejects this cache policy.
+
 ## Optional organization API-key exchange
 
 The separate [modern organization profile](../docs/organization-api-key-exchange.md)

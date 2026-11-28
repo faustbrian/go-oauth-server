@@ -57,8 +57,10 @@ make secrets-check
 
 Scheduled/manual Required retains online authority refresh and whole-tree/history
 secrets with the existing twenty-minute outer cap. CI also runs the selected root
-module contract with `golib check --module .`, including its actual tests and
-race tests. Structural checks alone are not runtime proof. During development,
+module contract with `golib check --local --module .` and `go test -race ./...`.
+The separate Documentation health workflow checks spelling and live links weekly
+and on demand, so an upstream outage does not fail Required. Structural checks
+alone are not runtime proof. During development,
 run focused affected tests in the owning module; full release qualification is
 separate. No application release is authorized by green structural checks.
 

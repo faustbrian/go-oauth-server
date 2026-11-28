@@ -1,0 +1,25 @@
+name: Documentation health
+
+on:
+  schedule:
+    - cron: '47 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  documentation:
+    name: External documentation links and spelling
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .go-version
+          cache: false
+      - uses: faustbrian/go-library-tools/.github/actions/setup-golib@09b43f49385650c44dd4151a12b0877ca6b48a88 # v2.5.1
+      - run: golib docs check --module .

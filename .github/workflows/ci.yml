@@ -69,7 +69,7 @@ jobs:
               git cat-file -e "${BASE_SHA}^{commit}" || exit 1
               git merge-base --is-ancestor "${BASE_SHA}" HEAD || exit 1
               make planning-check
-              timeout --signal=TERM --kill-after=5s 40s golib secrets check --base-sha "${BASE_SHA}"
+              golib secrets check --base-sha "${BASE_SHA}"
               ;;
             schedule|workflow_dispatch)
               make planning-check
@@ -78,8 +78,9 @@ jobs:
               ;;
             *) exit 1 ;;
           esac
-          # Preserve runtime assurance alongside the bounded structural/security lane.
-          golib check --module .
+          # External link availability is reported independently of Required.
+          golib check --local --module .
+          go test -race ./...
           # Untagged native compilation is not PostgreSQL runtime proof.
           golib docs check --module postgres
       - name: Remove public tooling installation
